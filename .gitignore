@@ -1,0 +1,15 @@
+# Build output (generated fresh by the CI "build" job on every tagged release)
+dist/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor backups/swap files
+*~
+*.swp
+*.bak
+*.orig
+
+# Local config overrides / logs, if any get created during local testing
+*.log
