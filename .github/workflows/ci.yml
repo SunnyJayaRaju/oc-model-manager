@@ -122,3 +122,4 @@ jobs:
           git add Formula/ocm.rb
           git commit -m "Update ocm to v${VERSION}"
           git push
+EOF
