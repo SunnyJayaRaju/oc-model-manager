@@ -116,10 +116,11 @@ jobs:
           sed -i "s|url \".*\"|url \"${URL}\"|" Formula/ocm.rb
           sed -i "s/sha256 \".*\"/sha256 \"${SHA256}\"/" Formula/ocm.rb
       - name: Commit and push
+        if: env.HOMEBREW_TAP_TOKEN != ''
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add Formula/ocm.rb
           git commit -m "Update ocm to v${VERSION}"
           git push
-EOF
+        continue-on-error: true
