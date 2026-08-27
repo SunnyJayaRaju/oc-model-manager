@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Backward compatibility shim for oc-model-manager v1
+# Maps old flags to new ocm commands
+
+set -euo pipefail
+
+# Source shared shim helpers
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/shim_helpers.sh"
+
+# Execute using shared shim logic
+run_shim "oc-model-manager" "$@"

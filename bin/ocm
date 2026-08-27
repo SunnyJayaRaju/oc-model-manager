@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+# shellcheck disable=SC1091,SC2034
+# ============================================================================
+# ocm — OpenCode Model Manager (unified CLI)
+# ============================================================================
+set -euo pipefail
+
+# ---- Bootstrap --------------------------------------------------------------
+OCM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export OCM_ROOT
+
+# Load core library
+source "${OCM_ROOT}/lib/core.sh"
+source "${OCM_ROOT}/lib/config.sh"
+source "${OCM_ROOT}/lib/logging.sh"
+source "${OCM_ROOT}/lib/locking.sh"
+source "${OCM_ROOT}/lib/db.sh"
+
+# ---- Version ----------------------------------------------------------------
+OCM_VERSION="$(cat "${OCM_ROOT}/VERSION")"
+
+# ---- Help -------------------------------------------------------------------
+usage() {
+  cat <<'EOF'
+ocm — OpenCode Model Manager
+
+USAGE:
+  ocm <command> [options]
+
+COMMANDS:
+  audit           Full cycle: diff → probe → confirm → apply (default)
+  check           Dry-run only; exit 1 if changes pending
+  status          Show whitelisted models + recent probe results
+  alerts          Show recorded alerts [--clear]
+  probe <model>   Test one model now
+  watch           Run check+alert on interval (never auto-applies)
+  scheduler       Manage launchd/systemd scheduler [install|uninstall|status]
+  session         Session management [list|backup|restore|cleanup]
+  config          Configuration [show|validate|edit|schema]
+  doctor          Health check: config, DB, auth, disk
+  version         Show version
+  help            Show this help
+
+GLOBAL OPTIONS:
+  --quick         Skip whitelist probe (audit/check only)
+  --force-refresh Force catalog refresh (ignore cache)
+  --yes, -y       Assume yes to prompts
+  --json          Output JSON (machine-readable)
+  --config <path> Override config file
+  --verbose, -v   Verbose logging
+  --help, -h      Show help
+
+ENVIRONMENT:
+  OCM_CONFIG         Config file path (default: ~/.config/ocm/config.yaml)
+  OCM_STATE_DIR      State directory (default: ~/.local/state/ocm)
+  OCM_LOG_LEVEL      Log level: debug, info, warn, error (default: info)
+  OCM_LOG_FORMAT     Log format: text, json (default: text)
+
+EXAMPLES:
+  ocm audit                    # Full audit with confirmation
+  ocm check --quick            # Fast dry-run
+  ocm status                   # Show whitelist + recent probes
+  ocm alerts --clear           # Clear alert history
+  ocm probe openrouter/gpt-4   # Test single model
+  ocm watch                    # Continuous monitoring (6h interval)
+  ocm scheduler install        # Install launchd timer (macOS)
+  ocm session backup ses_abc   # Backup session to SQL
+  ocm doctor                   # Health check
+
+CONFIGURATION:
+  See ocm config schema for full options.
+  Example: ~/.config/ocm/config.yaml
+
+EOF
+}
+
+# ---- Command Dispatch -------------------------------------------------------
+main() {
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    audit|check|status|alerts|probe|watch)
+      source "${OCM_ROOT}/lib/models.sh"
+      "cmd_${cmd}" "$@"
+      ;;
+    scheduler)
+      source "${OCM_ROOT}/lib/scheduler.sh"
+      cmd_scheduler "$@"
+      ;;
+    session)
+      source "${OCM_ROOT}/lib/session.sh"
+      cmd_session "$@"
+      ;;
+    config)
+      source "${OCM_ROOT}/lib/config.sh"
+      cmd_config "$@"
+      ;;
+    doctor)
+      source "${OCM_ROOT}/lib/doctor.sh"
+      cmd_doctor "$@"
+      ;;
+    version|--version|-V)
+      echo "ocm ${OCM_VERSION}"
+      ;;
+    help|--help|-h)
+      usage
+      ;;
+    *)
+      log_error "Unknown command: $cmd"
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+# ---- Global Flag Parsing ----------------------------------------------------
+OCM_QUICK=0
+OCM_FORCE_REFRESH=0
+OCM_ASSUME_YES=0
+OCM_JSON_OUTPUT=0
+OCM_VERBOSE=0
+OCM_CONFIG_OVERRIDE=""
+
+parse_global_flags() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --quick) OCM_QUICK=1 ;;
+      --force-refresh) OCM_FORCE_REFRESH=1 ;;
+      --yes|-y) OCM_ASSUME_YES=1 ;;
+      --json) OCM_JSON_OUTPUT=1 ;;
+      --verbose|-v) OCM_VERBOSE=1 ;;
+      --config) OCM_CONFIG_OVERRIDE="$2"; shift ;;
+      --config=*) OCM_CONFIG_OVERRIDE="${1#*=}" ;;
+      --help|-h) usage; exit 0 ;;
+      --) shift; break ;;
+      -*) log_error "Unknown global flag: $1"; exit 1 ;;
+      *) break ;;
+    esac
+    shift
+  done
+}
+
+# Initialize logging early
+parse_global_flags "$@"
+init_logging
+
+# Re-parse without global flags for command
+set -- "${@}"  # remaining args after global flags
+main "$@"

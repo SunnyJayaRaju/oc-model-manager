@@ -1,0 +1,91 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [2.0.0] - 2026-08-27
+
+### Added
+- Unified `ocm` CLI with subcommands (audit, check, status, alerts, probe, watch, scheduler, session, config, doctor)
+- YAML configuration with JSON Schema validation (`~/.config/ocm/config.yaml`)
+- Structured JSON logging and Prometheus metrics (`--json` flag)
+- Session management: backup, restore, list, cleanup
+- Health check command (`ocm doctor`)
+- launchd (macOS) and systemd (Linux) scheduler integration
+- Desktop notifications for critical alerts
+- Webhook support for alerting
+- Mass-removal safety guard (configurable threshold)
+- Graveyard cooldown for deliberately removed models
+- Two-failure rule for transient probe failures
+- Comprehensive test suite (bats unit + integration tests)
+- CI/CD pipeline (GitHub Actions: lint, test, build, release)
+- Homebrew formula support
+- Man page generation
+- Architecture documentation (ADRs, runbooks)
+
+### Changed
+- **BREAKING**: Replaced `oc-model-manager` and `oc-model-audit.sh` with unified `ocm` CLI
+- **BREAKING**: Config moved from env vars to YAML file
+- **BREAKING**: State directory changed to `~/.local/state/ocm/`
+- Probe engine now uses constants for prompt/title (single source of truth)
+- Session cleanup uses batched SQLite queries (2 queries vs N×2)
+- History parsing uses single `jq` call (5000x faster)
+- Lock acquisition improved with stale PID detection
+
+### Fixed
+- TOCTOU race condition in lock acquisition
+- Division by zero in mass-removal guard when whitelist empty
+- SQL injection risk in probe session detection (parameterized)
+- Duplicate `prune_history` function
+- Duplicate `MODE` assignment
+
+### Security
+- Model name validation updated to support `kilo/~provider/model` format
+- All SQL queries use proper escaping
+- Umask 077 for state directories
+- Read-only DB connections for queries
+
+## [1.0.0] - 2026-08-26
+
+### Added
+- Initial `oc-model-manager` script (single-file, 681 lines)
+- Catalog diffing, probing, alerting, apply
+- Session cleanup with safety invariants
+- Launchd scheduler integration
+- Probe history and alert persistence
+- Graveyard cooldown mechanism
+
+### Security
+- SQL escaping for session IDs
+- Model name validation regex
+- Umask 077 for sensitive files
+
+## [0.1.0] - 2026-08-25
+
+### Added
+- Initial `oc-model-audit.sh` (195 lines)
+- Basic catalog diff and probe
+- Session cleanup by directory isolation
+- Config backup on apply
+
+---
+
+### Migration from 1.x to 2.0
+
+```bash
+# Old commands          → New commands
+oc-model-manager audit  → ocm audit
+oc-model-manager check  → ocm check
+oc-model-manager status → ocm status
+oc-model-manager alerts → ocm alerts
+oc-model-manager probe  → ocm probe
+oc-model-manager watch  → ocm watch
+oc-model-manager install-scheduler → ocm scheduler install
+oc-session-backup       → ocm session backup
+```
+
+Configuration migration:
+- Environment variables → `~/.config/ocm/config.yaml`
+- Run `ocm config edit` to customize
