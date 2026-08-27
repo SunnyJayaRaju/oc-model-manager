@@ -105,7 +105,7 @@ atomic_write() {
 
 # ---- Cleanup ----------------------------------------------------------------
 cleanup_run_dir() {
-	[[ -d "$OCM_RUN_DIR" && "$OCM_RUN_DIR" == "$TMPDIR"/*/ocm-* ]] && rm -rf "$OCM_RUN_DIR"
+	[[ -d "$OCM_RUN_DIR" && "$OCM_RUN_DIR" == "${TMPDIR:-/tmp}"/*/ocm-* ]] && rm -rf "$OCM_RUN_DIR"
 }
 
 # ---- Pruning JSONL files ----------------------------------------------------

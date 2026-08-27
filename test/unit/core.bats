@@ -78,7 +78,7 @@ setup() {
 
 @test "sql_escape rejects null bytes" {
   run bash -c '
-    source /Users/sunnyjayaraj345/oc-model-manager/lib/core.sh
+    source "$BATS_TEST_DIRNAME/../../lib/core.sh"
     local null_byte=$(printf "\0")
     local input="test${null_byte}input"
     sql_escape "$input"
@@ -87,12 +87,12 @@ setup() {
 }
 
 @test "sql_escape rejects newlines" {
-  run bash -c "source /Users/sunnyjayaraj345/oc-model-manager/lib/core.sh; sql_escape \$'test\ninput'"
+  run bash -c "source '$BATS_TEST_DIRNAME/../../lib/core.sh'; sql_escape \$'test\ninput'"
   assert_failure
 }
 
 @test "sql_escape rejects carriage returns" {
-  run bash -c "source /Users/sunnyjayaraj345/oc-model-manager/lib/core.sh; sql_escape \$'test\rinput'"
+  run bash -c "source '$BATS_TEST_DIRNAME/../../lib/core.sh'; sql_escape \$'test\rinput'"
   assert_failure
 }
 

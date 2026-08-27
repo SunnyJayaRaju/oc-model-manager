@@ -24,18 +24,22 @@ acquire_lock() {
     # Create lock directory if it doesn't exist
     mkdir -p "$lock_dir" 2>/dev/null || true
     
-    # Use flock on a lock file
-    local lock_fd=200
-    exec {lock_fd}>"$lock_file"
+    # Use flock on a lock file. The fd must be remembered (not re-opened)
+    # so release_lock can unlock the SAME open file description — flock
+    # locks are per-fd, so unlocking a freshly-opened fd to the same path
+    # is a no-op and leaves the original lock held.
+    exec {_OCM_LOCK_FD}>"$lock_file"
     local waited_flock=0
-    while ! flock -n "$lock_fd"; do
+    while ! flock -n "$_OCM_LOCK_FD"; do
       (( waited_flock++ >= 100 )) && {
-        exec {lock_fd}>&-
+        exec {_OCM_LOCK_FD}>&-
+        unset _OCM_LOCK_FD
         die "Another ocm run holds the lock ($lock_dir)"
       }
       sleep 0.2
     done
     echo $$ > "$lock_file"
+    echo $$ > "${lock_dir}/pid"
     log_debug "Acquired lock (flock): $lock_dir (PID: $$)"
     return 0
   fi
@@ -77,15 +81,19 @@ release_lock() {
   if _has_flock; then
     local lock_file="${lock_dir}/lock"
     if [[ -f "$lock_file" ]]; then
-      local lock_fd=200
-      exec {lock_fd}>"$lock_file"
-      flock -u "$lock_fd" 2>/dev/null || true
-      exec {lock_fd}>&-
-      # Only remove if we own the lock
+      # Read ownership BEFORE opening the fd — opening with '>' below
+      # truncates the file, so the PID must be captured first or the
+      # ownership check always sees an empty/stale value.
       local locked_pid
-      locked_pid=$(cat "$lock_file" 2>/dev/null || echo "")
+      locked_pid=$(cat "${lock_dir}/pid" 2>/dev/null || echo "")
+      if [[ -n "${_OCM_LOCK_FD:-}" ]]; then
+        flock -u "$_OCM_LOCK_FD" 2>/dev/null || true
+        exec {_OCM_LOCK_FD}>&-
+        unset _OCM_LOCK_FD
+      fi
+      # Only remove if we own the lock
       if [[ "$locked_pid" == "$$" ]]; then
-        rm -f "$lock_file" 2>/dev/null
+        rm -f "$lock_file" "${lock_dir}/pid" 2>/dev/null
         rmdir "$lock_dir" 2>/dev/null || true
         log_debug "Released lock (flock): $lock_dir"
       fi
