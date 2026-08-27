@@ -37,11 +37,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y jq python3 python3-yaml python3-jsonschema sqlite3 coreutils
-          # Install bats from GitHub release
-          curl -sL https://github.com/bats-core/bats-core/releases/download/v1.14.0/bats-v1.14.0.tar.gz | tar -xz
-          sudo mv bats-v1.14.0/bin/bats /usr/local/bin/
-          # Ensure timeout is available
-          which timeout || sudo apt-get install -y coreutils
+          # Install bats from source
+          git clone --depth 1 --branch v1.14.0 https://github.com/bats-core/bats-core.git /tmp/bats
+          cd /tmp/bats
+          sudo ./install.sh /usr/local
       - name: Run unit tests
         run: bats test/unit/
 
@@ -54,11 +53,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y jq python3 python3-yaml python3-jsonschema sqlite3 coreutils
-          # Install bats from GitHub release
-          curl -sL https://github.com/bats-core/bats-core/releases/download/v1.14.0/bats-v1.14.0.tar.gz | tar -xz
-          sudo mv bats-v1.14.0/bin/bats /usr/local/bin/
-          # Ensure timeout is available
-          which timeout || sudo apt-get install -y coreutils
+          # Install bats from source
+          git clone --depth 1 --branch v1.14.0 https://github.com/bats-core/bats-core.git /tmp/bats
+          cd /tmp/bats
+          sudo ./install.sh /usr/local
       - name: Run integration tests
         run: bats test/integration/
 
