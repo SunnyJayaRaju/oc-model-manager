@@ -2,14 +2,16 @@
 
 ```text
 ╔═══════════════════════════════════════════════════════════════════╗
-║  ocm  —  OpenCode Model Manager                                  ║
-║  Enterprise-grade catalog lifecycle for OpenCode models          ║
+║                         ocm                                       ║
+║              OpenCode Model Manager                               ║
+║         Enterprise-grade catalog lifecycle                        ║
 ╚═══════════════════════════════════════════════════════════════════╝
 ```
 
 [![CI](https://github.com/SunnyJayaRaju/oc-model-manager/workflows/CI/CD%20Pipeline/badge.svg?branch=main&style=flat-square)](https://github.com/SunnyJayaRaju/oc-model-manager/actions)
 [![Version](https://img.shields.io/badge/version-2.0.8-blue.svg?style=flat-square)](VERSION)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
+[![Homebrew](https://img.shields.io/badge/homebrew-SunnyJayaRaju%2Focm-orange.svg?style=flat-square)](https://github.com/SunnyJayaRaju/homebrew-ocm)
 
 ---
 
@@ -24,28 +26,36 @@ Managing model catalogs in OpenCode is manual, error-prone, and unsafe. You diff
 ```bash
 # One-time setup
 $ ocm doctor
-✓ Config valid          ~/.config/ocm/config.yaml
-✓ DB accessible         ~/.local/share/opencode/opencode.db
-✓ OpenCode CLI found    /usr/local/bin/opencode
-✓ Disk space OK         42G free
+[19:12:26] INFO  opencode: OK (1.18.25)
+[19:12:26] INFO  python3: OK (Python 3.14.7)
+[19:12:26] INFO  jq: OK
+[19:12:26] INFO  sqlite3: OK
+[19:12:26] INFO  config: OK (~/.config/ocm/config.yaml)
+[19:12:26] INFO  config validation: OK
+[19:12:26] INFO  opencode config: OK (~/.config/opencode/opencode.jsonc)
+[19:12:26] INFO  DB: OK (~/.local/share/opencode/opencode.db)
+[19:12:26] INFO  disk: OK (42G free)
 
 # Daily workflow
 $ ocm audit
-🔍 Diffing catalog...
-   3 new models discovered (kilo/~anthropic/claude-3, ...)
-   0 removed models
-🔬 Probing 3 models (max 4 parallel)...
-   ✓ kilo/~anthropic/claude-3      WORKS (1.2s)
-   ✓ openai/gpt-4o                 WORKS (0.8s)
-   ⚠ openrouter/unknown-model      NOTFOUND
-✅ Apply changes? [y/N] y
-   Whitelist updated: +2, -1
+[19:15:19] INFO  === ocm audit ===
+[19:15:19] INFO  [1/7] Using cached catalog (age: 17h)
+[19:15:19] INFO  [2/7] Whitelist: 12 models
+[19:15:19] INFO  [3/7] NEW: 3 | GONE: 0
+[19:15:19] INFO  [4/7] Probing 3 models (timeout 45s, parallel 4)...
+[19:15:21] INFO  ✓ kilo/~anthropic/claude-3  WORKS (1.2s)
+[19:15:21] INFO  ✓ openai/gpt-4o            WORKS (0.8s)
+[19:15:21] INFO  ⚠ openrouter/unknown-model  NOTFOUND
+[19:15:21] INFO  Apply changes? [y/N] y
+[19:15:21] INFO  Whitelist updated: +2, -1
 
 # Quick dry-run
 $ ocm check --quick
-🔍 Diffing catalog (whitelist only)...
-   1 new model: openai/gpt-4o-mini
-   Exit code: 1 (changes pending)
+[19:15:19] INFO  === ocm check ===
+[19:15:19] INFO  [1/7] Using cached catalog (age: 17h)
+[19:15:19] INFO  [2/7] Whitelist: 12 models
+[19:15:19] INFO  [3/7] NEW: 1 | GONE: 0
+[19:15:20] INFO  Exit code: 1 (changes pending)
 
 # Continuous monitoring
 $ ocm watch              # Runs check + alerts every 6h, never auto-applies
@@ -86,9 +96,10 @@ make install
 
 ### Manual (Pre-built Release)
 ```bash
-# Latest release assets: https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest
-curl -sSL https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest/download/ocm-2.0.8.tar.gz | tar -xz
-sudo cp ocm-2.0.8/bin/ocm /usr/local/bin/
+# Latest release: https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest
+VERSION=$(curl -s https://api.github.com/repos/SunnyJayaRaju/oc-model-manager/releases/latest | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4 | sed 's/^v//')
+curl -sSL "https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest/download/ocm-${VERSION}.tar.gz" | tar -xz
+sudo cp "ocm-${VERSION}/bin/ocm" /usr/local/bin/
 ```
 
 ---
