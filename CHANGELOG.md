@@ -56,6 +56,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: Homebrew job skips entirely (green) when HOMEBREW_TAP_TOKEN not set
 - Updated `softprops/action-gh-release` from v1 to v2
 
+## [2.0.3] - 2026-08-29
+
+### Fixed
+- Homebrew job token check using step output instead of invalid job-level env context
+
+### Changed
+- CI: Fixed workflow YAML parse error caused by `env.HOMEBREW_TAP_TOKEN` in job-level `if`
+
+## [2.0.4] - 2026-08-29
+
+### Fixed
+- Homebrew formula update job now properly skips all steps when HOMEBREW_TAP_TOKEN not set
+
+### Changed
+- CI: Homebrew job uses step-level conditional outputs for graceful skip
+
 ## [2.0.1] - 2026-08-28
 
 ### Fixed
