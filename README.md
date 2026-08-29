@@ -1,7 +1,7 @@
 # ocm — OpenCode Model Manager
 
 [![CI](https://github.com/SunnyJayaRaju/oc-model-manager/workflows/CI/CD%20Pipeline/badge.svg)](https://github.com/SunnyJayaRaju/oc-model-manager/actions)
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](VERSION)
+[![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)](VERSION)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Enterprise-grade model catalog manager for [OpenCode](https://opencode.ai). Handles the full lifecycle: catalog diffing, live probing, alerting, safe application, and continuous monitoring.
@@ -35,8 +35,8 @@ make install
 
 ### Manual
 ```bash
-curl -sSL https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest/download/ocm-2.0.0.tar.gz | tar -xz
-sudo cp ocm-2.0.0/bin/ocm /usr/local/bin/
+curl -sSL https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest/download/ocm-2.0.1.tar.gz | tar -xz
+sudo cp ocm-2.0.1/bin/ocm /usr/local/bin/
 ```
 
 ## Quick Start
