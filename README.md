@@ -9,7 +9,7 @@
 ```
 
 [![CI](https://github.com/SunnyJayaRaju/oc-model-manager/workflows/CI/CD%20Pipeline/badge.svg?branch=main&style=flat-square)](https://github.com/SunnyJayaRaju/oc-model-manager/actions)
-[![Version](https://img.shields.io/badge/version-2.0.8-blue.svg?style=flat-square)](VERSION)
+[![Version](https://img.shields.io/badge/version-2.0.10-blue.svg?style=flat-square)](VERSION)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 [![Homebrew](https://img.shields.io/badge/homebrew-SunnyJayaRaju%2Focm-orange.svg?style=flat-square)](https://github.com/SunnyJayaRaju/homebrew-ocm)
 
