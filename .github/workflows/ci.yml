@@ -93,10 +93,12 @@ jobs:
         with:
           name: ocm-release
           path: dist/
+      - name: List downloaded files
+        run: ls -la dist/
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/**/ocm-*.tar.gz dist/**/ocm-*.tar.gz.sha256
+          files: dist/ocm-*.tar.gz dist/ocm-*.tar.gz.sha256
           generate_release_notes: true
 
   homebrew:
