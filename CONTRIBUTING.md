@@ -83,9 +83,10 @@ make lint
 3. Make your changes
 4. Run tests: `make test`
 5. Run linting: `make lint`
-6. Commit with descriptive messages
-7. Push to your fork
-8. Open a Pull Request
+6. **Update documentation:** Any PR that adds a feature, changes a command's behavior, or changes a flag MUST update `README.md` and `CHANGELOG.md` in the same PR.
+7. Commit with descriptive messages
+8. Push to your fork
+9. Open a Pull Request
 
 ### Commit Message Format
 

@@ -1,28 +1,79 @@
 # ocm — OpenCode Model Manager
 
-[![CI](https://github.com/SunnyJayaRaju/oc-model-manager/workflows/CI/CD%20Pipeline/badge.svg)](https://github.com/SunnyJayaRaju/oc-model-manager/actions)
-[![Version](https://img.shields.io/badge/version-2.0.4-blue.svg)](VERSION)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+```text
+╔═══════════════════════════════════════════════════════════════════╗
+║  ocm  —  OpenCode Model Manager                                  ║
+║  Enterprise-grade catalog lifecycle for OpenCode models          ║
+╚═══════════════════════════════════════════════════════════════════╝
+```
 
-Enterprise-grade model catalog manager for [OpenCode](https://opencode.ai). Handles the full lifecycle: catalog diffing, live probing, alerting, safe application, and continuous monitoring.
+[![CI](https://github.com/SunnyJayaRaju/oc-model-manager/workflows/CI/CD%20Pipeline/badge.svg?branch=main&style=flat-square)](https://github.com/SunnyJayaRaju/oc-model-manager/actions)
+[![Version](https://img.shields.io/badge/version-2.0.8-blue.svg?style=flat-square)](VERSION)
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 
-## Features
+---
 
-- **Catalog Management**: Diff upstream catalog against whitelist, discover new models, detect removed models
-- **Live Probing**: Test models with configurable timeouts, parallel execution, and intelligent status detection (WORKS, EOL, PAYWALLED, BROKEN, TIMEOUT, NOTFOUND)
-- **Safety First**: Session cleanup only removes *this run's* probe sessions (verified via exact prompt match in DB), mass-removal guard prevents catastrophic whitelist wipes
-- **Alerting**: Desktop notifications, webhook support, alert history with severity levels
-- **Scheduler**: launchd (macOS) / systemd (Linux) integration for continuous monitoring
-- **Session Management**: Backup/restore sessions to replayable SQL dumps
-- **Health Checks**: `doctor` command validates entire stack
-- **Observability**: Structured JSON logging, Prometheus metrics
-- **Configuration**: YAML config with JSON Schema validation
+## Why ocm?
+
+Managing model catalogs in OpenCode is manual, error-prone, and unsafe. You diff catalogs by hand, probe models one by one, and risk wiping your whitelist with a bad apply. **ocm automates the full lifecycle**: catalog diffing → live probing → safety-gated apply → continuous monitoring — all with built-in guards so you never lose a working model or apply a broken one.
+
+---
+
+## At a Glance
+
+```bash
+# One-time setup
+$ ocm doctor
+✓ Config valid          ~/.config/ocm/config.yaml
+✓ DB accessible         ~/.local/share/opencode/opencode.db
+✓ OpenCode CLI found    /usr/local/bin/opencode
+✓ Disk space OK         42G free
+
+# Daily workflow
+$ ocm audit
+🔍 Diffing catalog...
+   3 new models discovered (kilo/~anthropic/claude-3, ...)
+   0 removed models
+🔬 Probing 3 models (max 4 parallel)...
+   ✓ kilo/~anthropic/claude-3      WORKS (1.2s)
+   ✓ openai/gpt-4o                 WORKS (0.8s)
+   ⚠ openrouter/unknown-model      NOTFOUND
+✅ Apply changes? [y/N] y
+   Whitelist updated: +2, -1
+
+# Quick dry-run
+$ ocm check --quick
+🔍 Diffing catalog (whitelist only)...
+   1 new model: openai/gpt-4o-mini
+   Exit code: 1 (changes pending)
+
+# Continuous monitoring
+$ ocm watch              # Runs check + alerts every 6h, never auto-applies
+$ ocm scheduler install  # Install as launchd (macOS) or systemd (Linux) service
+```
+
+---
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Commands](#commands)
+- [Global Options](#global-options)
+- [Configuration](#configuration)
+- [Safety Guarantees](#safety-guarantees)
+- [Architecture](#architecture)
+- [Development](#development)
+- [License](#license)
+- [Contributing](#contributing)
+
+---
 
 ## Installation
 
-### Homebrew (macOS/Linux)
+### Homebrew (macOS / Linux)
 ```bash
-brew tap user/ocm
+brew tap SunnyJayaRaju/ocm
 brew install ocm
 ```
 
@@ -33,33 +84,38 @@ cd oc-model-manager
 make install
 ```
 
-### Manual
+### Manual (Pre-built Release)
 ```bash
-curl -sSL https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest/download/ocm-2.0.1.tar.gz | tar -xz
-sudo cp ocm-2.0.1/bin/ocm /usr/local/bin/
+# Latest release assets: https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest
+curl -sSL https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest/download/ocm-2.0.8.tar.gz | tar -xz
+sudo cp ocm-2.0.8/bin/ocm /usr/local/bin/
 ```
+
+---
 
 ## Quick Start
 
 ```bash
 # One-time setup
-ocm config show          # View configuration
-ocm doctor               # Verify installation
+ocm config show          # View current configuration
+ocm doctor               # Verify installation (config, DB, auth, disk)
 
 # Daily workflow
-ocm audit                # Full audit: diff → probe → confirm → apply
+ocm audit                # Full cycle: diff → probe → confirm → apply
 ocm check                # Dry-run only (exit 1 if changes pending)
-ocm status               # Show whitelist + recent probe results
+ocm status               # Show whitelisted models + recent probe results
 
 # Continuous monitoring
-ocm watch                # Check every 6h, never auto-applies
-ocm scheduler install    # Install as background service
+ocm watch                # Check + alert on interval (never auto-applies)
+ocm scheduler install    # Install as background service (launchd/systemd)
 
 # Ad-hoc
-ocm probe openai/gpt-4   # Test single model
+ocm probe openai/gpt-4   # Test a single model now
 ocm alerts               # View alert history
-ocm session backup ses_abc  # Backup session
+ocm session backup ses_abc  # Backup session to SQL dump
 ```
+
+---
 
 ## Commands
 
@@ -71,11 +127,14 @@ ocm session backup ses_abc  # Backup session
 | `alerts [--clear]` | Show/clear recorded alerts |
 | `probe <model>` | Test one model now |
 | `watch` | Run check+alert on interval (never auto-applies) |
-| `scheduler [install|uninstall|status]` | Manage background scheduler |
-| `session [list|backup|restore|cleanup]` | Session management |
-| `config [show|validate|edit|schema|path]` | Configuration management |
+| `scheduler [install\|uninstall\|status]` | Manage background scheduler |
+| `session [list\|backup\|restore\|cleanup]` | Session management |
+| `config [show\|validate\|edit\|schema\|path]` | Configuration management |
 | `doctor` | Health check: config, DB, auth, disk |
 | `version` | Show version |
+| `help` | Show help |
+
+---
 
 ## Global Options
 
@@ -87,6 +146,9 @@ ocm session backup ses_abc  # Backup session
 | `--json` | Output JSON (machine-readable) |
 | `--config <path>` | Override config file |
 | `--verbose, -v` | Verbose logging |
+| `--help, -h` | Show help |
+
+---
 
 ## Configuration
 
@@ -143,21 +205,39 @@ logging:
 
 See `ocm config schema` for full schema.
 
+---
+
+## Features
+
+- **Catalog Management** — Diff upstream catalog against whitelist, discover new models, detect removed models
+- **Live Probing** — Test models with configurable timeouts, parallel execution, and intelligent status detection (WORKS, EOL, PAYWALLED, BROKEN, TIMEOUT, NOTFOUND)
+- **Safety First** — Session cleanup only removes *this run's* probe sessions (verified via exact prompt match in DB); mass-removal guard prevents catastrophic whitelist wipes
+- **Alerting** — Desktop notifications, webhook support, alert history with severity levels
+- **Scheduler** — launchd (macOS) / systemd (Linux) integration for continuous monitoring
+- **Session Management** — Backup/restore sessions to replayable SQL dumps
+- **Health Checks** — `doctor` command validates entire stack (config, DB, auth, disk)
+- **Observability** — Structured JSON logging (`--json`), Prometheus metrics
+- **Configuration** — YAML config with JSON Schema validation (`ocm config validate`)
+
+---
+
 ## Safety Guarantees
 
-1. **Session Isolation**: Only sessions created during *this run* with the exact probe prompt (`Reply with exactly: OK`) in the first message are deleted. Real conversations are never touched.
+1. **Session Isolation** — Only sessions created during *this run* with the exact probe prompt (`Reply with exactly: OK`) in the first message are deleted. Real conversations are never touched.
 
-2. **Mass Removal Guard**: If >50% of whitelist would be removed in one run, `ocm` refuses to apply (override with `OCM_ALLOW_MASS_REMOVE=1`).
+2. **Mass Removal Guard** — If >50% of whitelist would be removed in one run, `ocm` refuses to apply (override with `OCM_ALLOW_MASS_REMOVE=1`).
 
-3. **Config Backups**: Every apply creates a timestamped backup (`opencode.json.ocm-backup-YYYYMMDD-HHMMSS`).
+3. **Config Backups** — Every apply creates a timestamped backup (`opencode.json.ocm-backup-YYYYMMDD-HHMMSS`).
 
-4. **Graveyard Cooldown**: Deliberately removed models won't be re-probed as "new" for 24h.
+4. **Graveyard Cooldown** — Deliberately removed models won't be re-probed as "new" for 24h.
 
-5. **Two-Failure Rule**: Transient failures (BROKEN, TIMEOUT, PAYWALLED) require 2 consecutive failed probes before removal.
+5. **Two-Failure Rule** — Transient failures (BROKEN, TIMEOUT, PAYWALLED) require 2 consecutive failed probes before removal.
+
+---
 
 ## Architecture
 
-```
+```text
 ocm (entry point)
 ├── lib/
 │   ├── core.sh        # Shared utilities, validation
@@ -177,6 +257,8 @@ ocm (entry point)
 └── packaging/         # Homebrew, deb, rpm
 ```
 
+---
+
 ## Development
 
 ```bash
@@ -191,11 +273,18 @@ make build
 
 # Install locally
 make install
+
+# Check version consistency
+make version-check
 ```
+
+---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](LICENSE) for details.
+
+---
 
 ## Contributing
 
@@ -204,5 +293,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 3. Make changes with tests
 4. Run `make lint test`
 5. Submit a PR
+
+**Documentation rule:** Any PR that adds a feature, changes a command's behavior, or changes a flag **MUST** update `README.md` and `CHANGELOG.md` in the same PR.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
