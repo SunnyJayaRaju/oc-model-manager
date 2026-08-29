@@ -47,7 +47,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Umask 077 for state directories
 - Read-only DB connections for queries
 
-## [1.0.0] - 2026-08-26
+## [2.0.2] - 2026-08-29
+
+### Fixed
+- Homebrew release workflow now fails gracefully when tap token/repo not configured
+
+### Changed
+- CI: Homebrew job skips entirely (green) when HOMEBREW_TAP_TOKEN not set
+- Updated `softprops/action-gh-release` from v1 to v2
+
+## [2.0.1] - 2026-08-28
+
+### Fixed
+- Config parsing hardened with stricter validation
+- Session handling improved (backup/restore reliability)
+- TMPDIR unbound variable in session cleanup
+- flock lock acquisition/release file descriptor leak
+- Hardcoded test paths in integration tests
+- Bats installation reliability in CI
+- Integration test dependencies (generic package versions)
+- Shellcheck v0.11.0 pinned for consistent linting
+
+### Changed
+- CI: Bats installed from source (v1.14.0) for reliability
+- CI: Integration test dependencies use generic versions
+
+### Documentation
+- README updated for v2.0.1
+
+## [2.0.0] - 2026-08-27
 
 ### Added
 - Initial `oc-model-manager` script (single-file, 681 lines)
