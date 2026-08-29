@@ -1,14 +1,10 @@
 # ocm — OpenCode Model Manager
 
-```text
-╔═══════════════════════════════════════════════════════════════════╗
-║                         ocm                                       ║
-║              OpenCode Model Manager                               ║
-║         Enterprise-grade catalog lifecycle                        ║
-╚═══════════════════════════════════════════════════════════════════╝
-```
+<p align="center">
+  <img src=".github/assets/banner.svg" alt="ocm — OpenCode Model Manager" width="800"/>
+</p>
 
-[![CI](https://github.com/SunnyJayaRaju/oc-model-manager/workflows/CI/CD%20Pipeline/badge.svg?branch=main&style=flat-square)](https://github.com/SunnyJayaRaju/oc-model-manager/actions)
+[![CI](https://github.com/SunnyJayaRaju/oc-model-manager/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square)](https://github.com/SunnyJayaRaju/oc-model-manager/actions)
 [![Version](https://img.shields.io/badge/version-2.0.10-blue.svg?style=flat-square)](VERSION)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 [![Homebrew](https://img.shields.io/badge/homebrew-SunnyJayaRaju%2Focm-orange.svg?style=flat-square)](https://github.com/SunnyJayaRaju/homebrew-ocm)
