@@ -4,11 +4,25 @@
 # test/unit/core.bats — Core utility tests
 # ============================================================================
 
+bats_require_minimum_version 1.5.0
+
 load '../helpers/bats-support/load'
 load '../helpers/bats-assert/load'
 
 setup() {
-  source "$BATS_TEST_DIRNAME/../helpers/setup_libs.bash"
+  source "$BATS_TEST_DIRNAME/../../lib/core.sh"
+  source "$BATS_TEST_DIRNAME/../../lib/logging.sh"
+  source "$BATS_TEST_DIRNAME/../../lib/locking.sh"
+  # Mock die to avoid calling log_fatal/cleanup_run_dir/release_lock
+  die() {
+    echo "$*" >&2
+    return 1
+  }
+}
+
+teardown() {
+  # Clean up any test config files
+  rm -f /tmp/ocm-test-config-*.yaml
 }
 
 @test "validate_positive_int accepts valid integers" {
@@ -77,12 +91,10 @@ setup() {
 }
 
 @test "sql_escape rejects null bytes" {
-  run bash -c '
-    source "$BATS_TEST_DIRNAME/../../lib/core.sh"
-    local null_byte=$(printf "\0")
-    local input="test${null_byte}input"
-    sql_escape "$input"
-  '
+  skip "bash cannot pass null bytes in variables; tested via command substitution which strips them"
+  local input
+  input=$(printf 'test\0input')
+  run sql_escape "$input"
   assert_failure
 }
 

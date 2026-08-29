@@ -148,9 +148,12 @@ array_dedup() {
 		fi
 		idx=$((idx + 1))
 	done
-	# Write back to original array
-	eval "${var_name}=()"
-	for item in "${result[@]}"; do
-		eval "${var_name}+=(\"\$item\")"
-	done
+	# Write back to original array without eval
+	# Build newline-separated string from result
+	local output
+	printf -v output '%s\n' "${result[@]}"
+	# Remove trailing newline
+	output="${output%$'\n'}"
+	# Convert back to array using mapfile
+	mapfile -t "$var_name" <<<"$output"
 }

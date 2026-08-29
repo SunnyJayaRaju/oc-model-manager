@@ -202,53 +202,65 @@ SCHEMA
 
 # ---- Load Configuration -----------------------------------------------------
 load_config() {
-  local config_file="${OCM_CONFIG_OVERRIDE:-$DEFAULT_CONFIG_FILE}"
-  config_file="${config_file/#\~/$HOME}"
+	local config_file="${OCM_CONFIG_OVERRIDE:-$DEFAULT_CONFIG_FILE}"
+	config_file="${config_file/#\~/$HOME}"
 
-  OCM_CONFIG_FILE="$config_file"
-  OCM_STATE_DIR="${OCM_STATE_DIR:-$DEFAULT_STATE_DIR}"
-  OCM_STATE_DIR="${OCM_STATE_DIR/#\~/$HOME}"
+	OCM_CONFIG_FILE="$config_file"
+	OCM_STATE_DIR="${OCM_STATE_DIR:-$DEFAULT_STATE_DIR}"
+	OCM_STATE_DIR="${OCM_STATE_DIR/#\~/$HOME}"
 
-  # Create directories
-  mkdir -p "$(dirname "$config_file")" "$OCM_STATE_DIR"
-  chmod 700 "$OCM_STATE_DIR" 2>/dev/null || true
+	# Create directories
+	mkdir -p "$(dirname "$config_file")" "$OCM_STATE_DIR"
+	chmod 700 "$OCM_STATE_DIR" 2>/dev/null || true
 
-  # If config doesn't exist, create default
-  if [[ ! -f "$config_file" ]]; then
-    create_default_config "$config_file"
-  fi
+	# If config doesn't exist, create default
+	if [[ ! -f "$config_file" ]]; then
+		create_default_config "$config_file"
+	fi
 
-  # Validate with Python (jsonschema)
-  if ! validate_config "$config_file"; then
-    die "Configuration validation failed: $config_file"
-  fi
+	# Validate with Python (jsonschema)
+	if ! validate_config "$config_file"; then
+		die "Configuration validation failed: $config_file"
+	fi
 
-  # Parse YAML with Python (more reliable than bash)
-  local config_vars
-  config_vars=$(parse_config_yaml "$config_file")
-  # Write to temp file and source to avoid eval injection
-  local vars_file
-  vars_file=$(mktemp)
-  printf '%s\n' "$config_vars" > "$vars_file"
-  # shellcheck disable=SC1090
-  source "$vars_file"
-  rm -f "$vars_file"
+	# Parse YAML with Python (more reliable than bash)
+	local config_vars
+	config_vars=$(parse_config_yaml "$config_file")
+	# Parse line by line safely (no eval/source)
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		# Only accept simple VAR=value assignments (allow lowercase in variable names)
+		if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+			local var="${BASH_REMATCH[1]}"
+			local val="${BASH_REMATCH[2]}"
+			# Strip surrounding quotes if present
+			if [[ "$val" =~ ^\"(.*)\"$ ]]; then
+				val="${BASH_REMATCH[1]}"
+			elif [[ "$val" =~ ^\'(.*)\'$ ]]; then
+				val="${BASH_REMATCH[1]}"
+			fi
+			# Use declare -g to safely set global variable (no eval)
+			declare -g "$var=$val"
+		else
+			log_warn "Ignoring unexpected config output line: $line"
+		fi
+	done <<<"$config_vars"
 
-  # Set derived paths
-  OCM_AUDIT_DIR="${OCM_AUDIT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/ocm.XXXXXX")}"
-  OCM_STAMP="$(date +%Y%m%d-%H%M%S)"
-  OCM_RUN_DIR="$(mktemp -d "${OCM_AUDIT_DIR}/run-XXXXXX")"
-  OCM_LOG_FILE="$OCM_RUN_DIR/audit.log"
-  OCM_RESULTS_FILE="$OCM_RUN_DIR/results.tsv"
-  OCM_LOCK_DIR="$OCM_STATE_DIR/.lock"
+	# Set derived paths
+	OCM_AUDIT_DIR="${OCM_AUDIT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/ocm.XXXXXX")}"
+	OCM_STAMP="$(date +%Y%m%d-%H%M%S)"
+	OCM_RUN_DIR="$(mktemp -d "${OCM_AUDIT_DIR}/run-XXXXXX")"
+	OCM_LOG_FILE="$OCM_RUN_DIR/audit.log"
+	OCM_RESULTS_FILE="$OCM_RUN_DIR/results.tsv"
+	OCM_LOCK_DIR="$OCM_STATE_DIR/.lock"
 
-  # Export for subprocesses
-  export OCM_CONFIG_FILE OCM_STATE_DIR OCM_AUDIT_DIR OCM_RUN_DIR OCM_LOG_FILE
+	# Export for subprocesses
+	export OCM_CONFIG_FILE OCM_STATE_DIR OCM_AUDIT_DIR OCM_RUN_DIR OCM_LOG_FILE
 }
 
 create_default_config() {
-  local file="$1"
-  cat > "$file" <<'EOF'
+	local file="$1"
+	cat >"$file" <<'EOF'
 # ocm — OpenCode Model Manager Configuration
 # See: ocm config schema
 version: 1
@@ -299,12 +311,12 @@ logging:
   format: text
   file_enabled: true
 EOF
-  log_info "Created default config: $file"
+	log_info "Created default config: $file"
 }
 
 validate_config() {
-  local file="$1"
-  python3 - <<'PYEOF' "$file" "$CONFIG_SCHEMA"
+	local file="$1"
+	python3 - "$file" "$CONFIG_SCHEMA" <<'PYEOF'
 import sys, yaml, json, jsonschema
 from pathlib import Path
 
@@ -328,8 +340,8 @@ PYEOF
 }
 
 parse_config_yaml() {
-  local file="$1"
-  python3 - <<'PYEOF' "$file"
+	local file="$1"
+	python3 - "$file" <<'PYEOF'
 import sys, yaml, os
 from pathlib import Path
 
@@ -380,40 +392,40 @@ PYEOF
 
 # ---- Config Commands --------------------------------------------------------
 cmd_config() {
-  local subcmd="${1:-show}"
-  shift || true
+	local subcmd="${1:-show}"
+	shift || true
 
-  case "$subcmd" in
-    show)
-      [[ -f "$OCM_CONFIG_FILE" ]] && cat "$OCM_CONFIG_FILE" || echo "No config file found"
-      ;;
-    validate)
-      validate_config "$OCM_CONFIG_FILE" && echo "Config is valid"
-      ;;
-    edit)
-      local editor="${EDITOR:-${VISUAL:-vim}}"
-      if ! command -v "${editor%% *}" >/dev/null 2>&1; then
-        log_error "No editor found. Set EDITOR or VISUAL environment variable, or install vim/nano"
-        return 1
-      fi
-      $editor "$OCM_CONFIG_FILE"
-      ;;
-    schema)
-      echo "$CONFIG_SCHEMA"
-      ;;
-    path)
-      echo "$OCM_CONFIG_FILE"
-      ;;
-    *)
-      log_error "Unknown config command: $subcmd"
-      return 1
-      ;;
-  esac
+	case "$subcmd" in
+	show)
+		[[ -f "$OCM_CONFIG_FILE" ]] && cat "$OCM_CONFIG_FILE" || echo "No config file found"
+		;;
+	validate)
+		validate_config "$OCM_CONFIG_FILE" && echo "Config is valid"
+		;;
+	edit)
+		local editor="${EDITOR:-${VISUAL:-vim}}"
+		if ! command -v "${editor%% *}" >/dev/null 2>&1; then
+			log_error "No editor found. Set EDITOR or VISUAL environment variable, or install vim/nano"
+			return 1
+		fi
+		$editor "$OCM_CONFIG_FILE"
+		;;
+	schema)
+		echo "$CONFIG_SCHEMA"
+		;;
+	path)
+		echo "$OCM_CONFIG_FILE"
+		;;
+	*)
+		log_error "Unknown config command: $subcmd"
+		return 1
+		;;
+	esac
 }
 
 # ---- Environment Variable Override Helpers ---------------------------------
 get_env_or_config() {
-  local env_var="$1" config_var="$2" default="$3"
-  local val="${!env_var:-${!config_var:-$default}}"
-  echo "$val"
+	local env_var="$1" config_var="$2" default="$3"
+	local val="${!env_var:-${!config_var:-$default}}"
+	echo "$val"
 }

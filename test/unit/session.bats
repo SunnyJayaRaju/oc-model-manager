@@ -9,10 +9,7 @@ load '../helpers/bats-assert/load'
 
 setup() {
   source "$BATS_TEST_DIRNAME/../helpers/setup_libs.bash"
-  echo "DEBUG: Before mock_sqlite3, sqlite3 = $(which sqlite3)" >&2
-  mock_sqlite3
-  echo "DEBUG: After mock_sqlite3, sqlite3 = $(which sqlite3)" >&2
-  echo "DEBUG: PATH = $PATH" >&2
+  # Use real sqlite3 directly, no mock needed for session tests
   create_test_db
 }
 

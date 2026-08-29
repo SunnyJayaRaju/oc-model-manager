@@ -106,7 +106,7 @@ batch_get_fresh_probe_sessions() {
 	while IFS= read -r sid; do
 		[[ -n "$sid" ]] && echo "$sid"
 	done < <(sqlite3 -readonly "$OCM_OPencode_DB" \
-		"SELECT id FROM session WHERE id IN ($in_clause) AND time_created > (strftime('%s','now')-${fresh_hours}*3600)*1000 AND EXISTS (SELECT 1 FROM message WHERE session_id=id) LIMIT 1;" \
+		"SELECT id FROM session WHERE id IN ($in_clause) AND time_created > (strftime('%s','now')-${fresh_hours}*3600)*1000 AND EXISTS (SELECT 1 FROM message WHERE session_id=session.id) LIMIT 1;" \
 		2>/dev/null)
 }
 
