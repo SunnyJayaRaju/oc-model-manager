@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Exit code convention: dry-run exits 0 when no changes needed, 1 when changes pending (matches `ocm check`)
 
+### Breaking
+- **BREAKING**: Renamed CLI from `ocm` to `ocprobe` — naming collisions with existing OCM/OpenCode-ecosystem tools. Binary, config dir (`~/.config/ocprobe/`), state dir (`~/.local/state/ocprobe/`), env var prefix (`OCPROBE_*`), log banners, backup suffix (`.ocprobe-backup-*`), and package names updated. Migration: on first run, existing `~/.config/ocm/config.yaml` is copied to new location if no new config exists.
+
 ## [2.0.0] - 2026-08-27
 
 ### Added
