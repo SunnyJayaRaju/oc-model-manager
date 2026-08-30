@@ -134,6 +134,8 @@ ocm session backup ses_abc  # Backup session to SQL dump
 | `alerts [--clear]` | Show/clear recorded alerts |
 | `probe <model>` | Test one model now |
 | `watch` | Run check+alert on interval (never auto-applies) |
+| `validate [--provider <id>] [--model <id>] [--apply] [--json]` | Probe all models for configured providers, blacklist failures |
+| `validate restore` | Revert opencode.json from last validate backup |
 | `scheduler [install\|uninstall\|status]` | Manage background scheduler |
 | `session [list\|backup\|restore\|cleanup]` | Session management |
 | `config [show\|validate\|edit\|schema\|path]` | Configuration management |
@@ -225,6 +227,55 @@ See `ocm config schema` for full schema.
 - **Health Checks** — `doctor` command validates entire stack (config, DB, auth, disk)
 - **Observability** — Structured JSON logging (`--json`), Prometheus metrics
 - **Configuration** — YAML config with JSON Schema validation (`ocm config validate`)
+
+---
+
+## Validate Command
+
+`ocm validate` probes every model offered by each provider that has valid API credentials in `~/.local/share/opencode/auth.json`. Models that respond successfully (`WORKS`) stay visible in OpenCode's model picker; models that fail (timeout, auth error, billing error, not found, or other error) are added to the provider's `blacklist` in `opencode.json`.
+
+### Usage
+
+```bash
+# Dry-run: show what would be blacklisted (exit 0 if no changes, 1 if changes pending)
+ocm validate
+
+# Apply changes: write blacklist to opencode.json, create backup, verify effect
+ocm validate --apply
+
+# Scope to a single provider
+ocm validate --provider openrouter
+
+# Scope to a single model
+ocm validate --provider nvidia --model nvidia/meta/llama-4-maverick-17b-128e-instruct
+
+# Machine-readable output
+ocm validate --json
+
+# Restore from last validate backup
+ocm validate restore
+```
+
+### Behavior
+
+- **Default is dry-run** — prints a per-provider diff of proposed blacklist additions/removals
+- **Uses blacklist (additive)** — only hides confirmed failures; does not whitelist-only (which would hide unprobed models)
+- **Fresh every run** — no cached/stale blacklisting; every run re-probes all models
+- **Creates backup on `--apply`** — timestamped backup in `~/.local/state/ocm/validate-backups/`
+- **Verifies effect** — re-queries `opencode models` after apply; warns if OpenCode bug #32528 prevents blacklist from taking effect
+- **Exit codes** — 0 = no changes needed; 1 = changes pending (dry-run) or error
+
+### Classification
+
+Each model is classified as:
+| Status | Meaning |
+|--------|---------|
+| `WORKS` | Model responded with expected output |
+| `TIMEOUT` | Probe exceeded timeout |
+| `AUTH_ERROR` | Invalid/missing API key |
+| `BILLING_ERROR` | Payment required, quota exceeded |
+| `NOT_FOUND` | Model EOL, 404, or gone |
+| `ERROR` | Other error (rate limit, server error, etc.) |
 
 ---
 
