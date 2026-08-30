@@ -7,7 +7,7 @@
 [![CI](https://github.com/SunnyJayaRaju/oc-model-manager/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square)](https://github.com/SunnyJayaRaju/oc-model-manager/actions)
 [![Version](https://img.shields.io/badge/version-2.0.10-blue.svg?style=flat-square)](VERSION)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
-[![Homebrew](https://img.shields.io/badge/homebrew-SunnyJayaRaju%2Focprobe-orange.svg?style=flat-square)](https://github.com/SunnyJayaRaju/homebrew-ocm)
+[![Homebrew](https://img.shields.io/badge/homebrew-SunnyJayaRaju%2Focprobe-orange.svg?style=flat-square)](https://github.com/SunnyJayaRaju/homebrew-ocprobe)
 
 ---
 
@@ -82,6 +82,8 @@ $ ocprobe scheduler install  # Install as launchd (macOS) or systemd (Linux) ser
 brew tap SunnyJayaRaju/ocprobe
 brew install ocprobe
 ```
+
+> **Note:** The previous tap `SunnyJayaRaju/ocm` is deprecated. If you previously installed via `brew tap SunnyJayaRaju/ocm && brew install ocm`, please run `brew untap SunnyJayaRaju/ocm` and use the new tap above.
 
 ### From Source
 ```bash

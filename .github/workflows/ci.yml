@@ -8,7 +8,7 @@ on:
     branches: [main, develop]
 
 env:
-  OCM_ROOT: ${{ github.workspace }}
+  OCPROBE_ROOT: ${{ github.workspace }}
 
 jobs:
   lint:
@@ -136,28 +136,27 @@ jobs:
         if: ${{ steps.check_token.outputs.has_token == 'true' }}
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
-      - name: Checkout homebrew-ocm tap repo
+      - name: Checkout homebrew-ocprobe tap repo
         if: ${{ steps.check_token.outputs.has_token == 'true' }}
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/homebrew-ocm
+          repository: ${{ github.repository_owner }}/homebrew-ocprobe
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
   
       - name: Update formula
         if: ${{ steps.check_token.outputs.has_token == 'true' }}
         run: |
-          URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/ocm-${VERSION}.tar.gz"
+          URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/ocprobe-${VERSION}.tar.gz"
           SHA256=$(curl -sL "$URL.sha256" | cut -d' ' -f1)
-          sed -i "s/version \".*\"/version \"${VERSION}\"/" Formula/ocm.rb
-          sed -i "s|url \".*\"|url \"${URL}\"|" Formula/ocm.rb
-          sed -i "s/sha256 \".*\"/sha256 \"${SHA256}\"/" Formula/ocm.rb
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" Formula/ocprobe.rb
+          sed -i "s|url \".*\"|url \"${URL}\"|" Formula/ocprobe.rb
+          sed -i "s/sha256 \".*\"/sha256 \"${SHA256}\"/" Formula/ocprobe.rb
 
       - name: Commit and push
         if: ${{ steps.check_token.outputs.has_token == 'true' }}
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add Formula/ocm.rb
-          git commit -m "Update ocm to v${VERSION}"
+          git add Formula/ocprobe.rb
+          git commit -m "Update ocprobe to v${VERSION}"
           git push
-        
