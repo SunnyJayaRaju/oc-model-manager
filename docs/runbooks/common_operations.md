@@ -6,7 +6,7 @@ This runbook covers common operational tasks for oc-model-manager.
 
 ### Run Full Audit
 ```bash
-ocm audit
+ocprobe audit
 ```
 - Performs full catalog diff, probes new and whitelisted models
 - Prompts for confirmation before applying changes
@@ -14,7 +14,7 @@ ocm audit
 
 ### Quick Check (Dry Run)
 ```bash
-ocm check --quick
+ocprobe check --quick
 ```
 - Fast check: only probes new models, skips whitelist
 - Exits with code 1 if changes pending, 0 if clean
@@ -22,7 +22,7 @@ ocm check --quick
 
 ### Check Status
 ```bash
-ocm status
+ocprobe status
 ```
 - Shows whitelisted models
 - Shows last probe result per model
@@ -30,12 +30,12 @@ ocm status
 
 ### View Alerts
 ```bash
-ocm alerts
+ocprobe alerts
 ```
 Shows all recorded alerts with timestamps.
 
 ```bash
-ocm alerts --clear
+ocprobe alerts --clear
 ```
 Clears alert history.
 
@@ -43,34 +43,34 @@ Clears alert history.
 
 ### Watch Mode (Foreground)
 ```bash
-ocm watch
+ocprobe watch
 ```
 Runs `check` every 6 hours, logs results, never auto-applies.
 
 ```bash
-ocm watch --quick
+ocprobe watch --quick
 ```
 Quick watch mode (only new models).
 
 ### Background Scheduler (macOS)
 ```bash
-ocm scheduler install
+ocprobe scheduler install
 ```
 Installs launchd agent running `check` every 6 hours.
 
 ```bash
-ocm scheduler uninstall
+ocprobe scheduler uninstall
 ```
 Removes the launchd agent.
 
 ```bash
-ocm scheduler status
+ocprobe scheduler status
 ```
 Shows scheduler status.
 
 ### Background Scheduler (Linux)
 ```bash
-ocm scheduler install
+ocprobe scheduler install
 ```
 Installs systemd user timer.
 
@@ -78,58 +78,58 @@ Installs systemd user timer.
 
 ### List Sessions
 ```bash
-ocm session list
+ocprobe session list
 ```
 
 ### Backup Session
 ```bash
-ocm session backup ses_abc123
+ocprobe session backup ses_abc123
 ```
 Creates SQL dump of session in `~/.local/share/opencode/session-backups/`.
 
 ### Restore Session
 ```bash
-ocm session restore /path/to/backup.sql
+ocprobe session restore /path/to/backup.sql
 ```
 
 ### Cleanup Probe Sessions
 ```bash
-ocm session cleanup
+ocprobe session cleanup
 ```
-Removes probe sessions created by ocm (safety: only fresh sessions with probe title).
+Removes probe sessions created by ocprobe (safety: only fresh sessions with probe title).
 
 ## Configuration
 
 ### View Config
 ```bash
-ocm config show
+ocprobe config show
 ```
 
 ### Edit Config
 ```bash
-ocm config edit
+ocprobe config edit
 ```
 
 ### Validate Config
 ```bash
-ocm config validate
+ocprobe config validate
 ```
 
 ### View Schema
 ```bash
-ocm config schema
+ocprobe config schema
 ```
 
 ### Show Config Path
 ```bash
-ocm config path
+ocprobe config path
 ```
 
 ## Health Checks
 
 ### Full Health Check
 ```bash
-ocm doctor
+ocprobe doctor
 ```
 Checks:
 - opencode binary availability
@@ -146,35 +146,35 @@ Checks:
 ## Emergency Procedures
 
 ### Config Corruption Recovery
-1. Check backups: `ls ~/.config/opencode/opencode.json.ocm-backup-*`
-2. Restore latest: `cp ~/.config/opencode/opencode.json.ocm-backup-YYYYMMDD-HHMMSS ~/.config/opencode/opencode.json`
-3. Run `ocm doctor` to verify
+1. Check backups: `ls ~/.config/opencode/opencode.json.ocprobe-backup-*`
+2. Restore latest: `cp ~/.config/opencode/opencode.json.ocprobe-backup-YYYYMMDD-HHMMSS ~/.config/opencode/opencode.json`
+3. Run `ocprobe doctor` to verify
 
 ### Mass Removal Guard Triggered
 If you see: `MASS-REMOVAL GUARD: X/Y whitelisted models flagged dead`
-1. Run `ocm check` to see details
-2. Verify opencode is working: `ocm doctor`
-3. If false positive, override: `OCM_ALLOW_MASS_REMOVE=1 ocm audit`
+1. Run `ocprobe check` to see details
+2. Verify opencode is working: `ocprobe doctor`
+3. If false positive, override: `OCPROBE_ALLOW_MASS_REMOVE=1 ocprobe audit`
 4. Investigate root cause (network, auth, opencode version)
 
 ### Probe Timeouts
 If probes consistently timeout:
-1. Increase timeouts in config: `ocm config edit`
+1. Increase timeouts in config: `ocprobe config edit`
 2. Check network connectivity to model providers
 3. Check opencode auth: `opencode auth status`
 
 ### Scheduler Not Running
 ```bash
-ocm scheduler status
-ocm scheduler install
+ocprobe scheduler status
+ocprobe scheduler install
 # Check logs:
-cat ~/.local/state/ocm/scheduler.log
+cat ~/.local/state/ocprobe/scheduler.log
 ```
 
 ## Escalation
 
 For issues not covered here:
-1. Run `ocm doctor` and collect output
-2. Check logs: `~/.local/state/ocm/audit-*.log`
+1. Run `ocprobe doctor` and collect output
+2. Check logs: `~/.local/state/ocprobe/audit-*.log`
 3. Check opencode logs: `opencode --version`
 4. File issue at: https://github.com/SunnyJayaRaju/oc-model-manager/issues

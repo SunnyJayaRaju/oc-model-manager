@@ -18,7 +18,7 @@ probe:
   timeout_whitelist: 30    # seconds for whitelisted models
   max_parallel: 4          # concurrent probes
   prompt: "Reply with exactly: OK"
-  title_prefix: "ocmm-probe"
+  title_prefix: "ocprobe-probe"
 catalog:
   cache_ttl_hours: 24
   force_refresh: false
@@ -42,7 +42,7 @@ retention:
   graveyard_cooldown_hours: 24
 safety:
   mass_removal_threshold_pct: 50
-  allow_mass_remove_env: "OCM_ALLOW_MASS_REMOVE"
+  allow_mass_remove_env: "OCPROBE_ALLOW_MASS_REMOVE"
 logging:
   level: info
   format: text
@@ -99,4 +99,4 @@ logging:
 
 ## Validation
 
-Run `ocm config validate` to validate your configuration file against this schema.
+Run `ocprobe config validate` to validate your configuration file against this schema.
