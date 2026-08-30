@@ -20,9 +20,9 @@ m="$1"; src="$2"; secs="$3"; prompt="$4"
 t0=$(python3 -c 'import time; print(int(time.time() * 1000))')
 # Portable timeout
 if command -v timeout >/dev/null 2>&1; then
-  res=$(timeout "$secs" opencode run --pure --title ocmm-probe </dev/null -m "$m" "$prompt" 2>&1); rc=$?
+  res=$(timeout "$secs" opencode run --pure --title ocprobe-probe </dev/null -m "$m" "$prompt" 2>&1); rc=$?
 else
-  res=$(perl -e 'alarm $ARGV[0]; exec @ARGV[1..$#ARGV] or exit 127' "$secs" opencode run --pure --title ocmm-probe </dev/null -m "$m" "$prompt" 2>&1); rc=$?
+  res=$(perl -e 'alarm $ARGV[0]; exec @ARGV[1..$#ARGV] or exit 127' "$secs" opencode run --pure --title ocprobe-probe </dev/null -m "$m" "$prompt" 2>&1); rc=$?
 fi
 t1=$(python3 -c 'import time; print(int(time.time() * 1000))')
 
@@ -51,7 +51,7 @@ WORKER
 # Get whitelisted models from opencode config
 list_whitelist() {
 	# shellcheck disable=SC2154
-	python3 - "$OCM_OPencode_CONFIG" <<'PY'
+	python3 - "$OCPROBE_OPencode_CONFIG" <<'PY'
 import json,sys,os
 try:
     cfg=json.load(open(os.path.expanduser(sys.argv[1])))
@@ -66,16 +66,16 @@ PY
 
 # Fetch full catalog (with caching)
 fetch_catalog() {
-	local cache_file="$OCM_STATE_DIR/catalog-cache.json"
+	local cache_file="$OCPROBE_STATE_DIR/catalog-cache.json"
 	local cache_age=$(($(now_s) - $(stat -f %m "$cache_file" 2>/dev/null || echo 0)))
 
-	if [[ $OCM_FORCE_REFRESH -eq 1 || ! -s "$cache_file" || $cache_age -ge $((OCM_CACHE_TTL_HOURS * 3600)) ]]; then
+	if [[ $OCPROBE_FORCE_REFRESH -eq 1 || ! -s "$cache_file" || $cache_age -ge $((OCPROBE_CACHE_TTL_HOURS * 3600)) ]]; then
 		log_info "[1/7] Fetching full catalog..."
-		if ! timeout "${OCM_PROBE_TIMEOUT_NEW:-45}" opencode models 2>/dev/null | sort >"$OCM_RUN_DIR/catalog.raw"; then
+		if ! timeout "${OCPROBE_PROBE_TIMEOUT_NEW:-45}" opencode models 2>/dev/null | sort >"$OCPROBE_RUN_DIR/catalog.raw"; then
 			log_error "opencode models command timed out or failed"
 			return 1
 		fi
-		python3 - "$OCM_RUN_DIR/catalog.raw" "$cache_file" <<'PY'
+		python3 - "$OCPROBE_RUN_DIR/catalog.raw" "$cache_file" <<'PY'
 import json,sys,time
 models=[l.strip() for l in open(sys.argv[1]) if l.strip()]
 tmp=sys.argv[2]+".tmp"
@@ -88,11 +88,11 @@ PY
 
 	local full_count
 	full_count=$(jq '.models|length' "$cache_file")
-	jq -r '.models[]' "$cache_file" >"$OCM_RUN_DIR/catalog.txt"
+	jq -r '.models[]' "$cache_file" >"$OCPROBE_RUN_DIR/catalog.txt"
 	log_info "      Full catalog: $full_count models"
 
 	# Validate format
-	if ! grep -qE '^[a-zA-Z0-9_./:~:-]+/[a-zA-Z0-9_./:~:-]+$' "$OCM_RUN_DIR/catalog.txt"; then
+	if ! grep -qE '^[a-zA-Z0-9_./:~:-]+/[a-zA-Z0-9_./:~:-]+$' "$OCPROBE_RUN_DIR/catalog.txt"; then
 		log_warn "Catalog format unexpected, proceeding anyway"
 	fi
 }
@@ -100,38 +100,38 @@ PY
 # ---- Diff Operations --------------------------------------------------------
 compute_diff() {
 	# Current whitelist
-	list_whitelist | sort -u >"$OCM_RUN_DIR/wl.txt"
+	list_whitelist | sort -u >"$OCPROBE_RUN_DIR/wl.txt"
 	local wl_count
-	wl_count=$(wc -l <"$OCM_RUN_DIR/wl.txt" | tr -d ' ')
+	wl_count=$(wc -l <"$OCPROBE_RUN_DIR/wl.txt" | tr -d ' ')
 	log_info "[2/7] Whitelist: $wl_count models"
 
 	# Diff
-	sort -u "$OCM_RUN_DIR/catalog.txt" -o "$OCM_RUN_DIR/catalog.txt"
-	comm -13 "$OCM_RUN_DIR/wl.txt" "$OCM_RUN_DIR/catalog.txt" >"$OCM_RUN_DIR/new.txt"  # in catalog, not whitelisted
-	comm -23 "$OCM_RUN_DIR/wl.txt" "$OCM_RUN_DIR/catalog.txt" >"$OCM_RUN_DIR/gone.txt" # whitelisted, vanished upstream
+	sort -u "$OCPROBE_RUN_DIR/catalog.txt" -o "$OCPROBE_RUN_DIR/catalog.txt"
+	comm -13 "$OCPROBE_RUN_DIR/wl.txt" "$OCPROBE_RUN_DIR/catalog.txt" >"$OCPROBE_RUN_DIR/new.txt"  # in catalog, not whitelisted
+	comm -23 "$OCPROBE_RUN_DIR/wl.txt" "$OCPROBE_RUN_DIR/catalog.txt" >"$OCPROBE_RUN_DIR/gone.txt" # whitelisted, vanished upstream
 
 	# Graveyard filtering (models we deliberately removed)
-	: >"$OCM_RUN_DIR/cooling.txt"
-	if [[ -s "$OCM_STATE_DIR/graveyard.jsonl" ]]; then
-		get_active_graveyard >"$OCM_RUN_DIR/graveyard_active.txt" || : >"$OCM_RUN_DIR/graveyard_active.txt"
-		grep -Fxf "$OCM_RUN_DIR/graveyard_active.txt" "$OCM_RUN_DIR/new.txt" >>"$OCM_RUN_DIR/cooling.txt" 2>/dev/null || : >"$OCM_RUN_DIR/cooling.txt"
-		grep -Fvf "$OCM_RUN_DIR/cooling.txt" "$OCM_RUN_DIR/new.txt" >"$OCM_RUN_DIR/new.fresh" 2>/dev/null || : >"$OCM_RUN_DIR/new.fresh"
-		mv "$OCM_RUN_DIR/new.fresh" "$OCM_RUN_DIR/new.txt"
+	: >"$OCPROBE_RUN_DIR/cooling.txt"
+	if [[ -s "$OCPROBE_STATE_DIR/graveyard.jsonl" ]]; then
+		get_active_graveyard >"$OCPROBE_RUN_DIR/graveyard_active.txt" || : >"$OCPROBE_RUN_DIR/graveyard_active.txt"
+		grep -Fxf "$OCPROBE_RUN_DIR/graveyard_active.txt" "$OCPROBE_RUN_DIR/new.txt" >>"$OCPROBE_RUN_DIR/cooling.txt" 2>/dev/null || : >"$OCPROBE_RUN_DIR/cooling.txt"
+		grep -Fvf "$OCPROBE_RUN_DIR/cooling.txt" "$OCPROBE_RUN_DIR/new.txt" >"$OCPROBE_RUN_DIR/new.fresh" 2>/dev/null || : >"$OCPROBE_RUN_DIR/new.fresh"
+		mv "$OCPROBE_RUN_DIR/new.fresh" "$OCPROBE_RUN_DIR/new.txt"
 	fi
 
-	sort -u "$OCM_RUN_DIR/new.txt" -o "$OCM_RUN_DIR/new.txt"
-	sort -u "$OCM_RUN_DIR/cooling.txt" -o "$OCM_RUN_DIR/cooling.txt"
+	sort -u "$OCPROBE_RUN_DIR/new.txt" -o "$OCPROBE_RUN_DIR/new.txt"
+	sort -u "$OCPROBE_RUN_DIR/cooling.txt" -o "$OCPROBE_RUN_DIR/cooling.txt"
 
 	local new_n gone_n cooling_n
-	new_n=$(wc -l <"$OCM_RUN_DIR/new.txt" | tr -d ' ')
-	gone_n=$(wc -l <"$OCM_RUN_DIR/gone.txt" | tr -d ' ')
-	cooling_n=$(wc -l <"$OCM_RUN_DIR/cooling.txt" | tr -d ' ')
+	new_n=$(wc -l <"$OCPROBE_RUN_DIR/new.txt" | tr -d ' ')
+	gone_n=$(wc -l <"$OCPROBE_RUN_DIR/gone.txt" | tr -d ' ')
+	cooling_n=$(wc -l <"$OCPROBE_RUN_DIR/cooling.txt" | tr -d ' ')
 
 	log_info "[3/7] NEW: $new_n | GONE-from-catalog: $gone_n | known-dead cooling: $cooling_n"
 
 	# Alert on catalog shrink
 	if [[ $gone_n -gt 0 ]]; then
-		while read -r m; do [[ -n "$m" ]] && record_alert "WARNING" "CATALOG_SHRINK" "$m" "removed from upstream catalog"; done <"$OCM_RUN_DIR/gone.txt"
+		while read -r m; do [[ -n "$m" ]] && record_alert "WARNING" "CATALOG_SHRINK" "$m" "removed from upstream catalog"; done <"$OCPROBE_RUN_DIR/gone.txt"
 	fi
 
 	# Snapshot sessions before probing
@@ -146,14 +146,14 @@ probe_model() {
 	local attempt=0
 
 	while :; do
-		local worker="$OCM_RUN_DIR/.worker-retry"
+		local worker="$OCPROBE_RUN_DIR/.worker-retry"
 		write_worker "$worker"
-		local exit_file="$OCM_RUN_DIR/.exit-retry"
+		local exit_file="$OCPROBE_RUN_DIR/.exit-retry"
 		: >"$exit_file"
 
 		# shellcheck disable=SC2016
 		bash -c '"$1" "$2" "$3" "$4" "$5"; echo $? >> "$6"' \
-			_ "$worker" "$model" "$label" "$secs" "$OCM_PROBE_PROMPT" "$exit_file" >>"$OCM_RESULTS_FILE"
+			_ "$worker" "$model" "$label" "$secs" "$OCPROBE_PROBE_PROMPT" "$exit_file" >>"$OCPROBE_RESULTS_FILE"
 
 		local ec
 		ec=$(cat "$exit_file" 2>/dev/null || echo "1")
@@ -181,7 +181,7 @@ probe_batch() {
 	count=$(wc -l <"$file" | tr -d ' ')
 	[[ $count -eq 0 ]] && return 0
 
-	log_info "[4/7] Probing $count $label models (timeout ${secs}s, parallel $OCM_MAX_PARALLEL)..."
+	log_info "[4/7] Probing $count $label models (timeout ${secs}s, parallel $OCPROBE_MAX_PARALLEL)..."
 
 	# Use retry logic for each model
 	local failed=0
@@ -198,26 +198,26 @@ probe_batch() {
 }
 
 run_probes() {
-	: >"$OCM_RESULTS_FILE"
-	probe_batch "$OCM_RUN_DIR/new.txt" "NEW" "$OCM_PROBE_TIMEOUT_NEW"
-	if [[ $OCM_QUICK -eq 0 ]]; then
-		probe_batch "$OCM_RUN_DIR/wl.txt" "WHITELIST" "$OCM_PROBE_TIMEOUT_WL"
+	: >"$OCPROBE_RESULTS_FILE"
+	probe_batch "$OCPROBE_RUN_DIR/new.txt" "NEW" "$OCPROBE_PROBE_TIMEOUT_NEW"
+	if [[ $OCPROBE_QUICK -eq 0 ]]; then
+		probe_batch "$OCPROBE_RUN_DIR/wl.txt" "WHITELIST" "$OCPROBE_PROBE_TIMEOUT_WL"
 	fi
-	[[ -f "$OCM_RESULTS_FILE" ]] || : >"$OCM_RESULTS_FILE"
+	[[ -f "$OCPROBE_RESULTS_FILE" ]] || : >"$OCPROBE_RESULTS_FILE"
 
 	# Record history
 	while IFS=$'\t' read -r _src model status lat; do
 		[[ -n "${model:-}" ]] || continue
 		record_probe_history "$model" "$status" "$lat"
-	done <"$OCM_RESULTS_FILE"
+	done <"$OCPROBE_RESULTS_FILE"
 }
 
 # ---- Alert Processing -------------------------------------------------------
 process_alerts() {
 	local crit_n=0 warn_n=0
 
-	if grep -q '^WHITELIST' "$OCM_RESULTS_FILE" 2>/dev/null; then
-		export OCM_BATCH_MODE=1
+	if grep -q '^WHITELIST' "$OCPROBE_RESULTS_FILE" 2>/dev/null; then
+		export OCPROBE_BATCH_MODE=1
 		while IFS=$'\t' read -r _ model status _; do
 			[[ "$status" == "WORKS" ]] && continue
 			local safe_key="${model//\//_}"
@@ -229,19 +229,19 @@ process_alerts() {
 				record_alert "WARNING" "MODEL_DEGRADED" "$model" "probe failed ($status)"
 				((warn_n++))
 			fi
-		done < <(awk -F'\t' '$1=="WHITELIST" && $3!="WORKS"' "$OCM_RESULTS_FILE")
-		unset OCM_BATCH_MODE
+		done < <(awk -F'\t' '$1=="WHITELIST" && $3!="WORKS"' "$OCPROBE_RESULTS_FILE")
+		unset OCPROBE_BATCH_MODE
 
-		if ((crit_n + warn_n > 0)) && [[ "$OCM_DESKTOP_NOTIFICATIONS" -eq 1 ]]; then
+		if ((crit_n + warn_n > 0)) && [[ "$OCPROBE_DESKTOP_NOTIFICATIONS" -eq 1 ]]; then
 			osascript -e 'on run {t, m}' -e 'display notification m with title t' -e 'end run' \
-				"ocm" "$((crit_n + warn_n)) model(s) failing: $crit_n confirmed dead, $warn_n degraded — run: ocm alerts" >/dev/null 2>&1 || true
+				"ocprobe" "$((crit_n + warn_n)) model(s) failing: $crit_n confirmed dead, $warn_n degraded — run: ocprobe alerts" >/dev/null 2>&1 || true
 		fi
 	fi
 
 	# Alert on new working models
 	while IFS=$'\t' read -r _ model _; do
 		record_alert "INFO" "NEW_MODEL_DISCOVERED" "$model" "new model works — candidate for whitelist"
-	done < <(awk -F'\t' '$1=="NEW" && $3=="WORKS"' "$OCM_RESULTS_FILE")
+	done < <(awk -F'\t' '$1=="NEW" && $3=="WORKS"' "$OCPROBE_RESULTS_FILE")
 }
 
 # ---- Session Cleanup --------------------------------------------------------
@@ -249,7 +249,7 @@ cleanup_probe_sessions() {
 	log_info "[5/7] Cleaning probe sessions..."
 
 	# Get new sessions since baseline
-	local titles_file="$OCM_RUN_DIR/titles.tsv"
+	local titles_file="$OCPROBE_RUN_DIR/titles.tsv"
 	list_sessions_with_titles >"$titles_file"
 
 	local new_sessions=()
@@ -276,14 +276,14 @@ cleanup_probe_sessions() {
 
 		# Age guard
 		if [[ ${is_old_session["$sid"]:-0} -eq 1 ]]; then
-			log_debug "  age-guard: $sid is >${OCM_AGE_GUARD_HOURS}h old — never touching it"
+			log_debug "  age-guard: $sid is >${OCPROBE_AGE_GUARD_HOURS}h old — never touching it"
 			continue
 		fi
 
 		log_debug "new session detected: $sid title='$title'"
 
-		# Probe session check
-		if { [[ "$title" == ${OCM_PROBE_TITLE_PREFIX}* || "$title" == "New session - "* ]] && [[ ${is_fresh_probe_session["$sid"]:-0} -eq 1 ]]; } || is_probe_session "$sid"; then
+		# Probe session check - match both new and legacy prefixes
+		if { [[ "$title" == ${OCPROBE_PROBE_TITLE_PREFIX}* || "$title" == ${OCPROBE_PROBE_TITLE_PREFIX_LEGACY}* || "$title" == "New session - "* ]] && [[ ${is_fresh_probe_session["$sid"]:-0} -eq 1 ]]; } || is_probe_session "$sid"; then
 			delete_session "$sid" && {
 				deleted=$((deleted + 1))
 				log_debug "  deleted test session $sid"
@@ -302,7 +302,7 @@ generate_report() {
 	local -a ADDS=() DEAD=() DEFER=()
 
 	# New working models to add
-	while IFS=$'\t' read -r _ model _; do [[ -n "$model" ]] && ADDS+=("$model"); done < <(awk -F'\t' '$1=="NEW"&&$3=="WORKS"{print $2}' "$OCM_RESULTS_FILE")
+	while IFS=$'\t' read -r _ model _; do [[ -n "$model" ]] && ADDS+=("$model"); done < <(awk -F'\t' '$1=="NEW"&&$3=="WORKS"{print $2}' "$OCPROBE_RESULTS_FILE")
 
 	# Deferred/confirmed dead models
 	while IFS=$'\t' read -r _src model st _lat; do
@@ -312,16 +312,16 @@ generate_report() {
 		else
 			DEFER+=("$model [$st]")
 		fi
-	done < <(awk -F'\t' '$1=="WHITELIST"&&$3!="WORKS"' "$OCM_RESULTS_FILE")
+	done < <(awk -F'\t' '$1=="WHITELIST"&&$3!="WORKS"' "$OCPROBE_RESULTS_FILE")
 
 	# Write dead list for apply
-	printf '%s\n' "${DEAD[@]}" | awk -F' \\[' 'NF{print $1}' >"$OCM_RUN_DIR/dead.txt"
+	printf '%s\n' "${DEAD[@]}" | awk -F' \[' 'NF{print $1}' >"$OCPROBE_RUN_DIR/dead.txt"
 
 	local dead_n=${#DEAD[@]}
 	local ok_count
-	ok_count=$(awk -F'\t' '$1=="WHITELIST"&&$3=="WORKS"' "$OCM_RESULTS_FILE" | wc -l | tr -d ' ')
+	ok_count=$(awk -F'\t' '$1=="WHITELIST"&&$3=="WORKS"' "$OCPROBE_RESULTS_FILE" | wc -l | tr -d ' ')
 	local wl_count
-	wl_count=$(wc -l <"$OCM_RUN_DIR/wl.txt" | tr -d ' ')
+	wl_count=$(wc -l <"$OCPROBE_RUN_DIR/wl.txt" | tr -d ' ')
 
 	# Output report
 	{
@@ -333,16 +333,16 @@ generate_report() {
 		[[ ${#DEAD[@]} -gt 0 ]] && printf '    - %s\n' "${DEAD[@]}" || echo "    none"
 		echo "-- degraded (kept; removes after next failed probe):"
 		[[ ${#DEFER[@]} -gt 0 ]] && printf '    ~ %s\n' "${DEFER[@]}" || echo "    none"
-		if [[ $OCM_QUICK -eq 1 ]] && ! grep -q '^WHITELIST' "$OCM_RESULTS_FILE" 2>/dev/null; then
+		if [[ $OCPROBE_QUICK -eq 1 ]] && ! grep -q '^WHITELIST' "$OCPROBE_RESULTS_FILE" 2>/dev/null; then
 			echo "-- healthy: whitelist not probed this run (--quick)"
 		else
 			echo "-- healthy: $ok_count/$wl_count"
 		fi
-		[[ -s "$OCM_RUN_DIR/gone.txt" ]] && {
+		[[ -s "$OCPROBE_RUN_DIR/gone.txt" ]] && {
 			echo "-- gone upstream:"
-			sed 's/^/    ! /' "$OCM_RUN_DIR/gone.txt"
+			sed 's/^/    ! /' "$OCPROBE_RUN_DIR/gone.txt"
 		}
-		(($(wc -l <"$OCM_RUN_DIR/cooling.txt" | tr -d ' ') > 0)) && echo "-- known-dead, cooling down (${OCM_GRAVEYARD_COOLDOWN_HOURS}h): $(wc -l <"$OCM_RUN_DIR/cooling.txt" | tr -d ' ') skipped"
+		(($(wc -l <"$OCPROBE_RUN_DIR/cooling.txt" | tr -d ' ') > 0)) && echo "-- known-dead, cooling down (${OCPROBE_GRAVEYARD_COOLDOWN_HOURS}h): $(wc -l <"$OCPROBE_RUN_DIR/cooling.txt" | tr -d ' ') skipped"
 		echo "========================================"
 	} >&2
 
@@ -374,10 +374,10 @@ apply_changes() {
 	local pending=$((${#REPORT_ADDS[@]} + dead_n))
 
 	# Mass removal guard
-	if [[ $dead_n -gt 0 && $wl_count -gt 0 ]] && ((dead_n * 100 >= wl_count * OCM_MASS_REMOVAL_THRESHOLD_PCT)) && [[ "${!OCM_ALLOW_MASS_REMOVE_ENV:-0}" != "1" ]]; then
-		log_warn "MASS-REMOVAL GUARD: $dead_n/$wl_count whitelisted models flagged dead (>${OCM_MASS_REMOVAL_THRESHOLD_PCT}%)."
+	if [[ $dead_n -gt 0 && $wl_count -gt 0 ]] && ((dead_n * 100 >= wl_count * OCPROBE_MASS_REMOVAL_THRESHOLD_PCT)) && [[ "${!OCPROBE_ALLOW_MASS_REMOVE_ENV:-0}" != "1" ]]; then
+		log_warn "MASS-REMOVAL GUARD: $dead_n/$wl_count whitelisted models flagged dead (>${OCPROBE_MASS_REMOVAL_THRESHOLD_PCT}%)."
 		log_warn "This pattern usually = probe infrastructure failure, not model death."
-		die "Refusing to apply. Verify environment/probes first; override with ${OCM_ALLOW_MASS_REMOVE_ENV}=1 only if certain."
+		die "Refusing to apply. Verify environment/probes first; override with ${OCPROBE_ALLOW_MASS_REMOVE_ENV}=1 only if certain."
 	fi
 
 	if [[ $pending -eq 0 ]]; then
@@ -385,8 +385,8 @@ apply_changes() {
 		return 0
 	fi
 
-	if [[ $OCM_ASSUME_YES -eq 0 ]]; then
-		printf 'Apply changes to %s? [y/N] ' "$OCM_OPencode_CONFIG" >&2
+	if [[ $OCPROBE_ASSUME_YES -eq 0 ]]; then
+		printf 'Apply changes to %s? [y/N] ' "$OCPROBE_OPencode_CONFIG" >&2
 		read -r ans || ans=""
 		[[ "${ans:-n}" =~ ^[Yy]$ ]] || {
 			log_info "Aborted."
@@ -394,12 +394,12 @@ apply_changes() {
 		}
 	fi
 
-	# Backup
-	cp "$OCM_OPencode_CONFIG" "$OCM_OPencode_CONFIG.ocm-backup-$OCM_STAMP"
-	log_info "[7/7] Applying (backup: $(basename "$OCM_OPencode_CONFIG").ocm-backup-$OCM_STAMP)"
+	# Backup - use new suffix
+	cp "$OCPROBE_OPencode_CONFIG" "$OCPROBE_OPencode_CONFIG.ocprobe-backup-$OCPROBE_STAMP"
+	log_info "[7/7] Applying (backup: $(basename "$OCPROBE_OPencode_CONFIG").ocprobe-backup-$OCPROBE_STAMP)"
 
 	# Apply with Python
-	python3 - "$OCM_OPencode_CONFIG" "$OCM_RESULTS_FILE" "$OCM_RUN_DIR/dead.txt" "$OCM_RUN_DIR/removed.txt" <<'PY'
+	python3 - "$OCPROBE_OPencode_CONFIG" "$OCPROBE_RESULTS_FILE" "$OCPROBE_RUN_DIR/dead.txt" "$OCPROBE_RUN_DIR/removed.txt" <<'PY'
 import json,sys,os
 cfg_p,res_p,dead_p,out_p=sys.argv[1],sys.argv[2],sys.argv[3],sys.argv[4]
 cfg=json.load(open(cfg_p)); prov=cfg.setdefault("provider",{})
@@ -431,16 +431,17 @@ PY
 	# Record removals in graveyard
 	local ts_ms
 	ts_ms=$(ms)
-	while IFS= read -r mid; do [[ -n "$mid" ]] && printf '%s\t%s\n' "$ts_ms" "$mid" >>"$OCM_STATE_DIR/graveyard.jsonl"; done <"$OCM_RUN_DIR/removed.txt"
-	prune_jsonl "$OCM_STATE_DIR/graveyard.jsonl" 2000
+	while IFS= read -r mid; do [[ -n "$mid" ]] && printf '%s\t%s\n' "$ts_ms" "$mid" >>"$OCPROBE_STATE_DIR/graveyard.jsonl"; done <"$OCPROBE_RUN_DIR/removed.txt"
+	prune_jsonl "$OCPROBE_STATE_DIR/graveyard.jsonl" 2000
 
-	# Cleanup old backups
-	find "$(dirname "$OCM_OPencode_CONFIG")" -name '*.ocm-backup-*' -mtime +"$OCM_BACKUP_KEEP_DAYS" -delete 2>/dev/null || true
+	# Cleanup old backups - match both old and new backup suffixes
+	find "$(dirname "$OCPROBE_OPencode_CONFIG")" -name '*.ocm-backup-*' -mtime +"$OCPROBE_BACKUP_KEEP_DAYS" -delete 2>/dev/null || true
+	find "$(dirname "$OCPROBE_OPencode_CONFIG")" -name '*.ocprobe-backup-*' -mtime +"$OCPROBE_BACKUP_KEEP_DAYS" -delete 2>/dev/null || true
 
-	prune_jsonl "$OCM_STATE_DIR/probe-history.jsonl" "$OCM_HISTORY_LIMIT"
-	prune_jsonl "$OCM_STATE_DIR/alerts.jsonl" "$OCM_ALERT_LIMIT"
+	prune_jsonl "$OCPROBE_STATE_DIR/probe-history.jsonl" "$OCPROBE_HISTORY_LIMIT"
+	prune_jsonl "$OCPROBE_STATE_DIR/alerts.jsonl" "$OCPROBE_ALERT_LIMIT"
 
-	log_info "DONE. Log: $OCM_LOG_FILE"
+	log_info "DONE. Log: $OCPROBE_LOG_FILE"
 }
 
 # ---- Command Implementations ------------------------------------------------
@@ -450,8 +451,8 @@ cmd_audit() {
 	acquire_lock
 	trap 'release_lock; cleanup_run_dir' EXIT INT TERM
 
-	log_info "=== ocm audit $(date) ==="
-	audit_log "=== run start mode=audit quick=$OCM_QUICK ==="
+	log_info "=== ocprobe audit $(date) ==="
+	audit_log "=== run start mode=audit quick=$OCPROBE_QUICK ==="
 
 	fetch_catalog
 	compute_diff
@@ -472,8 +473,8 @@ cmd_check() {
 	acquire_lock
 	trap 'release_lock; cleanup_run_dir' EXIT INT TERM
 
-	log_info "=== ocm check $(date) ==="
-	audit_log "=== run start mode=check quick=$OCM_QUICK ==="
+	log_info "=== ocprobe check $(date) ==="
+	audit_log "=== run start mode=check quick=$OCPROBE_QUICK ==="
 
 	fetch_catalog
 	compute_diff
@@ -498,13 +499,13 @@ cmd_status() {
 	list_whitelist | sed 's/^/  /'
 	echo
 	echo "=== last probe result per model ==="
-	if [[ -s "$OCM_STATE_DIR/probe-history.jsonl" ]]; then
-		jq -r '[.model,.status,(.latency_ms|tostring)+"ms",(.ts/1000|todate)] | @tsv' "$OCM_STATE_DIR/probe-history.jsonl" |
+	if [[ -s "$OCPROBE_STATE_DIR/probe-history.jsonl" ]]; then
+		jq -r '[.model,.status,(.latency_ms|tostring)+"ms",(.ts/1000|todate)] | @tsv' "$OCPROBE_STATE_DIR/probe-history.jsonl" |
 			awk '{a[i++]=$0} END{for(j=i-1;j>=0;j--)print a[j]}' | awk -F'\t' '!seen[$1]++' | head -40 | sed 's/^/  /'
 	else echo "  (no history yet)"; fi
 	echo
 	echo "=== alerts (last 10) ==="
-	[[ -s "$OCM_STATE_DIR/alerts.jsonl" ]] && tail -10 "$OCM_STATE_DIR/alerts.jsonl" | jq -r '"  \(.severity)\t\(.type)\t\(.model)\t\(.message)"' || echo "  (none)"
+	[[ -s "$OCPROBE_STATE_DIR/alerts.jsonl" ]] && tail -10 "$OCPROBE_STATE_DIR/alerts.jsonl" | jq -r '"  \(.severity)\t\(.type)\t\(.model)\t\(.message)"' || echo "  (none)"
 }
 
 cmd_alerts() {
@@ -513,17 +514,17 @@ cmd_alerts() {
 	[[ "${1:-}" == "--clear" ]] && clear=1
 
 	if [[ $clear -eq 1 ]]; then
-		: >"$OCM_STATE_DIR/alerts.jsonl"
+		: >"$OCPROBE_STATE_DIR/alerts.jsonl"
 		echo "alerts cleared."
 	else
-		[[ -s "$OCM_STATE_DIR/alerts.jsonl" ]] && jq -r '"\(.ts/1000|todate)\t\(.severity)\t\(.type)\t\(.model): \(.message)"' <"$OCM_STATE_DIR/alerts.jsonl" || echo "(no alerts)"
+		[[ -s "$OCPROBE_STATE_DIR/alerts.jsonl" ]] && jq -r '"\(.ts/1000|todate)\t\(.severity)\t\(.type)\t\(.model): \(.message)"' <"$OCPROBE_STATE_DIR/alerts.jsonl" || echo "(no alerts)"
 	fi
 }
 
 cmd_probe() {
 	local model="${1:-}"
 	[[ -n "$model" ]] || {
-		log_error "usage: ocm probe <provider/model>"
+		log_error "usage: ocprobe probe <provider/model>"
 		exit 1
 	}
 
@@ -533,7 +534,7 @@ cmd_probe() {
 
 	validate_model_name "$model" || die "Invalid model name: $model"
 
-	local worker="$OCM_RUN_DIR/.worker"
+	local worker="$OCPROBE_RUN_DIR/.worker"
 	write_worker "$worker"
 
 	# Snapshot sessions
@@ -541,19 +542,19 @@ cmd_probe() {
 	mapfile -t probe_ses_before < <(opencode session list 2>/dev/null | awk '/^ses_/{print $1}')
 
 	local out
-	out=$("$worker" "$model" "MANUAL" "$OCM_PROBE_TIMEOUT_NEW" "$OCM_PROBE_PROMPT")
+	out=$("$worker" "$model" "MANUAL" "$OCPROBE_PROBE_TIMEOUT_NEW" "$OCPROBE_PROBE_PROMPT")
 	printf '%s\n' "$out"
 	record_probe_history "$model" "$(awk -F'\t' '{print $3}' <<<"$out")" "$(awk -F'\t' '{print $4}' <<<"$out")"
 	rm -f "$worker"
 
-	# Self-clean
+	# Self-clean - match both new and legacy prefixes
 	while IFS=$'\t' read -r sid title; do
-		[[ -n "$sid" && "$title" == ${OCM_PROBE_TITLE_PREFIX}* ]] || continue
+		[[ -n "$sid" && ("$title" == ${OCPROBE_PROBE_TITLE_PREFIX}* || "$title" == ${OCPROBE_PROBE_TITLE_PREFIX_LEGACY}*) ]] || continue
 		[[ " ${probe_ses_before[*]+${probe_ses_before[*]}} " != *" $sid "* ]] || continue
 		local sid_esc
 		sid_esc=$(sql_escape "$sid") || continue
 		# shellcheck disable=SC2154
-		if sqlite3 -readonly "$OCM_OPencode_DB" \
+		if sqlite3 -readonly "$OCPROBE_OPencode_DB" \
 			"SELECT 1 FROM session WHERE id='${sid_esc}' AND time_created > (strftime('%s','now')-3600)*1000 LIMIT 1;" 2>/dev/null | grep -q 1; then
 			delete_session "$sid" && log_info "cleaned probe session $sid"
 		fi
@@ -562,15 +563,15 @@ cmd_probe() {
 
 cmd_watch() {
 	load_config
-	log_info "Watch mode: check+alert every $((OCM_WATCH_SECS / 60)) min — never auto-applies (run 'audit' manually)"
+	log_info "Watch mode: check+alert every $((OCPROBE_WATCH_SECS / 60)) min — never auto-applies (run 'audit' manually)"
 
 	local watch_args=(check)
-	((OCM_QUICK)) && watch_args+=(--quick)
+	((OCPROBE_QUICK)) && watch_args+=(--quick)
 
 	local stop=0
 	trap 'stop=1' INT TERM
 
-	while ((!stop)); do
+	while ((! stop)); do
 		# Call cmd_check directly instead of recursive self-invocation
 		if cmd_check "${watch_args[@]}"; then
 			audit_log "watch: no changes"
@@ -580,7 +581,7 @@ cmd_watch() {
 
 		# Sleep in small increments for signal handling
 		local slept=0
-		while ((slept < OCM_WATCH_SECS && !stop)); do
+		while ((slept < OCPROBE_WATCH_SECS && ! stop)); do
 			sleep 10
 			slept=$((slept + 10))
 		done

@@ -13,16 +13,16 @@ is_probe_session() {
 	local sid="$1"
 	local sid_escaped prompt_escaped
 	sid_escaped=$(sql_escape "$sid") || return 1
-	prompt_escaped=$(sql_escape "$OCM_PROBE_PROMPT") || return 1
+	prompt_escaped=$(sql_escape "$OCPROBE_PROBE_PROMPT") || return 1
 
-	[[ -f "$OCM_OPencode_DB" ]] || return 1
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
 
-	sqlite3 -readonly "$OCM_OPencode_DB" \
+	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
 		"SELECT 1 FROM message m \
      WHERE m.session_id='${sid_escaped}' \
        AND m.id=(SELECT m2.id FROM message m2 WHERE m2.session_id='${sid_escaped}' ORDER BY m2.time_created, m2.id LIMIT 1) \
-       AND (SELECT COUNT(*) FROM message WHERE session_id='${sid_escaped}') <= ${OCM_MAX_MSG_COUNT} \
-       AND m.time_created > (strftime('%s','now')-${OCM_AGE_GUARD_HOURS}*3600)*1000 \
+       AND (SELECT COUNT(*) FROM message WHERE session_id='${sid_escaped}') <= ${OCPROBE_MAX_MSG_COUNT} \
+       AND m.time_created > (strftime('%s','now')-${OCPROBE_AGE_GUARD_HOURS}*3600)*1000 \
        AND EXISTS (SELECT 1 FROM part p WHERE p.message_id=m.id \
                    AND json_extract(p.data,'\$.type')='text' \
                    AND trim(json_extract(p.data,'\$.text'), '\"')='${prompt_escaped}') \
@@ -36,10 +36,10 @@ session_age_ms() {
 	local sid_escaped
 	sid_escaped=$(sql_escape "$sid") || return 1
 
-	[[ -f "$OCM_OPencode_DB" ]] || return 1
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
 
 	local age_ms
-	age_ms=$(sqlite3 -readonly "$OCM_OPencode_DB" \
+	age_ms=$(sqlite3 -readonly "$OCPROBE_OPencode_DB" \
 		"SELECT (strftime('%s','now')*1000) - time_created FROM session WHERE id='${sid_escaped}' LIMIT 1;" \
 		2>/dev/null) || return 1
 
@@ -53,9 +53,9 @@ session_has_messages() {
 	local sid_escaped
 	sid_escaped=$(sql_escape "$sid") || return 1
 
-	[[ -f "$OCM_OPencode_DB" ]] || return 1
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
 
-	sqlite3 -readonly "$OCM_OPencode_DB" \
+	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
 		"SELECT 1 FROM message WHERE session_id='${sid_escaped}' LIMIT 1;" \
 		2>/dev/null | grep -q 1
 }
@@ -63,9 +63,9 @@ session_has_messages() {
 # Batch query: get old sessions (> age guard)
 batch_get_old_sessions() {
 	local -n session_array=$1
-	local age_hours="${2:-$OCM_AGE_GUARD_HOURS}"
+	local age_hours="${2:-$OCPROBE_AGE_GUARD_HOURS}"
 
-	[[ -f "$OCM_OPencode_DB" ]] || return 0
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 0
 	[[ ${#session_array[@]} -eq 0 ]] && return 0
 
 	local in_clause
@@ -80,7 +80,7 @@ batch_get_old_sessions() {
 
 	while IFS= read -r sid; do
 		[[ -n "$sid" ]] && echo "$sid"
-	done < <(sqlite3 -readonly "$OCM_OPencode_DB" \
+	done < <(sqlite3 -readonly "$OCPROBE_OPencode_DB" \
 		"SELECT id FROM session WHERE id IN ($in_clause) AND time_created <= (strftime('%s','now')-${age_hours}*3600)*1000;" \
 		2>/dev/null)
 }
@@ -88,9 +88,9 @@ batch_get_old_sessions() {
 # Batch query: get fresh probe sessions (< fresh guard, has messages)
 batch_get_fresh_probe_sessions() {
 	local -n session_array=$1
-	local fresh_hours="${2:-$OCM_FRESH_GUARD_HOURS}"
+	local fresh_hours="${2:-$OCPROBE_FRESH_GUARD_HOURS}"
 
-	[[ -f "$OCM_OPencode_DB" ]] || return 0
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 0
 	[[ ${#session_array[@]} -eq 0 ]] && return 0
 
 	local in_clause
@@ -105,7 +105,7 @@ batch_get_fresh_probe_sessions() {
 
 	while IFS= read -r sid; do
 		[[ -n "$sid" ]] && echo "$sid"
-	done < <(sqlite3 -readonly "$OCM_OPencode_DB" \
+	done < <(sqlite3 -readonly "$OCPROBE_OPencode_DB" \
 		"SELECT id FROM session WHERE id IN ($in_clause) AND time_created > (strftime('%s','now')-${fresh_hours}*3600)*1000 AND EXISTS (SELECT 1 FROM message WHERE session_id=session.id) LIMIT 1;" \
 		2>/dev/null)
 }
@@ -128,7 +128,7 @@ load_probe_history() {
 	local -n last_status=$1
 	local -n fail_count=$2
 
-	[[ -f "$OCM_STATE_DIR/probe-history.jsonl" ]] || return 0
+	[[ -f "$OCPROBE_STATE_DIR/probe-history.jsonl" ]] || return 0
 
 	local line_num=0
 	while IFS= read -r line; do
@@ -152,7 +152,7 @@ load_probe_history() {
 		else
 			fail_count["$safe_key"]=0
 		fi
-	done <"$OCM_STATE_DIR/probe-history.jsonl"
+	done <"$OCPROBE_STATE_DIR/probe-history.jsonl"
 }
 
 # Record probe result to history
@@ -161,8 +161,8 @@ record_probe_history() {
 	local ts
 	ts=$(ms)
 	jq -cn --argjson ts "$ts" --arg m "$model" --arg s "$status" --argjson l "$latency_ms" \
-		'{ts:$ts,model:$m,status:$s,latency_ms:$l}' >>"$OCM_STATE_DIR/probe-history.jsonl"
-	prune_jsonl "$OCM_STATE_DIR/probe-history.jsonl" "$OCM_HISTORY_LIMIT"
+		'{ts:$ts,model:$m,status:$s,latency_ms:$l}' >>"$OCPROBE_STATE_DIR/probe-history.jsonl"
+	prune_jsonl "$OCPROBE_STATE_DIR/probe-history.jsonl" "$OCPROBE_HISTORY_LIMIT"
 }
 
 # Alert Queries ---------------------------------------------------------------
@@ -173,13 +173,13 @@ record_alert() {
 	ts=$(ms)
 	jq -cn --arg ts "$ts" --arg sev "$severity" --arg type "$type" --arg m "$model" --arg msg "$message" \
 		'{ts:$ts|tonumber, severity:$sev, type:$type, model:$m, message:$msg}' \
-		>>"$OCM_STATE_DIR/alerts.jsonl"
+		>>"$OCPROBE_STATE_DIR/alerts.jsonl"
 	audit_log "ALERT[$severity] $type $model: $message"
 
 	# Desktop notification for critical (non-batch)
-	if [[ "$severity" == "CRITICAL" && "$OCM_BATCH_MODE" -ne 1 && "$OCM_DESKTOP_NOTIFICATIONS" -eq 1 ]]; then
+	if [[ "$severity" == "CRITICAL" && "$OCPROBE_BATCH_MODE" -ne 1 && "$OCPROBE_DESKTOP_NOTIFICATIONS" -eq 1 ]]; then
 		osascript -e 'on run {t, m}' -e 'display notification m with title t' -e 'end run' \
-			"ocm" "$model: $message" >/dev/null 2>&1 || true
+			"ocprobe" "$model: $message" >/dev/null 2>&1 || true
 	fi
 
 	# Webhook URL validation
@@ -192,18 +192,18 @@ record_alert() {
 	}
 
 	# Webhook
-	if [[ -n "$OCM_WEBHOOK_URL" ]]; then
-		if validate_webhook_url "$OCM_WEBHOOK_URL"; then
+	if [[ -n "$OCPROBE_WEBHOOK_URL" ]]; then
+		if validate_webhook_url "$OCPROBE_WEBHOOK_URL"; then
 			curl -sS --max-time 10 -H 'Content-Type: application/json' \
 				-d "$(jq -cn --arg sev "$severity" --arg type "$type" --arg m "$model" --arg msg "$message" \
 					'{text:("["+$sev+"] "+$type+" "+$m+": "+$msg)}')" \
-				"$OCM_WEBHOOK_URL" >/dev/null 2>&1 || true
+				"$OCPROBE_WEBHOOK_URL" >/dev/null 2>&1 || true
 		else
 			log_warn "Invalid webhook URL configured, skipping webhook notification"
 		fi
 	fi
 
-	prune_jsonl "$OCM_STATE_DIR/alerts.jsonl" "$OCM_ALERT_LIMIT"
+	prune_jsonl "$OCPROBE_STATE_DIR/alerts.jsonl" "$OCPROBE_ALERT_LIMIT"
 }
 
 # Graveyard Queries -----------------------------------------------------------
@@ -212,17 +212,17 @@ record_graveyard() {
 	local model="$1"
 	local ts
 	ts=$(ms)
-	printf '%s\t%s\n' "$ts" "$model" >>"$OCM_STATE_DIR/graveyard.jsonl"
-	prune_jsonl "$OCM_STATE_DIR/graveyard.jsonl" 2000
+	printf '%s\t%s\n' "$ts" "$model" >>"$OCPROBE_STATE_DIR/graveyard.jsonl"
+	prune_jsonl "$OCPROBE_STATE_DIR/graveyard.jsonl" 2000
 }
 
 get_active_graveyard() {
 	local cutoff_ms
-	cutoff_ms=$(python3 -c "import time;print(int((time.time()-${OCM_GRAVEYARD_COOLDOWN_HOURS}*3600)*1000))")
+	cutoff_ms=$(python3 -c "import time;print(int((time.time()-${OCPROBE_GRAVEYARD_COOLDOWN_HOURS}*3600)*1000))")
 
-	[[ -f "$OCM_STATE_DIR/graveyard.jsonl" ]] || return 0
+	[[ -f "$OCPROBE_STATE_DIR/graveyard.jsonl" ]] || return 0
 
 	awk -F'\t' -v c="$cutoff_ms" '
     NF >= 2 && $1 >= c { print $2 }
-  ' "$OCM_STATE_DIR/graveyard.jsonl" 2>/dev/null | sort -u
+  ' "$OCPROBE_STATE_DIR/graveyard.jsonl" 2>/dev/null | sort -u
 }

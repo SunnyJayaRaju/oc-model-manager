@@ -2,46 +2,46 @@
 set -euo pipefail
 # shellcheck shell=bash
 # shellcheck disable=SC2154,SC2016
-# OCM_OPencode_CONFIG, OCM_STATE_DIR, OCM_RUN_DIR, OCM_RESULTS_FILE, OCM_LOCK_DIR, OCM_STAMP,
-# OCM_AUDIT_DIR, OCM_LOG_FILE, OCM_PROBE_TIMEOUT_NEW, OCM_PROBE_TIMEOUT_WL, OCM_MAX_PARALLEL,
-# OCM_PROBE_PROMPT, OCM_PROBE_TITLE_PREFIX, OCM_CACHE_TTL_HOURS, OCM_FORCE_REFRESH, OCM_QUICK,
-# OCM_WATCH_SECS, OCM_WEBHOOK_URL, OCM_DESKTOP_NOTIFICATIONS, OCM_BATCH_MODE, OCM_AGE_GUARD_HOURS,
-# OCM_FRESH_GUARD_HOURS, OCM_MAX_MSG_COUNT, OCM_SESSION_BACKUP_DIR, OCM_HISTORY_LIMIT,
-# OCM_ALERT_LIMIT, OCM_BACKUP_KEEP_DAYS, OCM_GRAVEYARD_COOLDOWN_HOURS,
-# OCM_MASS_REMOVAL_THRESHOLD_PCT, OCM_ALLOW_MASS_REMOVE_ENV, OCM_LOG_LEVEL, OCM_LOG_FORMAT,
-# OCM_LOG_FILE_ENABLED are set by load_config in config.sh
+# OCPROBE_OPencode_CONFIG, OCPROBE_STATE_DIR, OCPROBE_RUN_DIR, OCPROBE_RESULTS_FILE, OCPROBE_LOCK_DIR, OCPROBE_STAMP,
+# OCPROBE_AUDIT_DIR, OCPROBE_LOG_FILE, OCPROBE_PROBE_TIMEOUT_NEW, OCPROBE_PROBE_TIMEOUT_WL, OCPROBE_MAX_PARALLEL,
+# OCPROBE_PROBE_PROMPT, OCPROBE_PROBE_TITLE_PREFIX, OCPROBE_CACHE_TTL_HOURS, OCPROBE_FORCE_REFRESH, OCPROBE_QUICK,
+# OCPROBE_WATCH_SECS, OCPROBE_WEBHOOK_URL, OCPROBE_DESKTOP_NOTIFICATIONS, OCPROBE_BATCH_MODE, OCPROBE_AGE_GUARD_HOURS,
+# OCPROBE_FRESH_GUARD_HOURS, OCPROBE_MAX_MSG_COUNT, OCPROBE_SESSION_BACKUP_DIR, OCPROBE_HISTORY_LIMIT,
+# OCPROBE_ALERT_LIMIT, OCPROBE_BACKUP_KEEP_DAYS, OCPROBE_GRAVEYARD_COOLDOWN_HOURS,
+# OCPROBE_MASS_REMOVAL_THRESHOLD_PCT, OCPROBE_ALLOW_MASS_REMOVE_ENV, OCPROBE_LOG_LEVEL, OCPROBE_LOG_FORMAT,
+# OCPROBE_LOG_FILE_ENABLED are set by load_config in config.sh
 # ============================================================================
 # lib/validate.sh — Validate models and manage provider blacklists
 # ============================================================================
 
 # ---- Constants ---------------------------------------------------------------
-: "${OCM_VALIDATE_PROBE_TIMEOUT:=30}"
-: "${OCM_VALIDATE_PROBE_PROMPT:=Reply with exactly: OK}"
-: "${OCM_VALIDATE_TITLE_PREFIX:=ocmm-validate}"
-: "${OCM_VALIDATE_MAX_PARALLEL:=4}"
+: "${OCPROBE_VALIDATE_PROBE_TIMEOUT:=30}"
+: "${OCPROBE_VALIDATE_PROBE_PROMPT:=Reply with exactly: OK}"
+: "${OCPROBE_VALIDATE_TITLE_PREFIX:=ocprobe-validate}"
+: "${OCPROBE_VALIDATE_MAX_PARALLEL:=4}"
 
 # Path to opencode auth file (credentials)
-OCM_OPencode_AUTH="${OCM_OPencode_AUTH:-$HOME/.local/share/opencode/auth.json}"
+OCPROBE_OPencode_AUTH="${OCPROBE_OPencode_AUTH:-$HOME/.local/share/opencode/auth.json}"
 
 # ---- Path Validation ---------------------------------------------------------
 validate_opencode_config() {
 	local config_file
-	# shellcheck disable=SC2154  # OCM_OPencode_CONFIG set by load_config in config.sh
-	config_file="${OCM_OPencode_CONFIG}"
+	# shellcheck disable=SC2154  # OCPROBE_OPencode_CONFIG set by load_config in config.sh
+	config_file="${OCPROBE_OPencode_CONFIG}"
 	[[ -f "$config_file" ]] || die "opencode.json not found at $config_file"
 	[[ -r "$config_file" ]] || die "opencode.json not readable at $config_file"
 	[[ -w "$config_file" ]] || die "opencode.json not writable at $config_file"
 }
 
 validate_auth_file() {
-	[[ -f "$OCM_OPencode_AUTH" ]] || die "auth.json not found at $OCM_OPencode_AUTH"
-	[[ -r "$OCM_OPencode_AUTH" ]] || die "auth.json not readable at $OCM_OPencode_AUTH"
+	[[ -f "$OCPROBE_OPencode_AUTH" ]] || die "auth.json not found at $OCPROBE_OPencode_AUTH"
+	[[ -r "$OCPROBE_OPencode_AUTH" ]] || die "auth.json not readable at $OCPROBE_OPencode_AUTH"
 }
 
 # ---- Auth/Config Parsing -----------------------------------------------------
 # Get providers with valid credentials from auth.json
 get_configured_providers() {
-	python3 - "$OCM_OPencode_AUTH" <<'PY'
+	python3 - "$OCPROBE_OPencode_AUTH" <<'PY'
 import json, sys, os
 try:
     with open(os.path.expanduser(sys.argv[1])) as f:
@@ -65,7 +65,7 @@ get_provider_models() {
 # Get current blacklist for a provider from opencode.json
 get_current_blacklist() {
 	local provider_id="$1"
-	python3 - "$OCM_OPencode_CONFIG" "$provider_id" <<'PY'
+	python3 - "$OCPROBE_OPencode_CONFIG" "$provider_id" <<'PY'
 import json, sys, os
 try:
     with open(os.path.expanduser(sys.argv[1])) as f:
@@ -84,7 +84,7 @@ PY
 # Get current whitelist for a provider from opencode.json (for reference)
 get_current_whitelist() {
 	local provider_id="$1"
-	python3 - "$OCM_OPencode_CONFIG" "$provider_id" <<'PY'
+	python3 - "$OCPROBE_OPencode_CONFIG" "$provider_id" <<'PY'
 import json, sys, os
 try:
     with open(os.path.expanduser(sys.argv[1])) as f:
@@ -104,11 +104,11 @@ PY
 # Probe a single model using the existing worker and classify the result
 probe_model_classify() {
 	local model="$1"
-	local timeout_secs="${2:-$OCM_VALIDATE_PROBE_TIMEOUT}"
-	local prompt="${3:-$OCM_VALIDATE_PROBE_PROMPT}"
+	local timeout_secs="${2:-$OCPROBE_VALIDATE_PROBE_TIMEOUT}"
+	local prompt="${3:-$OCPROBE_VALIDATE_PROBE_PROMPT}"
 
 	local worker_file
-	worker_file=$(mktemp "${OCM_RUN_DIR}/worker.XXXXXX")
+	worker_file=$(mktemp "${OCPROBE_RUN_DIR}/worker.XXXXXX")
 	write_worker "$worker_file"
 
 	local start_ms end_ms
@@ -188,7 +188,7 @@ show_blacklist_diff() {
 	local proposed_file="$3"
 
 	local current_proposed
-	current_proposed=$(mktemp "${OCM_RUN_DIR}/cp.XXXXXX")
+	current_proposed=$(mktemp "${OCPROBE_RUN_DIR}/cp.XXXXXX")
 	sort -u "$current_file" "$proposed_file" | sort | uniq -c | while read -r count model; do
 		if [[ $count -eq 1 ]]; then
 			# Only in one of the files
@@ -222,7 +222,7 @@ apply_blacklist() {
 		[[ -n "$model" ]] && blacklist+=("$model")
 	done <"$blacklist_file"
 
-	python3 - "$OCM_OPencode_CONFIG" "$provider_id" "$(printf '%s\n' "${blacklist[@]}")" <<'PY'
+	python3 - "$OCPROBE_OPencode_CONFIG" "$provider_id" "$(printf '%s\n' "${blacklist[@]}")" <<'PY'
 import json, sys, os
 
 config_path = os.path.expanduser(sys.argv[1])
@@ -276,17 +276,17 @@ verify_blacklist_effect() {
 # ---- Backup/Restore ----------------------------------------------------------
 # Create backup of current opencode.json
 backup_opencode_config() {
-	local state_dir="${OCM_STATE_DIR:-$HOME/.local/state/ocm}"
+	local state_dir="${OCPROBE_STATE_DIR:-$HOME/.local/state/ocprobe}"
 	mkdir -p "$state_dir/validate-backups"
 	local backup_file
 	backup_file="$state_dir/validate-backups/opencode.json.backup-$(date +%Y%m%d-%H%M%S)"
-	cp "$OCM_OPencode_CONFIG" "$backup_file"
+	cp "$OCPROBE_OPencode_CONFIG" "$backup_file"
 	echo "$backup_file"
 }
 
 # Get latest backup file
 get_latest_backup() {
-	local state_dir="${OCM_STATE_DIR:-$HOME/.local/state/ocm}"
+	local state_dir="${OCPROBE_STATE_DIR:-$HOME/.local/state/ocprobe}"
 	# Portable: use ls -t (sort by modification time, newest first)
 	# shellcheck disable=SC2012  # backup filenames are controlled pattern, ls -t is safe here
 	ls -1t "$state_dir/validate-backups"/opencode.json.backup-* 2>/dev/null | head -1
@@ -298,7 +298,7 @@ restore_from_backup() {
 	backup_file=$(get_latest_backup)
 	[[ -n "$backup_file" ]] || die "No backup found to restore from"
 
-	cp "$backup_file" "$OCM_OPencode_CONFIG"
+	cp "$backup_file" "$OCPROBE_OPencode_CONFIG"
 	log_info "Restored from backup: $backup_file"
 	echo "$backup_file"
 }
@@ -329,11 +329,11 @@ cmd_validate() {
 		restore) restore_mode=1 ;;
 		-h | --help)
 			cat <<'EOF'
-ocm validate — Probe all models for configured providers and blacklist failures
+ocprobe validate — Probe all models for configured providers and blacklist failures
 
 USAGE:
-  ocm validate [--provider <id>] [--model <id>] [--apply]
-  ocm validate restore
+  ocprobe validate [--provider <id>] [--model <id>] [--apply]
+  ocprobe validate restore
 
 OPTIONS:
   --provider <id>   Only validate models for this provider
@@ -379,14 +379,14 @@ EOF
 	acquire_lock
 	trap 'release_lock; cleanup_run_dir' EXIT INT TERM
 
-	log_info "=== ocm validate $(date) ==="
+	log_info "=== ocprobe validate $(date) ==="
 	audit_log "=== validate run start apply=$apply_mode provider=${target_provider:-all} ==="
 
 	# Get providers to validate
 	local -a providers=()
 	if [[ -n "$target_provider" ]]; then
 		# Verify this provider has credentials
-		if python3 - "$OCM_OPencode_AUTH" "$target_provider" -c '
+		if python3 - "$OCPROBE_OPencode_AUTH" "$target_provider" -c '
 import json,sys,os
 with open(os.path.expanduser(sys.argv[1])) as f: auth=json.load(f)
 pid=sys.argv[2]
@@ -408,7 +408,7 @@ else:
 	log_info "Validating providers: ${providers[*]}"
 
 	# Results aggregation
-	local all_results_file="$OCM_RUN_DIR/all_results.tsv"
+	local all_results_file="$OCPROBE_RUN_DIR/all_results.tsv"
 	: >"$all_results_file"
 
 	local overall_changes=0
@@ -417,7 +417,7 @@ else:
 		log_info "Processing provider: $provider_id"
 
 		# Get all models for this provider
-		local models_file="$OCM_RUN_DIR/${provider_id//\//_}.models.txt"
+		local models_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.models.txt"
 		if [[ -n "$target_model" ]]; then
 			echo "$target_model" >"$models_file"
 		else
@@ -429,7 +429,7 @@ else:
 		log_info "Provider $provider_id: $model_count models to probe"
 
 		# Probe all models
-		local results_file="$OCM_RUN_DIR/${provider_id//\//_}.results.tsv"
+		local results_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.results.tsv"
 		: >"$results_file"
 		probe_models_batch "$provider_id" "$models_file" "$results_file"
 
@@ -437,11 +437,11 @@ else:
 		cat "$results_file" >>"$all_results_file"
 
 		# Get current blacklist
-		local current_blacklist_file="$OCM_RUN_DIR/${provider_id//\//_}.current_blacklist.txt"
+		local current_blacklist_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.current_blacklist.txt"
 		get_current_blacklist "$provider_id" >"$current_blacklist_file"
 
 		# Generate proposed blacklist
-		local proposed_blacklist_file="$OCM_RUN_DIR/${provider_id//\//_}.proposed_blacklist.txt"
+		local proposed_blacklist_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.proposed_blacklist.txt"
 		generate_blacklist_proposal "$provider_id" "$results_file" "$proposed_blacklist_file"
 
 		# Show diff
@@ -537,7 +537,7 @@ PY
 }
 
 cmd_validate_restore() {
-	log_info "=== ocm validate restore $(date) ==="
+	log_info "=== ocprobe validate restore $(date) ==="
 	audit_log "=== validate restore run start ==="
 
 	load_config
@@ -552,7 +552,7 @@ cmd_validate_restore() {
 	# Verify restore
 	if [[ -f "$backup_file" ]]; then
 		# Compare restored config with backup
-		if diff -q "$OCM_OPencode_CONFIG" "$backup_file" >/dev/null; then
+		if diff -q "$OCPROBE_OPencode_CONFIG" "$backup_file" >/dev/null; then
 			log_info "SUCCESS: Config restored and verified from $backup_file"
 		else
 			log_warn "WARNING: Restore wrote file but content differs from backup"
