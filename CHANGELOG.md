@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1] - 2026-08-31
+
+### Fixed
+- Release tarball missing `docs/ocprobe.1.md`, causing `brew install` to fail with `Errno::ENOENT: No such file or directory - docs/ocprobe.1.md`
+
 ## [3.0.0] - 2026-08-30
 
 ### Added
@@ -117,90 +122,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All SQL queries use proper escaping
 - Umask 077 for state directories
 - Read-only DB connections for queries
-
-## [2.0.2] - 2026-08-29
-
-### Fixed
-- Homebrew release workflow now fails gracefully when tap token/repo not configured
-
-### Changed
-- CI: Homebrew job skips entirely (green) when HOMEBREW_TAP_TOKEN not set
-- Updated `softprops/action-gh-release` from v1 to v2
-
-## [2.0.3] - 2026-08-29
-
-### Fixed
-- Homebrew job token check using step output instead of invalid job-level env context
-
-### Changed
-- CI: Fixed workflow YAML parse error caused by `env.HOMEBREW_TAP_TOKEN` in job-level `if`
-
-## [2.0.4] - 2026-08-29
-
-### Fixed
-- Homebrew formula update job now properly skips all steps when HOMEBREW_TAP_TOKEN not set
-
-### Changed
-- CI: Homebrew job uses step-level conditional outputs for graceful skip
-
-## [2.0.1] - 2026-08-28
-
-### Fixed
-- Config parsing hardened with stricter validation
-- Session handling improved (backup/restore reliability)
-- TMPDIR unbound variable in session cleanup
-- flock lock acquisition/release file descriptor leak
-- Hardcoded test paths in integration tests
-- Bats installation reliability in CI
-- Integration test dependencies (generic package versions)
-- Shellcheck v0.11.0 pinned for consistent linting
-
-### Changed
-- CI: Bats installed from source (v1.14.0) for reliability
-- CI: Integration test dependencies use generic versions
-
-### Documentation
-- README updated for v2.0.1
-
-## [2.0.0] - 2026-08-27
-
-### Added
-- Initial `oc-model-manager` script (single-file, 681 lines)
-- Catalog diffing, probing, alerting, apply
-- Session cleanup with safety invariants
-- Launchd scheduler integration
-- Probe history and alert persistence
-- Graveyard cooldown mechanism
-
-### Security
-- SQL escaping for session IDs
-- Model name validation regex
-- Umask 077 for sensitive files
-
-## [0.1.0] - 2026-08-25
-
-### Added
-- Initial `oc-model-audit.sh` (195 lines)
-- Basic catalog diff and probe
-- Session cleanup by directory isolation
-- Config backup on apply
-
----
-
-### Migration from 1.x to 2.0
-
-```bash
-# Old commands          → New commands
-oc-model-manager audit  → ocm audit
-oc-model-manager check  → ocm check
-oc-model-manager status → ocm status
-oc-model-manager alerts → ocm alerts
-oc-model-manager probe  → ocm probe
-oc-model-manager watch  → ocm watch
-oc-model-manager install-scheduler → ocm scheduler install
-oc-session-backup       → ocm session backup
-```
-
-Configuration migration:
-- Environment variables → `~/.config/ocm/config.yaml`
-- Run `ocm config edit` to customize

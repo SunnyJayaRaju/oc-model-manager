@@ -86,7 +86,7 @@ jobs:
       - name: Create release package
         run: |
           mkdir -p dist/ocprobe-$VERSION
-          cp -r bin lib config VERSION CHANGELOG.md LICENSE README.md dist/ocprobe-$VERSION/
+          cp -r bin lib config docs VERSION CHANGELOG.md LICENSE README.md CONTRIBUTING.md dist/ocprobe-$VERSION/
           cd dist
           tar -czf ocprobe-$VERSION.tar.gz ocprobe-$VERSION/
           sha256sum ocprobe-$VERSION.tar.gz > ocprobe-$VERSION.tar.gz.sha256
