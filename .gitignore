@@ -13,3 +13,7 @@ Thumbs.db
 
 # Local config overrides / logs, if any get created during local testing
 *.log
+
+# ocm validate backups (defensive - default location outside repo)
+validate-backups/
+.opencode.json.backup-*

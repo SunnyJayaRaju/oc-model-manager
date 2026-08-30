@@ -1,0 +1,49 @@
+# ocm — OpenCode Model Manager Configuration
+# See: ocm config schema
+version: 1
+
+opencode:
+  config_path: "~/.config/opencode/opencode.json"
+  db_path: "~/.local/share/opencode/opencode.db"
+
+probe:
+  timeout_new: 45
+  timeout_whitelist: 30
+  max_parallel: 4
+  prompt: "Reply with exactly: OK"
+  title_prefix: "ocmm-probe"
+
+catalog:
+  cache_ttl_hours: 24
+  force_refresh: false
+
+scheduler:
+  enabled: false
+  interval_seconds: 21600
+  run_at_load: false
+
+alerts:
+  webhook_url: ""
+  desktop_notifications: true
+  batch_mode: false
+
+session:
+  age_guard_hours: 24
+  fresh_guard_hours: 1
+  max_msg_count: 4
+  backup_dir: "~/.local/share/opencode/session-backups"
+
+retention:
+  history_limit: 5000
+  alert_limit: 1000
+  backup_keep_days: 30
+  graveyard_cooldown_hours: 24
+
+safety:
+  mass_removal_threshold_pct: 50
+  allow_mass_remove_env: "OCM_ALLOW_MASS_REMOVE"
+
+logging:
+  level: info
+  format: text
+  file_enabled: true
