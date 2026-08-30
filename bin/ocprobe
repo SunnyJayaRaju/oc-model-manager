@@ -2,31 +2,31 @@
 # shellcheck shell=bash
 # shellcheck disable=SC1091,SC2034
 # ============================================================================
-# ocm — OpenCode Model Manager (unified CLI)
+# ocprobe — OpenCode Model Probe (unified CLI)
 # ============================================================================
 set -euo pipefail
 
 # ---- Bootstrap --------------------------------------------------------------
-OCM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export OCM_ROOT
+OCPROBE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export OCPROBE_ROOT
 
 # Load core library
-source "${OCM_ROOT}/lib/core.sh"
-source "${OCM_ROOT}/lib/config.sh"
-source "${OCM_ROOT}/lib/logging.sh"
-source "${OCM_ROOT}/lib/locking.sh"
-source "${OCM_ROOT}/lib/db.sh"
+source "${OCPROBE_ROOT}/lib/core.sh"
+source "${OCPROBE_ROOT}/lib/config.sh"
+source "${OCPROBE_ROOT}/lib/logging.sh"
+source "${OCPROBE_ROOT}/lib/locking.sh"
+source "${OCPROBE_ROOT}/lib/db.sh"
 
 # ---- Version ----------------------------------------------------------------
-OCM_VERSION="$(cat "${OCM_ROOT}/VERSION")"
+OCPROBE_VERSION="$(cat "${OCPROBE_ROOT}/VERSION")"
 
 # ---- Help -------------------------------------------------------------------
 usage() {
   cat <<'EOF'
-ocm — OpenCode Model Manager
+ocprobe — OpenCode Model Probe
 
 USAGE:
-  ocm <command> [options]
+  ocprobe <command> [options]
 
 COMMANDS:
   audit           Full cycle: diff → probe → confirm → apply (default)
@@ -53,31 +53,45 @@ GLOBAL OPTIONS:
   --help, -h      Show help
 
 ENVIRONMENT:
-  OCM_CONFIG         Config file path (default: ~/.config/ocm/config.yaml)
-  OCM_STATE_DIR      State directory (default: ~/.local/state/ocm)
-  OCM_LOG_LEVEL      Log level: debug, info, warn, error (default: info)
-  OCM_LOG_FORMAT     Log format: text, json (default: text)
+  OCPROBE_CONFIG         Config file path (default: ~/.config/ocprobe/config.yaml)
+  OCPROBE_STATE_DIR      State directory (default: ~/.local/state/ocprobe)
+  OCPROBE_LOG_LEVEL      Log level: debug, info, warn, error (default: info)
+  OCPROBE_LOG_FORMAT     Log format: text, json (default: text)
 
 EXAMPLES:
-  ocm audit                    # Full audit with confirmation
-  ocm check --quick            # Fast dry-run
-  ocm status                   # Show whitelist + recent probes
-  ocm alerts --clear           # Clear alert history
-  ocm probe openrouter/gpt-4   # Test single model
-  ocm watch                    # Continuous monitoring (6h interval)
-  ocm validate                 # Dry-run: show what would be blacklisted
-  ocm validate --apply         # Apply blacklist changes
-  ocm validate --provider openrouter  # Validate single provider
-  ocm validate restore         # Restore from last backup
-  ocm scheduler install        # Install launchd timer (macOS)
-  ocm session backup ses_abc   # Backup session to SQL
-  ocm doctor                   # Health check
+  ocprobe audit                    # Full audit with confirmation
+  ocprobe check --quick            # Fast dry-run
+  ocprobe status                   # Show whitelist + recent probes
+  ocprobe alerts --clear           # Clear alert history
+  ocprobe probe openrouter/gpt-4   # Test single model
+  ocprobe watch                    # Continuous monitoring (6h interval)
+  ocprobe validate                 # Dry-run: show what would be blacklisted
+  ocprobe validate --apply         # Apply blacklist changes
+  ocprobe validate --provider openrouter  # Validate single provider
+  ocprobe validate restore         # Restore from last backup
+  ocprobe scheduler install        # Install launchd timer (macOS)
+  ocprobe session backup ses_abc   # Backup session to SQL
+  ocprobe doctor                   # Health check
 
 CONFIGURATION:
-  See ocm config schema for full options.
-  Example: ~/.config/ocm/config.yaml
+  See ocprobe config schema for full options.
+  Example: ~/.config/ocprobe/config.yaml
 
 EOF
+}
+
+# ---- Migration: copy old config if new doesn't exist --------------------------
+migrate_config() {
+  local old_config_dir="$HOME/.config/ocm"
+  local new_config_dir="$HOME/.config/ocprobe"
+  local old_config_file="$old_config_dir/config.yaml"
+  local new_config_file="$new_config_dir/config.yaml"
+
+  if [[ ! -d "$new_config_dir" && -f "$old_config_file" ]]; then
+    mkdir -p "$new_config_dir"
+    cp "$old_config_file" "$new_config_file"
+    log_info "Migrated config from ~/.config/ocm/ to ~/.config/ocprobe/"
+  fi
 }
 
 # ---- Command Dispatch -------------------------------------------------------
@@ -85,30 +99,33 @@ main() {
   local cmd="${1:-help}"
   shift || true
 
+  # Run migration before loading config (migration doesn't depend on config)
+  migrate_config
+
   case "$cmd" in
     audit|check|status|alerts|probe|watch|validate)
-      source "${OCM_ROOT}/lib/models.sh"
-      source "${OCM_ROOT}/lib/validate.sh"
+      source "${OCPROBE_ROOT}/lib/models.sh"
+      source "${OCPROBE_ROOT}/lib/validate.sh"
       "cmd_${cmd}" "$@"
       ;;
     scheduler)
-      source "${OCM_ROOT}/lib/scheduler.sh"
+      source "${OCPROBE_ROOT}/lib/scheduler.sh"
       cmd_scheduler "$@"
       ;;
     session)
-      source "${OCM_ROOT}/lib/session.sh"
+      source "${OCPROBE_ROOT}/lib/session.sh"
       cmd_session "$@"
       ;;
     config)
-      source "${OCM_ROOT}/lib/config.sh"
+      source "${OCPROBE_ROOT}/lib/config.sh"
       cmd_config "$@"
       ;;
     doctor)
-      source "${OCM_ROOT}/lib/doctor.sh"
+      source "${OCPROBE_ROOT}/lib/doctor.sh"
       cmd_doctor "$@"
       ;;
     version|--version|-V)
-      echo "ocm ${OCM_VERSION}"
+      echo "ocprobe ${OCPROBE_VERSION}"
       ;;
     help|--help|-h)
       usage
@@ -122,23 +139,23 @@ main() {
 }
 
 # ---- Global Flag Parsing ----------------------------------------------------
-OCM_QUICK=0
-OCM_FORCE_REFRESH=0
-OCM_ASSUME_YES=0
-OCM_JSON_OUTPUT=0
-OCM_VERBOSE=0
-OCM_CONFIG_OVERRIDE=""
+OCPROBE_QUICK=0
+OCPROBE_FORCE_REFRESH=0
+OCPROBE_ASSUME_YES=0
+OCPROBE_JSON_OUTPUT=0
+OCPROBE_VERBOSE=0
+OCPROBE_CONFIG_OVERRIDE=""
 
 parse_global_flags() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --quick) OCM_QUICK=1 ;;
-      --force-refresh) OCM_FORCE_REFRESH=1 ;;
-      --yes|-y) OCM_ASSUME_YES=1 ;;
-      --json) OCM_JSON_OUTPUT=1 ;;
-      --verbose|-v) OCM_VERBOSE=1 ;;
-      --config) OCM_CONFIG_OVERRIDE="$2"; shift ;;
-      --config=*) OCM_CONFIG_OVERRIDE="${1#*=}" ;;
+      --quick) OCPROBE_QUICK=1 ;;
+      --force-refresh) OCPROBE_FORCE_REFRESH=1 ;;
+      --yes|-y) OCPROBE_ASSUME_YES=1 ;;
+      --json) OCPROBE_JSON_OUTPUT=1 ;;
+      --verbose|-v) OCPROBE_VERBOSE=1 ;;
+      --config) OCPROBE_CONFIG_OVERRIDE="$2"; shift ;;
+      --config=*) OCPROBE_CONFIG_OVERRIDE="${1#*=}" ;;
       --help|-h) usage; exit 0 ;;
       --) shift; break ;;
       -*) log_error "Unknown global flag: $1"; exit 1 ;;
