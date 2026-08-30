@@ -8,7 +8,7 @@ load '../helpers/bats-support/load'
 load '../helpers/bats-assert/load'
 
 setup() {
-    export OCM_ROOT="/Users/sunnyjayaraj345/oc-model-manager"
+    export OCM_ROOT="${OCM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
     export OCM_CONFIG_OVERRIDE="$BATS_TEST_TMPDIR/config.yaml"
     export OCM_STATE_DIR="$BATS_TEST_TMPDIR/state"
     export OCM_LOG_LEVEL="error"
