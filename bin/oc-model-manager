@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Backward compatibility shim for oc-model-manager v1
-# Maps old flags to new ocm commands
+# Maps old flags to new ocprobe commands
 
 set -euo pipefail
 

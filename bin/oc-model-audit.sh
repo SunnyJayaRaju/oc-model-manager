@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Backward compatibility shim for oc-model-audit.sh v1
-# Maps old flags to new ocm commands
+# Maps old flags to new ocprobe commands
 
 set -euo pipefail
 
@@ -25,7 +25,7 @@ for arg in "$@"; do
 done
 
 if [[ $APPLY -eq 1 ]]; then
-  exec ocm audit ${QUICK:+--quick} --yes
+  exec ocprobe audit ${QUICK:+--quick} --yes
 else
-  exec ocm check ${QUICK:+--quick}
+  exec ocprobe check ${QUICK:+--quick}
 fi

@@ -12,16 +12,16 @@ case "${1:-}" in
     exit 0
     ;;
   --list)
-    exec ocm session list
+    exec ocprobe session list
     ;;
   --restore)
-    exec ocm session restore "$2"
+    exec ocprobe session restore "$2"
     ;;
   "")
     echo "usage: oc-session-backup <session_id> | --list | --restore <file.sql>" >&2
     exit 1
     ;;
   *)
-    exec ocm session backup "$1"
+    exec ocprobe session backup "$1"
     ;;
 esac
