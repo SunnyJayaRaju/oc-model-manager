@@ -8,17 +8,18 @@ load '../helpers/bats-support/load'
 load '../helpers/bats-assert/load'
 
 setup() {
-    export OCM_ROOT="${OCM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-    export OCM_CONFIG_OVERRIDE="$BATS_TEST_TMPDIR/config.yaml"
-    export OCM_STATE_DIR="$BATS_TEST_TMPDIR/state"
-    export OCM_LOG_LEVEL="error"
-    export OCM_LOG_FORMAT="text"
+    source "$BATS_TEST_DIRNAME/../helpers/setup_libs.bash"
 
-    mkdir -p "$OCM_STATE_DIR"
-    mkdir -p "$(dirname "$OCM_CONFIG_OVERRIDE")"
+    export OCPROBE_CONFIG_OVERRIDE="$BATS_TEST_TMPDIR/config.yaml"
+    export OCPROBE_STATE_DIR="$BATS_TEST_TMPDIR/state"
+    export OCPROBE_LOG_LEVEL="error"
+    export OCPROBE_LOG_FORMAT="text"
+
+    mkdir -p "$OCPROBE_STATE_DIR"
+    mkdir -p "$(dirname "$OCPROBE_CONFIG_OVERRIDE")"
 
     # Create minimal config
-    cat >"$OCM_CONFIG_OVERRIDE" <<EOF
+    cat >"$OCPROBE_CONFIG_OVERRIDE" <<EOF
 version: 1
 opencode:
   config_path: "$BATS_TEST_TMPDIR/opencode.json"
@@ -52,7 +53,7 @@ retention:
   graveyard_cooldown_hours: 24
 safety:
   mass_removal_threshold_pct: 50
-  allow_mass_remove_env: "OCM_ALLOW_MASS_REMOVE"
+  allow_mass_remove_env: "OCPROBE_ALLOW_MASS_REMOVE"
 logging:
   level: error
   format: text
@@ -81,15 +82,7 @@ EOF
 }
 EOF
 
-    export OCM_OPencode_AUTH="$BATS_TEST_TMPDIR/auth.json"
-
-    # Source libraries
-    source "$OCM_ROOT/lib/core.sh"
-    source "$OCM_ROOT/lib/logging.sh"
-    source "$OCM_ROOT/lib/config.sh"
-    source "$OCM_ROOT/lib/locking.sh"
-    source "$OCM_ROOT/lib/models.sh"
-    source "$OCM_ROOT/lib/validate.sh"
+    export OCPROBE_OPencode_AUTH="$BATS_TEST_TMPDIR/auth.json"
 
     load_config
 
@@ -179,7 +172,7 @@ get_provider_models() {
 
 @test "get_configured_providers excludes providers without credentials" {
     # Add provider without key
-    cat >"$OCM_OPencode_AUTH" <<EOF
+    cat >"$OCPROBE_OPencode_AUTH" <<EOF
 {
   "test-provider": {"type": "api", "key": "test-key"},
   "no-key-provider": {"type": "api", "key": ""},
@@ -312,7 +305,7 @@ EOF
     assert_success
 
     # Check backup directory exists and has backup
-    local state_dir="${OCM_STATE_DIR:-$HOME/.local/state/ocm}"
+    local state_dir="${OCPROBE_STATE_DIR:-$HOME/.local/state/ocm}"
     local backup_dir="$state_dir/validate-backups"
     [[ -d "$backup_dir" ]] || { echo "Backup dir not found: $backup_dir" >&2; return 1; }
 
@@ -357,7 +350,7 @@ EOF
 
 @test "validate.sh passes shellcheck" {
     if command -v shellcheck >/dev/null 2>&1; then
-        run shellcheck "$OCM_ROOT/lib/validate.sh"
+        run shellcheck "$OCPROBE_ROOT/lib/validate.sh"
         assert_success
     else
         skip "shellcheck not installed"
@@ -365,11 +358,11 @@ EOF
 }
 
 @test "validate.sh passes bash -n" {
-    run bash -n "$OCM_ROOT/lib/validate.sh"
+    run bash -n "$OCPROBE_ROOT/lib/validate.sh"
     assert_success
 }
 
 @test "ocm binary passes bash -n" {
-    run bash -n "$OCM_ROOT/bin/ocm"
+    run bash -n "$OCPROBE_ROOT/bin/ocprobe"
     assert_success
 }

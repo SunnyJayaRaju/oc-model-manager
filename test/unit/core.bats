@@ -22,7 +22,7 @@ setup() {
 
 teardown() {
   # Clean up any test config files
-  rm -f /tmp/ocm-test-config-*.yaml
+  rm -f /tmp/ocprobe-test-config-*.yaml
 }
 
 @test "validate_positive_int accepts valid integers" {

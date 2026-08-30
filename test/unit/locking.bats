@@ -13,20 +13,20 @@ setup() {
 
 teardown() {
   release_lock
-  rm -rf "$OCM_STATE_DIR"
+  rm -rf "$OCPROBE_STATE_DIR"
 }
 
 @test "acquire_lock creates lock directory" {
   acquire_lock
-  assert [ -d "$OCM_STATE_DIR/.lock" ]
-  assert [ -f "$OCM_STATE_DIR/.lock/pid" ]
-  assert_equal "$(cat "$OCM_STATE_DIR/.lock/pid")" "$$"
+  assert [ -d "$OCPROBE_STATE_DIR/.lock" ]
+  assert [ -f "$OCPROBE_STATE_DIR/.lock/pid" ]
+  assert_equal "$(cat "$OCPROBE_STATE_DIR/.lock/pid")" "$$"
 }
 
 @test "release_lock removes lock directory" {
   acquire_lock
   release_lock
-  assert [ ! -d "$OCM_STATE_DIR/.lock" ]
+  assert [ ! -d "$OCPROBE_STATE_DIR/.lock" ]
 }
 
 @test "lock_status returns HELD when locked" {
@@ -45,16 +45,16 @@ teardown() {
 @test "concurrent acquire_lock blocks second process" {
   acquire_lock
   # Try to acquire in background - should fail/timeout
-  run timeout 1 bash -c "source '$OCM_ROOT/lib/core.sh'; source '$OCM_ROOT/lib/locking.sh'; acquire_lock"
+  run timeout 1 bash -c "source '$OCPROBE_ROOT/lib/core.sh'; source '$OCPROBE_ROOT/lib/locking.sh'; acquire_lock"
   assert_failure
 }
 
 @test "stale lock (dead PID) is removed" {
   acquire_lock
   # Simulate dead PID
-  echo $(( $$ + 1000 )) > "$OCM_STATE_DIR/.lock/pid"
+  echo $(( $$ + 1000 )) > "$OCPROBE_STATE_DIR/.lock/pid"
   # Should be able to acquire after stale detection
   release_lock
   acquire_lock
-  assert_equal "$(cat "$OCM_STATE_DIR/.lock/pid")" "$$"
+  assert_equal "$(cat "$OCPROBE_STATE_DIR/.lock/pid")" "$$"
 }

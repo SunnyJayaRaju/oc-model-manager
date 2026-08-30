@@ -1,36 +1,37 @@
 #!/usr/bin/env bash
 # Test helper to source all libraries in correct order
 
-export OCM_ROOT="${OCM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+export OCPROBE_ROOT="${OCPROBE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
 # Source in dependency order
-source "$OCM_ROOT/lib/core.sh"
-source "$OCM_ROOT/lib/logging.sh"
-source "$OCM_ROOT/lib/locking.sh"
-source "$OCM_ROOT/lib/db.sh"
-source "$OCM_ROOT/lib/config.sh"
-source "$OCM_ROOT/lib/models.sh"
-source "$OCM_ROOT/lib/session.sh"
-source "$OCM_ROOT/lib/scheduler.sh"
-source "$OCM_ROOT/lib/doctor.sh"
+source "$OCPROBE_ROOT/lib/core.sh"
+source "$OCPROBE_ROOT/lib/logging.sh"
+source "$OCPROBE_ROOT/lib/locking.sh"
+source "$OCPROBE_ROOT/lib/db.sh"
+source "$OCPROBE_ROOT/lib/config.sh"
+source "$OCPROBE_ROOT/lib/models.sh"
+source "$OCPROBE_ROOT/lib/session.sh"
+source "$OCPROBE_ROOT/lib/scheduler.sh"
+source "$OCPROBE_ROOT/lib/doctor.sh"
+source "$OCPROBE_ROOT/lib/validate.sh"
 
 # Initialize logging for tests
 init_logging
 
 # Create test state directory
-export OCM_STATE_DIR="${OCM_STATE_DIR:-$(mktemp -d /tmp/ocm-test-XXXXXX)}"
-export OCM_RUN_DIR="${OCM_RUN_DIR:-$(mktemp -d /tmp/ocm-run-XXXXXX)}"
-export OCM_LOG_FILE="$OCM_RUN_DIR/audit.log"
-export OCM_RESULTS_FILE="$OCM_RUN_DIR/results.tsv"
-export OCM_LOCK_DIR="$OCM_STATE_DIR/.lock"
+export OCPROBE_STATE_DIR="${OCPROBE_STATE_DIR:-$(mktemp -d /tmp/ocprobe-test-XXXXXX)}"
+export OCPROBE_RUN_DIR="${OCPROBE_RUN_DIR:-$(mktemp -d /tmp/ocprobe-run-XXXXXX)}"
+export OCPROBE_LOG_FILE="$OCPROBE_RUN_DIR/audit.log"
+export OCPROBE_RESULTS_FILE="$OCPROBE_RUN_DIR/results.tsv"
+export OCPROBE_LOCK_DIR="$OCPROBE_STATE_DIR/.lock"
 
-mkdir -p "$OCM_STATE_DIR" "$OCM_RUN_DIR"
+mkdir -p "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR"
 
 # Mock opencode for testing
 mock_opencode() {
-  local mock_dir
-  mock_dir=$(mktemp -d /tmp/ocm-mock-XXXXXX)
-  cat > "$mock_dir/opencode" <<'EOF'
+	local mock_dir
+	mock_dir=$(mktemp -d /tmp/ocprobe-mock-XXXXXX)
+	cat >"$mock_dir/opencode" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
   models)
@@ -78,10 +79,10 @@ MODELS
     ;;
 esac
 EOF
-  chmod +x "$mock_dir/opencode"
-  
-  # Also mock timeout command
-  cat > "$mock_dir/timeout" <<'EOF'
+	chmod +x "$mock_dir/opencode"
+
+	# Also mock timeout command
+	cat >"$mock_dir/timeout" <<'EOF'
 #!/usr/bin/env bash
 # Simple timeout mock that just runs the command directly (no actual timeout)
 # Usage: timeout SECONDS COMMAND [ARGS...]
@@ -92,16 +93,16 @@ fi
 shift
 exec "$@"
 EOF
-  chmod +x "$mock_dir/opencode"
-  chmod +x "$mock_dir/timeout"
-  export PATH="$mock_dir:$PATH"
+	chmod +x "$mock_dir/opencode"
+	chmod +x "$mock_dir/timeout"
+	export PATH="$mock_dir:$PATH"
 }
 
 # Mock sqlite3 for test DB
 mock_sqlite3() {
-  local mock_dir
-  mock_dir=$(mktemp -d /tmp/ocm-mock-sqlite-XXXXXX)
-  cat > "$mock_dir/sqlite3" <<'EOF'
+	local mock_dir
+	mock_dir=$(mktemp -d /tmp/ocprobe-mock-sqlite-XXXXXX)
+	cat >"$mock_dir/sqlite3" <<'EOF'
 #!/usr/bin/env bash
 # Debug: log all arguments
 echo "DEBUG SQLITE3 ARGS: $#" >&2
@@ -167,19 +168,19 @@ fi
 # Default: use real sqlite3
 exec "$REAL_SQLITE3" "$@"
 EOF
-  chmod +x "$mock_dir/sqlite3"
-  export PATH="$mock_dir:$PATH"
+	chmod +x "$mock_dir/sqlite3"
+	export PATH="$mock_dir:$PATH"
 }
 
 # Create test database for session tests
 create_test_db() {
-  local db_file="${1:-$OCM_STATE_DIR/test.db}"
-  export OCM_OPencode_DB="$db_file"
-  # Use real sqlite3 for database creation (bypass mock)
-  local real_sqlite3="/usr/bin/sqlite3"
-  [[ -x "$real_sqlite3" ]] || real_sqlite3="/opt/homebrew/bin/sqlite3"
-  [[ -x "$real_sqlite3" ]] || real_sqlite3="/usr/local/bin/sqlite3"
-  "$real_sqlite3" "$db_file" <<'EOF'
+	local db_file="${1:-$OCPROBE_STATE_DIR/test.db}"
+	export OCPROBE_OPencode_DB="$db_file"
+	# Use real sqlite3 for database creation (bypass mock)
+	local real_sqlite3="/usr/bin/sqlite3"
+	[[ -x "$real_sqlite3" ]] || real_sqlite3="/opt/homebrew/bin/sqlite3"
+	[[ -x "$real_sqlite3" ]] || real_sqlite3="/usr/local/bin/sqlite3"
+	"$real_sqlite3" "$db_file" <<'EOF'
 DROP TABLE IF EXISTS todo;
 DROP TABLE IF EXISTS part;
 DROP TABLE IF EXISTS message;

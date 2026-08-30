@@ -14,13 +14,13 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$OCM_STATE_DIR"
+  rm -rf "$OCPROBE_STATE_DIR"
 }
 
 # Mock opencode for integration tests
 mock_opencode() {
   local mock_dir
-  mock_dir=$(mktemp -d /tmp/ocm-mock-XXXXXX)
+  mock_dir=$(mktemp -d /tmp/ocprobe-mock-XXXXXX)
   cat > "$mock_dir/opencode" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
@@ -76,7 +76,7 @@ EOF
 # Mock sqlite3 for test DB
 mock_sqlite3() {
   local mock_dir
-  mock_dir=$(mktemp -d /tmp/ocm-mock-sqlite-XXXXXX)
+  mock_dir=$(mktemp -d /tmp/ocprobe-mock-sqlite-XXXXXX)
   cat > "$mock_dir/sqlite3" <<'EOF'
 #!/usr/bin/env bash
 # Simple mock for sqlite3 - just handle our specific queries
@@ -101,12 +101,12 @@ EOF
 @test "cmd_check runs without errors (dry-run)" {
   mock_opencode
   mock_sqlite3
-  source "$OCM_ROOT/lib/core.sh"
-  source "$OCM_ROOT/lib/config.sh"
-  source "$OCM_ROOT/lib/logging.sh"
-  source "$OCM_ROOT/lib/locking.sh"
-  source "$OCM_ROOT/lib/db.sh"
-  source "$OCM_ROOT/lib/models.sh"
+  source "$OCPROBE_ROOT/lib/core.sh"
+  source "$OCPROBE_ROOT/lib/config.sh"
+  source "$OCPROBE_ROOT/lib/logging.sh"
+  source "$OCPROBE_ROOT/lib/locking.sh"
+  source "$OCPROBE_ROOT/lib/db.sh"
+  source "$OCPROBE_ROOT/lib/models.sh"
 
   load_config
   run cmd_check --quick
@@ -116,12 +116,12 @@ EOF
 @test "cmd_status shows whitelist and history" {
   mock_opencode
   mock_sqlite3
-  source "$OCM_ROOT/lib/core.sh"
-  source "$OCM_ROOT/lib/config.sh"
-  source "$OCM_ROOT/lib/logging.sh"
-  source "$OCM_ROOT/lib/locking.sh"
-  source "$OCM_ROOT/lib/db.sh"
-  source "$OCM_ROOT/lib/models.sh"
+  source "$OCPROBE_ROOT/lib/core.sh"
+  source "$OCPROBE_ROOT/lib/config.sh"
+  source "$OCPROBE_ROOT/lib/logging.sh"
+  source "$OCPROBE_ROOT/lib/locking.sh"
+  source "$OCPROBE_ROOT/lib/db.sh"
+  source "$OCPROBE_ROOT/lib/models.sh"
 
   load_config
   run cmd_status
@@ -130,11 +130,11 @@ EOF
 }
 
 @test "cmd_alerts shows empty when no alerts" {
-  source "$OCM_ROOT/lib/core.sh"
-  source "$OCM_ROOT/lib/config.sh"
-  source "$OCM_ROOT/lib/logging.sh"
-  source "$OCM_ROOT/lib/locking.sh"
-  source "$OCM_ROOT/lib/db.sh"
+  source "$OCPROBE_ROOT/lib/core.sh"
+  source "$OCPROBE_ROOT/lib/config.sh"
+  source "$OCPROBE_ROOT/lib/logging.sh"
+  source "$OCPROBE_ROOT/lib/locking.sh"
+  source "$OCPROBE_ROOT/lib/db.sh"
 
   load_config
   run cmd_alerts
@@ -144,12 +144,12 @@ EOF
 
 @test "cmd_session_list works" {
   mock_sqlite3
-  source "$OCM_ROOT/lib/core.sh"
-  source "$OCM_ROOT/lib/config.sh"
-  source "$OCM_ROOT/lib/logging.sh"
-  source "$OCM_ROOT/lib/locking.sh"
-  source "$OCM_ROOT/lib/db.sh"
-  source "$OCM_ROOT/lib/session.sh"
+  source "$OCPROBE_ROOT/lib/core.sh"
+  source "$OCPROBE_ROOT/lib/config.sh"
+  source "$OCPROBE_ROOT/lib/logging.sh"
+  source "$OCPROBE_ROOT/lib/locking.sh"
+  source "$OCPROBE_ROOT/lib/db.sh"
+  source "$OCPROBE_ROOT/lib/session.sh"
 
   load_config
   run cmd_session_list
@@ -159,20 +159,20 @@ EOF
 @test "cmd_doctor runs health checks" {
   mock_opencode
   mock_sqlite3
-  source "$OCM_ROOT/lib/core.sh"
-  source "$OCM_ROOT/lib/config.sh"
-  source "$OCM_ROOT/lib/logging.sh"
-  source "$OCM_ROOT/lib/locking.sh"
-  source "$OCM_ROOT/lib/db.sh"
-  source "$OCM_ROOT/lib/doctor.sh"
+  source "$OCPROBE_ROOT/lib/core.sh"
+  source "$OCPROBE_ROOT/lib/config.sh"
+  source "$OCPROBE_ROOT/lib/logging.sh"
+  source "$OCPROBE_ROOT/lib/locking.sh"
+  source "$OCPROBE_ROOT/lib/db.sh"
+  source "$OCPROBE_ROOT/lib/doctor.sh"
 
-  # Create test database (sets OCM_OPencode_DB)
+  # Create test database (sets OCPROBE_OPencode_DB)
   create_test_db
 
   # Create test config pointing to test paths
   local test_config="$BATS_TEST_TMPDIR/test-doctor-config.yaml"
-  local test_db_path="$OCM_OPencode_DB"
-  local test_config_path="$OCM_STATE_DIR/opencode.json"
+  local test_db_path="$OCPROBE_OPencode_DB"
+  local test_config_path="$OCPROBE_STATE_DIR/opencode.json"
   cat > "$test_config" <<EOF
 version: 1
 opencode:
@@ -201,8 +201,8 @@ logging:
   format: text
 EOF
   # Create dummy opencode config
-  echo '{"provider":{}}' > "$OCM_STATE_DIR/opencode.json"
-  OCM_CONFIG_OVERRIDE="$test_config"
+  echo '{"provider":{}}' > "$OCPROBE_STATE_DIR/opencode.json"
+  OCPROBE_CONFIG_OVERRIDE="$test_config"
   # Don't call load_config here - let cmd_doctor do it
   run cmd_doctor
   assert_success

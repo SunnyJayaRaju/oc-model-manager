@@ -13,7 +13,7 @@ setup() {
 
 teardown() {
   # Clean up any test config files
-  rm -f /tmp/ocm-test-config-*.yaml
+  rm -f /tmp/ocprobe-test-config-*.yaml
 }
 
 @test "CONFIG_SCHEMA is valid YAML" {
@@ -23,7 +23,7 @@ teardown() {
 
 @test "create_default_config creates valid YAML" {
   local tmpfile
-  tmpfile=$(mktemp /tmp/ocm-test-config-XXXXXX.yaml)
+  tmpfile=$(mktemp /tmp/ocprobe-test-config-XXXXXX.yaml)
   create_default_config "$tmpfile"
   run python3 -c "import yaml, sys; yaml.safe_load(open(sys.argv[1]))" "$tmpfile"
   assert_success
@@ -32,7 +32,7 @@ teardown() {
 
 @test "default config has required sections" {
   local tmpfile
-  tmpfile=$(mktemp /tmp/ocm-test-config-XXXXXX.yaml)
+  tmpfile=$(mktemp /tmp/ocprobe-test-config-XXXXXX.yaml)
   create_default_config "$tmpfile"
   run python3 -c "
 import yaml, sys
@@ -54,7 +54,7 @@ assert 'logging' in c
 
 @test "validate_config accepts valid config" {
   local tmpfile
-  tmpfile=$(mktemp /tmp/ocm-test-config-XXXXXX.yaml)
+  tmpfile=$(mktemp /tmp/ocprobe-test-config-XXXXXX.yaml)
   create_default_config "$tmpfile"
   run validate_config "$tmpfile"
   assert_success
@@ -63,7 +63,7 @@ assert 'logging' in c
 
 @test "validate_config rejects invalid config" {
   local tmpfile
-  tmpfile=$(mktemp /tmp/ocm-test-config-XXXXXX.yaml)
+  tmpfile=$(mktemp /tmp/ocprobe-test-config-XXXXXX.yaml)
   echo "invalid: yaml: [" > "$tmpfile"
   run validate_config "$tmpfile"
   assert_failure
@@ -71,7 +71,7 @@ assert 'logging' in c
 
 @test "validate_config rejects wrong version" {
   local tmpfile
-  tmpfile=$(mktemp /tmp/ocm-test-config-XXXXXX.yaml)
+  tmpfile=$(mktemp /tmp/ocprobe-test-config-XXXXXX.yaml)
   cat > "$tmpfile" <<'EOF'
 version: 2
 opencode: {}
@@ -90,13 +90,13 @@ EOF
 
 @test "parse_config_yaml outputs bash assignments" {
   local tmpfile
-  tmpfile=$(mktemp /tmp/ocm-test-config-XXXXXX.yaml)
+  tmpfile=$(mktemp /tmp/ocprobe-test-config-XXXXXX.yaml)
   create_default_config "$tmpfile"
   run parse_config_yaml "$tmpfile"
   assert_success
-  assert_output --partial "OCM_PROBE_TIMEOUT_NEW="
-  assert_output --partial "OCM_MAX_PARALLEL="
-  assert_output --partial "OCM_PROBE_PROMPT="
+  assert_output --partial "OCPROBE_PROBE_TIMEOUT_NEW="
+  assert_output --partial "OCPROBE_MAX_PARALLEL="
+  assert_output --partial "OCPROBE_PROBE_PROMPT="
 }
 
 @test "get_env_or_config prefers env var" {
