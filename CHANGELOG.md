@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `ocm validate` command: probe all models for providers with valid credentials, classify results (WORKS/TIMEOUT/AUTH_ERROR/BILLING_ERROR/NOT_FOUND/ERROR), and manage provider blacklists in opencode.json
+- Dry-run mode (default) shows proposed blacklist changes without writing
+- `--apply` flag writes blacklist changes with automatic backup and verification
+- `--provider <id>` and `--model <id>` flags to scope validation
+- `--json` flag for machine-readable output
+- `validate restore` subcommand reverts to last validate backup
+
+### Changed
+- Exit code convention: dry-run exits 0 when no changes needed, 1 when changes pending (matches `ocm check`)
+
 ## [2.0.0] - 2026-08-27
 
 ### Added

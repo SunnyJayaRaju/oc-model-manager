@@ -35,6 +35,7 @@ COMMANDS:
   alerts          Show recorded alerts [--clear]
   probe <model>   Test one model now
   watch           Run check+alert on interval (never auto-applies)
+  validate        Probe all models for providers with credentials, blacklist failures
   scheduler       Manage launchd/systemd scheduler [install|uninstall|status]
   session         Session management [list|backup|restore|cleanup]
   config          Configuration [show|validate|edit|schema]
@@ -64,6 +65,10 @@ EXAMPLES:
   ocm alerts --clear           # Clear alert history
   ocm probe openrouter/gpt-4   # Test single model
   ocm watch                    # Continuous monitoring (6h interval)
+  ocm validate                 # Dry-run: show what would be blacklisted
+  ocm validate --apply         # Apply blacklist changes
+  ocm validate --provider openrouter  # Validate single provider
+  ocm validate restore         # Restore from last backup
   ocm scheduler install        # Install launchd timer (macOS)
   ocm session backup ses_abc   # Backup session to SQL
   ocm doctor                   # Health check
@@ -81,8 +86,9 @@ main() {
   shift || true
 
   case "$cmd" in
-    audit|check|status|alerts|probe|watch)
+    audit|check|status|alerts|probe|watch|validate)
       source "${OCM_ROOT}/lib/models.sh"
+      source "${OCM_ROOT}/lib/validate.sh"
       "cmd_${cmd}" "$@"
       ;;
     scheduler)
