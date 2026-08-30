@@ -48,7 +48,7 @@
         },
         "title_prefix": {
           "type": "string",
-          "default": "ocmm-probe"
+          "default": "ocprobe-probe"
         }
       },
       "required": []
@@ -177,7 +177,7 @@
         },
         "allow_mass_remove_env": {
           "type": "string",
-          "default": "OCM_ALLOW_MASS_REMOVE"
+          "default": "OCPROBE_ALLOW_MASS_REMOVE"
         }
       },
       "required": []
