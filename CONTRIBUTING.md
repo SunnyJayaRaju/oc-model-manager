@@ -30,7 +30,7 @@ make dev-install
 
 This will:
 1. Build the package
-2. Install to `~/.local/bin/ocm`
+2. Install to `~/.local/bin/ocprobe`
 3. Run tests to verify everything works
 
 ### Running Tests

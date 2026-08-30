@@ -4,7 +4,7 @@
 # lib/shim_helpers.sh — Shared helpers for backward compatibility shims
 # ============================================================================
 
-# Map old command names to new ocm subcommands
+# Map old command names to new ocprobe subcommands
 # Usage: map_old_command "old_command"
 map_old_command() {
   local old_cmd="$1"
@@ -15,7 +15,7 @@ map_old_command() {
   esac
 }
 
-# Map old flags to new ocm global flags
+# Map old flags to new ocprobe global flags
 # Usage: map_old_flags "$@"
 map_old_flags() {
   local args=()
@@ -68,6 +68,6 @@ run_shim() {
   special_args=$(handle_special_cases "${final_args[@]}")
   mapfile -t final_args <<< "$special_args"
   
-  # Execute ocm with mapped arguments
-  exec ocm "${final_args[@]}"
+  # Execute ocprobe with mapped arguments
+  exec ocprobe "${final_args[@]}"
 }

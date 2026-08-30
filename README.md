@@ -1,19 +1,19 @@
-# ocm — OpenCode Model Manager
+# ocprobe — OpenCode Model Probe
 
 <p align="center">
-  <img src=".github/assets/banner.svg" alt="ocm — OpenCode Model Manager" width="800"/>
+  <img src=".github/assets/banner.svg" alt="ocprobe — OpenCode Model Probe" width="800"/>
 </p>
 
 [![CI](https://github.com/SunnyJayaRaju/oc-model-manager/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square)](https://github.com/SunnyJayaRaju/oc-model-manager/actions)
 [![Version](https://img.shields.io/badge/version-2.0.10-blue.svg?style=flat-square)](VERSION)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
-[![Homebrew](https://img.shields.io/badge/homebrew-SunnyJayaRaju%2Focm-orange.svg?style=flat-square)](https://github.com/SunnyJayaRaju/homebrew-ocm)
+[![Homebrew](https://img.shields.io/badge/homebrew-SunnyJayaRaju%2Focprobe-orange.svg?style=flat-square)](https://github.com/SunnyJayaRaju/homebrew-ocprobe)
 
 ---
 
-## Why ocm?
+## Why ocprobe?
 
-Managing model catalogs in OpenCode is manual, error-prone, and unsafe. You diff catalogs by hand, probe models one by one, and risk wiping your whitelist with a bad apply. **ocm automates the full lifecycle**: catalog diffing → live probing → safety-gated apply → continuous monitoring — all with built-in guards so you never lose a working model or apply a broken one.
+Managing model catalogs in OpenCode is manual, error-prone, and unsafe. You diff catalogs by hand, probe models one by one, and risk wiping your whitelist with a bad apply. **ocprobe automates the full lifecycle**: catalog diffing → live probing → safety-gated apply → continuous monitoring — all with built-in guards so you never lose a working model or apply a broken one.
 
 ---
 
@@ -21,20 +21,20 @@ Managing model catalogs in OpenCode is manual, error-prone, and unsafe. You diff
 
 ```bash
 # One-time setup
-$ ocm doctor
+$ ocprobe doctor
 [19:12:26] INFO  opencode: OK (1.18.25)
 [19:12:26] INFO  python3: OK (Python 3.14.7)
 [19:12:26] INFO  jq: OK
 [19:12:26] INFO  sqlite3: OK
-[19:12:26] INFO  config: OK (~/.config/ocm/config.yaml)
+[19:12:26] INFO  config: OK (~/.config/ocprobe/config.yaml)
 [19:12:26] INFO  config validation: OK
 [19:12:26] INFO  opencode config: OK (~/.config/opencode/opencode.jsonc)
 [19:12:26] INFO  DB: OK (~/.local/share/opencode/opencode.db)
 [19:12:26] INFO  disk: OK (42G free)
 
 # Daily workflow
-$ ocm audit
-[19:15:19] INFO  === ocm audit ===
+$ ocprobe audit
+[19:15:19] INFO  === ocprobe audit ===
 [19:15:19] INFO  [1/7] Using cached catalog (age: 17h)
 [19:15:19] INFO  [2/7] Whitelist: 12 models
 [19:15:19] INFO  [3/7] NEW: 3 | GONE: 0
@@ -46,16 +46,16 @@ $ ocm audit
 [19:15:21] INFO  Whitelist updated: +2, -1
 
 # Quick dry-run
-$ ocm check --quick
-[19:15:19] INFO  === ocm check ===
+$ ocprobe check --quick
+[19:15:19] INFO  === ocprobe check ===
 [19:15:19] INFO  [1/7] Using cached catalog (age: 17h)
 [19:15:19] INFO  [2/7] Whitelist: 12 models
 [19:15:19] INFO  [3/7] NEW: 1 | GONE: 0
 [19:15:20] INFO  Exit code: 1 (changes pending)
 
 # Continuous monitoring
-$ ocm watch              # Runs check + alerts every 6h, never auto-applies
-$ ocm scheduler install  # Install as launchd (macOS) or systemd (Linux) service
+$ ocprobe watch              # Runs check + alerts every 6h, never auto-applies
+$ ocprobe scheduler install  # Install as launchd (macOS) or systemd (Linux) service
 ```
 
 ---
@@ -79,9 +79,11 @@ $ ocm scheduler install  # Install as launchd (macOS) or systemd (Linux) service
 
 ### Homebrew (macOS / Linux)
 ```bash
-brew tap SunnyJayaRaju/ocm
-brew install ocm
+brew tap SunnyJayaRaju/ocprobe
+brew install ocprobe
 ```
+
+> **Note:** The previous tap `SunnyJayaRaju/ocm` is deprecated. If you previously installed via `brew tap SunnyJayaRaju/ocm && brew install ocm`, please run `brew untap SunnyJayaRaju/ocm` and use the new tap above.
 
 ### From Source
 ```bash
@@ -94,8 +96,8 @@ make install
 ```bash
 # Latest release: https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest
 VERSION=$(curl -s https://api.github.com/repos/SunnyJayaRaju/oc-model-manager/releases/latest | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4 | sed 's/^v//')
-curl -sSL "https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest/download/ocm-${VERSION}.tar.gz" | tar -xz
-sudo cp "ocm-${VERSION}/bin/ocm" /usr/local/bin/
+curl -sSL "https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest/download/ocprobe-${VERSION}.tar.gz" | tar -xz
+sudo cp "ocprobe-${VERSION}/bin/ocprobe" /usr/local/bin/
 ```
 
 ---
@@ -104,22 +106,22 @@ sudo cp "ocm-${VERSION}/bin/ocm" /usr/local/bin/
 
 ```bash
 # One-time setup
-ocm config show          # View current configuration
-ocm doctor               # Verify installation (config, DB, auth, disk)
+ocprobe config show          # View current configuration
+ocprobe doctor               # Verify installation (config, DB, auth, disk)
 
 # Daily workflow
-ocm audit                # Full cycle: diff → probe → confirm → apply
-ocm check                # Dry-run only (exit 1 if changes pending)
-ocm status               # Show whitelisted models + recent probe results
+ocprobe audit                # Full cycle: diff → probe → confirm → apply
+ocprobe check                # Dry-run only (exit 1 if changes pending)
+ocprobe status               # Show whitelisted models + recent probe results
 
 # Continuous monitoring
-ocm watch                # Check + alert on interval (never auto-applies)
-ocm scheduler install    # Install as background service (launchd/systemd)
+ocprobe watch                # Check + alert on interval (never auto-applies)
+ocprobe scheduler install    # Install as background service (launchd/systemd)
 
 # Ad-hoc
-ocm probe openai/gpt-4   # Test a single model now
-ocm alerts               # View alert history
-ocm session backup ses_abc  # Backup session to SQL dump
+ocprobe probe openai/gpt-4   # Test a single model now
+ocprobe alerts               # View alert history
+ocprobe session backup ses_abc  # Backup session to SQL dump
 ```
 
 ---
@@ -161,7 +163,7 @@ ocm session backup ses_abc  # Backup session to SQL dump
 
 ## Configuration
 
-Config file: `~/.config/ocm/config.yaml`
+Config file: `~/.config/ocprobe/config.yaml`
 
 ```yaml
 version: 1
@@ -174,7 +176,7 @@ probe:
   timeout_whitelist: 30    # seconds for whitelisted models
   max_parallel: 4          # concurrent probes
   prompt: "Reply with exactly: OK"
-  title_prefix: "ocmm-probe"
+  title_prefix: "ocprobe-probe"
 
 catalog:
   cache_ttl_hours: 24
@@ -204,7 +206,7 @@ retention:
 
 safety:
   mass_removal_threshold_pct: 50
-  allow_mass_remove_env: "OCM_ALLOW_MASS_REMOVE"
+  allow_mass_remove_env: "OCPROBE_ALLOW_MASS_REMOVE"
 
 logging:
   level: info
@@ -212,7 +214,7 @@ logging:
   file_enabled: true
 ```
 
-See `ocm config schema` for full schema.
+See `ocprobe config schema` for full schema.
 
 ---
 
@@ -226,34 +228,34 @@ See `ocm config schema` for full schema.
 - **Session Management** — Backup/restore sessions to replayable SQL dumps
 - **Health Checks** — `doctor` command validates entire stack (config, DB, auth, disk)
 - **Observability** — Structured JSON logging (`--json`), Prometheus metrics
-- **Configuration** — YAML config with JSON Schema validation (`ocm config validate`)
+- **Configuration** — YAML config with JSON Schema validation (`ocprobe config validate`)
 
 ---
 
 ## Validate Command
 
-`ocm validate` probes every model offered by each provider that has valid API credentials in `~/.local/share/opencode/auth.json`. Models that respond successfully (`WORKS`) stay visible in OpenCode's model picker; models that fail (timeout, auth error, billing error, not found, or other error) are added to the provider's `blacklist` in `opencode.json`.
+`ocprobe validate` probes every model offered by each provider that has valid API credentials in `~/.local/share/opencode/auth.json`. Models that respond successfully (`WORKS`) stay visible in OpenCode's model picker; models that fail (timeout, auth error, billing error, not found, or other error) are added to the provider's `blacklist` in `opencode.json`.
 
 ### Usage
 
 ```bash
 # Dry-run: show what would be blacklisted (exit 0 if no changes, 1 if changes pending)
-ocm validate
+ocprobe validate
 
 # Apply changes: write blacklist to opencode.json, create backup, verify effect
-ocm validate --apply
+ocprobe validate --apply
 
 # Scope to a single provider
-ocm validate --provider openrouter
+ocprobe validate --provider openrouter
 
 # Scope to a single model
-ocm validate --provider nvidia --model nvidia/meta/llama-4-maverick-17b-128e-instruct
+ocprobe validate --provider nvidia --model nvidia/meta/llama-4-maverick-17b-128e-instruct
 
 # Machine-readable output
-ocm validate --json
+ocprobe validate --json
 
 # Restore from last validate backup
-ocm validate restore
+ocprobe validate restore
 ```
 
 ### Behavior
@@ -261,7 +263,7 @@ ocm validate restore
 - **Default is dry-run** — prints a per-provider diff of proposed blacklist additions/removals
 - **Uses blacklist (additive)** — only hides confirmed failures; does not whitelist-only (which would hide unprobed models)
 - **Fresh every run** — no cached/stale blacklisting; every run re-probes all models
-- **Creates backup on `--apply`** — timestamped backup in `~/.local/state/ocm/validate-backups/`
+- **Creates backup on `--apply`** — timestamped backup in `~/.local/state/ocprobe/validate-backups/`
 - **Verifies effect** — re-queries `opencode models` after apply; warns if OpenCode bug #32528 prevents blacklist from taking effect
 - **Exit codes** — 0 = no changes needed; 1 = changes pending (dry-run) or error
 
@@ -283,9 +285,9 @@ Each model is classified as:
 
 1. **Session Isolation** — Only sessions created during *this run* with the exact probe prompt (`Reply with exactly: OK`) in the first message are deleted. Real conversations are never touched.
 
-2. **Mass Removal Guard** — If >50% of whitelist would be removed in one run, `ocm` refuses to apply (override with `OCM_ALLOW_MASS_REMOVE=1`).
+2. **Mass Removal Guard** — If >50% of whitelist would be removed in one run, `ocprobe` refuses to apply (override with `OCPROBE_ALLOW_MASS_REMOVE=1`).
 
-3. **Config Backups** — Every apply creates a timestamped backup (`opencode.json.ocm-backup-YYYYMMDD-HHMMSS`).
+3. **Config Backups** — Every apply creates a timestamped backup (`opencode.json.ocprobe-backup-YYYYMMDD-HHMMSS`).
 
 4. **Graveyard Cooldown** — Deliberately removed models won't be re-probed as "new" for 24h.
 
@@ -296,7 +298,7 @@ Each model is classified as:
 ## Architecture
 
 ```text
-ocm (entry point)
+ocprobe (entry point)
 ├── lib/
 │   ├── core.sh        # Shared utilities, validation
 │   ├── config.sh      # YAML config + JSON Schema validation

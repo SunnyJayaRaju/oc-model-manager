@@ -6,9 +6,9 @@
 # ============================================================================
 
 # ---- Default Config Paths ---------------------------------------------------
-DEFAULT_CONFIG_DIR="$HOME/.config/ocm"
+DEFAULT_CONFIG_DIR="$HOME/.config/ocprobe"
 DEFAULT_CONFIG_FILE="$DEFAULT_CONFIG_DIR/config.yaml"
-DEFAULT_STATE_DIR="$HOME/.local/state/ocm"
+DEFAULT_STATE_DIR="$HOME/.local/state/ocprobe"
 
 # ---- Config Schema (embedded for validation) -------------------------------
 read -r -d '' CONFIG_SCHEMA <<'SCHEMA' || true
@@ -52,7 +52,7 @@ properties:
         default: "Reply with exactly: OK"
       title_prefix:
         type: string
-        default: "ocmm-probe"
+        default: "ocprobe-probe"
     required: []
   catalog:
     type: object
@@ -151,7 +151,7 @@ properties:
         default: 50
       allow_mass_remove_env:
         type: string
-        default: "OCM_ALLOW_MASS_REMOVE"
+        default: "OCPROBE_ALLOW_MASS_REMOVE"
     required: []
   logging:
     type: object
@@ -172,46 +172,46 @@ SCHEMA
 
 # ---- Config Variables (populated by load_config) ---------------------------
 # Use conditional assignment to allow re-sourcing
-: "${OCM_OPencode_CONFIG:=}"
-: "${OCM_OPencode_DB:=}"
-: "${OCM_PROBE_TIMEOUT_NEW:=45}"
-: "${OCM_PROBE_TIMEOUT_WL:=30}"
-: "${OCM_MAX_PARALLEL:=4}"
-: "${OCM_PROBE_PROMPT:=Reply with exactly: OK}"
-: "${OCM_PROBE_TITLE_PREFIX:=ocmm-probe}"
-: "${OCM_CACHE_TTL_HOURS:=24}"
-: "${OCM_FORCE_REFRESH:=0}"
-: "${OCM_QUICK:=0}"
-: "${OCM_WATCH_SECS:=21600}"
-: "${OCM_WEBHOOK_URL:=}"
-: "${OCM_DESKTOP_NOTIFICATIONS:=1}"
-: "${OCM_BATCH_MODE:=0}"
-: "${OCM_AGE_GUARD_HOURS:=24}"
-: "${OCM_FRESH_GUARD_HOURS:=1}"
-: "${OCM_MAX_MSG_COUNT:=4}"
-: "${OCM_SESSION_BACKUP_DIR:=}"
-: "${OCM_HISTORY_LIMIT:=5000}"
-: "${OCM_ALERT_LIMIT:=1000}"
-: "${OCM_BACKUP_KEEP_DAYS:=30}"
-: "${OCM_GRAVEYARD_COOLDOWN_HOURS:=24}"
-: "${OCM_MASS_REMOVAL_THRESHOLD_PCT:=50}"
-: "${OCM_ALLOW_MASS_REMOVE_ENV:=OCM_ALLOW_MASS_REMOVE}"
-: "${OCM_LOG_LEVEL:=info}"
-: "${OCM_LOG_FORMAT:=text}"
-: "${OCM_LOG_FILE_ENABLED:=1}"
+: "${OCPROBE_OPencode_CONFIG:=}"
+: "${OCPROBE_OPencode_DB:=}"
+: "${OCPROBE_PROBE_TIMEOUT_NEW:=45}"
+: "${OCPROBE_PROBE_TIMEOUT_WL:=30}"
+: "${OCPROBE_MAX_PARALLEL:=4}"
+: "${OCPROBE_PROBE_PROMPT:=Reply with exactly: OK}"
+: "${OCPROBE_PROBE_TITLE_PREFIX:=ocprobe-probe}"
+: "${OCPROBE_CACHE_TTL_HOURS:=24}"
+: "${OCPROBE_FORCE_REFRESH:=0}"
+: "${OCPROBE_QUICK:=0}"
+: "${OCPROBE_WATCH_SECS:=21600}"
+: "${OCPROBE_WEBHOOK_URL:=}"
+: "${OCPROBE_DESKTOP_NOTIFICATIONS:=1}"
+: "${OCPROBE_BATCH_MODE:=0}"
+: "${OCPROBE_AGE_GUARD_HOURS:=24}"
+: "${OCPROBE_FRESH_GUARD_HOURS:=1}"
+: "${OCPROBE_MAX_MSG_COUNT:=4}"
+: "${OCPROBE_SESSION_BACKUP_DIR:=}"
+: "${OCPROBE_HISTORY_LIMIT:=5000}"
+: "${OCPROBE_ALERT_LIMIT:=1000}"
+: "${OCPROBE_BACKUP_KEEP_DAYS:=30}"
+: "${OCPROBE_GRAVEYARD_COOLDOWN_HOURS:=24}"
+: "${OCPROBE_MASS_REMOVAL_THRESHOLD_PCT:=50}"
+: "${OCPROBE_ALLOW_MASS_REMOVE_ENV:=OCPROBE_ALLOW_MASS_REMOVE}"
+: "${OCPROBE_LOG_LEVEL:=info}"
+: "${OCPROBE_LOG_FORMAT:=text}"
+: "${OCPROBE_LOG_FILE_ENABLED:=1}"
 
 # ---- Load Configuration -----------------------------------------------------
 load_config() {
-	local config_file="${OCM_CONFIG_OVERRIDE:-$DEFAULT_CONFIG_FILE}"
+	local config_file="${OCPROBE_CONFIG_OVERRIDE:-$DEFAULT_CONFIG_FILE}"
 	config_file="${config_file/#\~/$HOME}"
 
-	OCM_CONFIG_FILE="$config_file"
-	OCM_STATE_DIR="${OCM_STATE_DIR:-$DEFAULT_STATE_DIR}"
-	OCM_STATE_DIR="${OCM_STATE_DIR/#\~/$HOME}"
+	OCPROBE_CONFIG_FILE="$config_file"
+	OCPROBE_STATE_DIR="${OCPROBE_STATE_DIR:-$DEFAULT_STATE_DIR}"
+	OCPROBE_STATE_DIR="${OCPROBE_STATE_DIR/#\~/$HOME}"
 
 	# Create directories
-	mkdir -p "$(dirname "$config_file")" "$OCM_STATE_DIR"
-	chmod 700 "$OCM_STATE_DIR" 2>/dev/null || true
+	mkdir -p "$(dirname "$config_file")" "$OCPROBE_STATE_DIR"
+	chmod 700 "$OCPROBE_STATE_DIR" 2>/dev/null || true
 
 	# If config doesn't exist, create default
 	if [[ ! -f "$config_file" ]]; then
@@ -247,22 +247,22 @@ load_config() {
 	done <<<"$config_vars"
 
 	# Set derived paths
-	OCM_AUDIT_DIR="${OCM_AUDIT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/ocm.XXXXXX")}"
-	OCM_STAMP="$(date +%Y%m%d-%H%M%S)"
-	OCM_RUN_DIR="$(mktemp -d "${OCM_AUDIT_DIR}/run-XXXXXX")"
-	OCM_LOG_FILE="$OCM_RUN_DIR/audit.log"
-	OCM_RESULTS_FILE="$OCM_RUN_DIR/results.tsv"
-	OCM_LOCK_DIR="$OCM_STATE_DIR/.lock"
+	OCPROBE_AUDIT_DIR="${OCPROBE_AUDIT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/ocprobe.XXXXXX")}"
+	OCPROBE_STAMP="$(date +%Y%m%d-%H%M%S)"
+	OCPROBE_RUN_DIR="$(mktemp -d "${OCPROBE_AUDIT_DIR}/run-XXXXXX")"
+	OCPROBE_LOG_FILE="$OCPROBE_RUN_DIR/audit.log"
+	OCPROBE_RESULTS_FILE="$OCPROBE_RUN_DIR/results.tsv"
+	OCPROBE_LOCK_DIR="$OCPROBE_STATE_DIR/.lock"
 
 	# Export for subprocesses
-	export OCM_CONFIG_FILE OCM_STATE_DIR OCM_AUDIT_DIR OCM_RUN_DIR OCM_LOG_FILE
+	export OCPROBE_CONFIG_FILE OCPROBE_STATE_DIR OCPROBE_AUDIT_DIR OCPROBE_RUN_DIR OCPROBE_LOG_FILE
 }
 
 create_default_config() {
 	local file="$1"
 	cat >"$file" <<'EOF'
-# ocm — OpenCode Model Manager Configuration
-# See: ocm config schema
+# ocprobe — OpenCode Model Probe Configuration
+# See: ocprobe config schema
 version: 1
 
 opencode:
@@ -274,7 +274,7 @@ probe:
   timeout_whitelist: 30
   max_parallel: 4
   prompt: "Reply with exactly: OK"
-  title_prefix: "ocmm-probe"
+  title_prefix: "ocprobe-probe"
 
 catalog:
   cache_ttl_hours: 24
@@ -304,7 +304,7 @@ retention:
 
 safety:
   mass_removal_threshold_pct: 50
-  allow_mass_remove_env: "OCM_ALLOW_MASS_REMOVE"
+  allow_mass_remove_env: "OCPROBE_ALLOW_MASS_REMOVE"
 
 logging:
   level: info
@@ -362,31 +362,31 @@ def get(path, default=None):
     return val
 
 # Print as bash assignments
-print(f'OCM_OPencode_CONFIG="{os.path.expanduser(str(get("opencode.config_path", "~/.config/opencode/opencode.json")))}"')
-print(f'OCM_OPencode_DB="{os.path.expanduser(str(get("opencode.db_path", "~/.local/share/opencode/opencode.db")))}"')
-print(f'OCM_PROBE_TIMEOUT_NEW={get("probe.timeout_new", 45)}')
-print(f'OCM_PROBE_TIMEOUT_WL={get("probe.timeout_whitelist", 30)}')
-print(f'OCM_MAX_PARALLEL={get("probe.max_parallel", 4)}')
-print(f'OCM_PROBE_PROMPT="{get("probe.prompt", "Reply with exactly: OK")}"')
-print(f'OCM_PROBE_TITLE_PREFIX="{get("probe.title_prefix", "ocmm-probe")}"')
-print(f'OCM_CACHE_TTL_HOURS={get("catalog.cache_ttl_hours", 24)}')
-print(f'OCM_WATCH_SECS={get("scheduler.interval_seconds", 21600)}')
-print(f'OCM_WEBHOOK_URL="{get("alerts.webhook_url", "")}"')
-print(f'OCM_DESKTOP_NOTIFICATIONS={1 if get("alerts.desktop_notifications", True) else 0}')
-print(f'OCM_BATCH_MODE={1 if get("alerts.batch_mode", False) else 0}')
-print(f'OCM_AGE_GUARD_HOURS={get("session.age_guard_hours", 24)}')
-print(f'OCM_FRESH_GUARD_HOURS={get("session.fresh_guard_hours", 1)}')
-print(f'OCM_MAX_MSG_COUNT={get("session.max_msg_count", 4)}')
-print(f'OCM_SESSION_BACKUP_DIR="{os.path.expanduser(str(get("session.backup_dir", "~/.local/share/opencode/session-backups")))}"')
-print(f'OCM_HISTORY_LIMIT={get("retention.history_limit", 5000)}')
-print(f'OCM_ALERT_LIMIT={get("retention.alert_limit", 1000)}')
-print(f'OCM_BACKUP_KEEP_DAYS={get("retention.backup_keep_days", 30)}')
-print(f'OCM_GRAVEYARD_COOLDOWN_HOURS={get("retention.graveyard_cooldown_hours", 24)}')
-print(f'OCM_MASS_REMOVAL_THRESHOLD_PCT={get("safety.mass_removal_threshold_pct", 50)}')
-print(f'OCM_ALLOW_MASS_REMOVE_ENV="{get("safety.allow_mass_remove_env", "OCM_ALLOW_MASS_REMOVE")}"')
-print(f'OCM_LOG_LEVEL="{get("logging.level", "info")}"')
-print(f'OCM_LOG_FORMAT="{get("logging.format", "text")}"')
-print(f'OCM_LOG_FILE_ENABLED={1 if get("logging.file_enabled", True) else 0}')
+print(f'OCPROBE_OPencode_CONFIG="{os.path.expanduser(str(get("opencode.config_path", "~/.config/opencode/opencode.json")))}"')
+print(f'OCPROBE_OPencode_DB="{os.path.expanduser(str(get("opencode.db_path", "~/.local/share/opencode/opencode.db")))}"')
+print(f'OCPROBE_PROBE_TIMEOUT_NEW={get("probe.timeout_new", 45)}')
+print(f'OCPROBE_PROBE_TIMEOUT_WL={get("probe.timeout_whitelist", 30)}')
+print(f'OCPROBE_MAX_PARALLEL={get("probe.max_parallel", 4)}')
+print(f'OCPROBE_PROBE_PROMPT="{get("probe.prompt", "Reply with exactly: OK")}"')
+print(f'OCPROBE_PROBE_TITLE_PREFIX="{get("probe.title_prefix", "ocprobe-probe")}"')
+print(f'OCPROBE_CACHE_TTL_HOURS={get("catalog.cache_ttl_hours", 24)}')
+print(f'OCPROBE_WATCH_SECS={get("scheduler.interval_seconds", 21600)}')
+print(f'OCPROBE_WEBHOOK_URL="{get("alerts.webhook_url", "")}"')
+print(f'OCPROBE_DESKTOP_NOTIFICATIONS={1 if get("alerts.desktop_notifications", True) else 0}')
+print(f'OCPROBE_BATCH_MODE={1 if get("alerts.batch_mode", False) else 0}')
+print(f'OCPROBE_AGE_GUARD_HOURS={get("session.age_guard_hours", 24)}')
+print(f'OCPROBE_FRESH_GUARD_HOURS={get("session.fresh_guard_hours", 1)}')
+print(f'OCPROBE_MAX_MSG_COUNT={get("session.max_msg_count", 4)}')
+print(f'OCPROBE_SESSION_BACKUP_DIR="{os.path.expanduser(str(get("session.backup_dir", "~/.local/share/opencode/session-backups")))}"')
+print(f'OCPROBE_HISTORY_LIMIT={get("retention.history_limit", 5000)}')
+print(f'OCPROBE_ALERT_LIMIT={get("retention.alert_limit", 1000)}')
+print(f'OCPROBE_BACKUP_KEEP_DAYS={get("retention.backup_keep_days", 30)}')
+print(f'OCPROBE_GRAVEYARD_COOLDOWN_HOURS={get("retention.graveyard_cooldown_hours", 24)}')
+print(f'OCPROBE_MASS_REMOVAL_THRESHOLD_PCT={get("safety.mass_removal_threshold_pct", 50)}')
+print(f'OCPROBE_ALLOW_MASS_REMOVE_ENV="{get("safety.allow_mass_remove_env", "OCPROBE_ALLOW_MASS_REMOVE")}"')
+print(f'OCPROBE_LOG_LEVEL="{get("logging.level", "info")}"')
+print(f'OCPROBE_LOG_FORMAT="{get("logging.format", "text")}"')
+print(f'OCPROBE_LOG_FILE_ENABLED={1 if get("logging.file_enabled", True) else 0}')
 PYEOF
 }
 
@@ -397,10 +397,10 @@ cmd_config() {
 
 	case "$subcmd" in
 	show)
-		[[ -f "$OCM_CONFIG_FILE" ]] && cat "$OCM_CONFIG_FILE" || echo "No config file found"
+		[[ -f "$OCPROBE_CONFIG_FILE" ]] && cat "$OCPROBE_CONFIG_FILE" || echo "No config file found"
 		;;
 	validate)
-		validate_config "$OCM_CONFIG_FILE" && echo "Config is valid"
+		validate_config "$OCPROBE_CONFIG_FILE" && echo "Config is valid"
 		;;
 	edit)
 		local editor="${EDITOR:-${VISUAL:-vim}}"
@@ -408,13 +408,13 @@ cmd_config() {
 			log_error "No editor found. Set EDITOR or VISUAL environment variable, or install vim/nano"
 			return 1
 		fi
-		$editor "$OCM_CONFIG_FILE"
+		$editor "$OCPROBE_CONFIG_FILE"
 		;;
 	schema)
 		echo "$CONFIG_SCHEMA"
 		;;
 	path)
-		echo "$OCM_CONFIG_FILE"
+		echo "$OCPROBE_CONFIG_FILE"
 		;;
 	*)
 		log_error "Unknown config command: $subcmd"

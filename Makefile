@@ -3,8 +3,8 @@
 # ============================================================================
 
 VERSION := $(shell cat VERSION)
-DIST_DIR := dist/ocm-$(VERSION)
-PACKAGE := dist/ocm-$(VERSION).tar.gz
+DIST_DIR := dist/ocprobe-$(VERSION)
+PACKAGE := dist/ocprobe-$(VERSION).tar.gz
 
 .PHONY: all lint test test-unit test-integration build package install uninstall clean help
 
@@ -24,9 +24,9 @@ help:
 
 lint:
 	@echo "Running shellcheck..."
-	@shellcheck bin/ocm lib/*.sh
+	@shellcheck bin/ocprobe lib/*.sh
 	@echo "Checking bash syntax..."
-	@for f in bin/ocm lib/*.sh; do bash -n "$$f" || exit 1; done
+	@for f in bin/ocprobe lib/*.sh; do bash -n "$$f" || exit 1; done
 	@echo "Lint passed"
 
 test: test-unit test-integration
@@ -43,8 +43,8 @@ build: $(PACKAGE)
 
 $(PACKAGE): $(DIST_DIR)
 	@echo "Creating package..."
-	@cd dist && tar -c ocm-$(VERSION)/ | gzip -n > ocm-$(VERSION).tar.gz
-	@cd dist && sha256sum ocm-$(VERSION).tar.gz > ocm-$(VERSION).tar.gz.sha256
+	@cd dist && tar -c ocprobe-$(VERSION)/ | gzip -n > ocprobe-$(VERSION).tar.gz
+	@cd dist && sha256sum ocprobe-$(VERSION).tar.gz > ocprobe-$(VERSION).tar.gz.sha256
 	@echo "Package: $(PACKAGE)"
 
 $(DIST_DIR):
@@ -57,16 +57,17 @@ install: $(PACKAGE)
 	@echo "Installing to ~/.local/bin..."
 	@mkdir -p ~/.local/bin
 	@tar -xzf $(PACKAGE) -C /tmp/
-	@cp /tmp/ocm-$(VERSION)/bin/ocm ~/.local/bin/ocm
-	@chmod +x ~/.local/bin/ocm
+	@cp /tmp/ocprobe-$(VERSION)/bin/ocprobe ~/.local/bin/ocprobe
+	@chmod +x ~/.local/bin/ocprobe
 	@echo "Installed. Ensure ~/.local/bin is in PATH"
 
 uninstall:
-	@rm -f ~/.local/bin/ocm
+	@rm -f ~/.local/bin/ocprobe
 	@echo "Uninstalled"
 
 clean:
 	@rm -rf dist/
+	@rm -rf /tmp/ocprobe-*
 	@rm -rf /tmp/ocm-*
 	@rm -rf /tmp/ocm-mock-*
 	@rm -rf /tmp/ocm-test-*
@@ -84,4 +85,4 @@ release-check:
 
 # Check version consistency
 version-check:
-	@grep -r "OCM_VERSION" bin/ lib/ | grep -v "$(VERSION)" && echo "Version mismatch!" && exit 1 || echo "Version consistent"
+	@grep -r "OCPROBE_VERSION" bin/ lib/ | grep -v "$(VERSION)" && echo "Version mismatch!" && exit 1 || echo "Version consistent"

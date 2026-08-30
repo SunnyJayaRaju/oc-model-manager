@@ -8,33 +8,37 @@ set -euo pipefail
 
 # ---- Constants --------------------------------------------------------------
 # Use conditional assignment to allow re-sourcing
-: "${OCM_PROBE_PROMPT:=Reply with exactly: OK}"
-: "${OCM_PROBE_TITLE_PREFIX:=ocmm-probe}"
-: "${OCM_AGE_GUARD_MS:=86400000}"  # 24h in ms
-: "${OCM_FRESH_GUARD_MS:=3600000}" # 1h in ms
-: "${OCM_MAX_MSG_COUNT:=4}"
-: "${OCM_HISTORY_LIMIT:=5000}"
-: "${OCM_ALERT_LIMIT:=1000}"
-: "${OCM_CACHE_TTL_HOURS:=24}"
-: "${OCM_BACKUP_KEEP_DAYS:=30}"
-: "${OCM_GRAVEYARD_COOLDOWN_HOURS:=24}"
-: "${OCM_DEFAULT_WATCH_SECS:=21600}" # 6h
-: "${OCM_MAX_PARALLEL:=4}"
-: "${OCM_PROBE_TIMEOUT_NEW:=45}"
-: "${OCM_PROBE_TIMEOUT_WL:=30}"
+: "${OCPROBE_PROBE_PROMPT:=Reply with exactly: OK}"
+: "${OCPROBE_PROBE_TITLE_PREFIX:=ocprobe-probe}"
+# Legacy probe title prefix for backward compatibility with sessions created
+# before the ocm→ocprobe rename. Can be removed in a future cleanup once
+# no old probe sessions remain.
+: "${OCPROBE_PROBE_TITLE_PREFIX_LEGACY:=ocmm-probe}"
+: "${OCPROBE_AGE_GUARD_MS:=86400000}"  # 24h in ms
+: "${OCPROBE_FRESH_GUARD_MS:=3600000}" # 1h in ms
+: "${OCPROBE_MAX_MSG_COUNT:=4}"
+: "${OCPROBE_HISTORY_LIMIT:=5000}"
+: "${OCPROBE_ALERT_LIMIT:=1000}"
+: "${OCPROBE_CACHE_TTL_HOURS:=24}"
+: "${OCPROBE_BACKUP_KEEP_DAYS:=30}"
+: "${OCPROBE_GRAVEYARD_COOLDOWN_HOURS:=24}"
+: "${OCPROBE_DEFAULT_WATCH_SECS:=21600}" # 6h
+: "${OCPROBE_MAX_PARALLEL:=4}"
+: "${OCPROBE_PROBE_TIMEOUT_NEW:=45}"
+: "${OCPROBE_PROBE_TIMEOUT_WL:=30}"
 
 # ---- Paths (resolved at runtime) -------------------------------------------
-: "${OCM_CONFIG_FILE:=}"
-: "${OCM_STATE_DIR:=}"
-: "${OCM_AUDIT_DIR:=}"
-: "${OCM_DB_FILE:=$HOME/.local/share/opencode/opencode.db}"
+: "${OCPROBE_CONFIG_FILE:=}"
+: "${OCPROBE_STATE_DIR:=}"
+: "${OCPROBE_AUDIT_DIR:=}"
+: "${OCPROBE_DB_FILE:=$HOME/.local/share/opencode/opencode.db}"
 
 # ---- Runtime State ---------------------------------------------------------
-: "${OCM_STAMP:=}"
-: "${OCM_RUN_DIR:=}"
-: "${OCM_LOG_FILE:=}"
-: "${OCM_RESULTS_FILE:=}"
-: "${OCM_LOCK_DIR:=}"
+: "${OCPROBE_STAMP:=}"
+: "${OCPROBE_RUN_DIR:=}"
+: "${OCPROBE_LOG_FILE:=}"
+: "${OCPROBE_RESULTS_FILE:=}"
+: "${OCPROBE_LOCK_DIR:=}"
 
 # ---- Validation -------------------------------------------------------------
 validate_positive_int() {
@@ -105,7 +109,7 @@ atomic_write() {
 
 # ---- Cleanup ----------------------------------------------------------------
 cleanup_run_dir() {
-	[[ -d "$OCM_RUN_DIR" && "$OCM_RUN_DIR" == "${TMPDIR:-/tmp}"/*/ocm-* ]] && rm -rf "$OCM_RUN_DIR"
+	[[ -d "$OCPROBE_RUN_DIR" && "$OCPROBE_RUN_DIR" == "${TMPDIR:-/tmp}"/*/ocprobe-* ]] && rm -rf "$OCPROBE_RUN_DIR"
 }
 
 # ---- Pruning JSONL files ----------------------------------------------------

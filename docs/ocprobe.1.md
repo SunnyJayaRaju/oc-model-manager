@@ -4,15 +4,15 @@
 
 # NAME
 
-ocm — OpenCode Model Manager
+ocprobe — OpenCode Model Probe
 
 # SYNOPSIS
 
-**ocm** [*global-options*] <command> [*command-options*]
+**ocprobe** [*global-options*] <command> [*command-options*]
 
 # DESCRIPTION
 
-**ocm** manages the OpenCode model catalog lifecycle: discovering new models, probing model health, alerting on failures, and safely applying whitelist changes.
+**ocprobe** manages the OpenCode model catalog lifecycle: discovering new models, probing model health, alerting on failures, and safely applying whitelist changes.
 
 # GLOBAL OPTIONS
 
@@ -43,7 +43,7 @@ ocm — OpenCode Model Manager
 
 Full cycle: diff catalog → probe new/whitelisted models → confirm changes → apply to config.
 
-    ocm audit [--quick] [--force-refresh] [--yes]
+    ocprobe audit [--quick] [--force-refresh] [--yes]
 
 Exits 0 on success, 1 if user aborts or error.
 
@@ -51,19 +51,19 @@ Exits 0 on success, 1 if user aborts or error.
 
 Dry-run only. Performs diff and probe but never writes config. Exits 1 if changes pending, 0 if clean.
 
-    ocm check [--quick] [--force-refresh]
+    ocprobe check [--quick] [--force-refresh]
 
 ## status
 
 Show current whitelist, recent probe results, and recent alerts.
 
-    ocm status
+    ocprobe status
 
 ## alerts
 
 Show recorded alerts.
 
-    ocm alerts [--clear]
+    ocprobe alerts [--clear]
 
 **--clear**
 : Clear alert history.
@@ -72,15 +72,15 @@ Show recorded alerts.
 
 Test a single model immediately.
 
-    ocm probe <provider/model>
+    ocprobe probe <provider/model>
 
-Example: `ocm probe openai/gpt-4`
+Example: `ocprobe probe openai/gpt-4`
 
 ## watch
 
 Run `check` on interval (default 6 hours), alert on changes. Never auto-applies.
 
-    ocm watch [--quick]
+    ocprobe watch [--quick]
 
 Press Ctrl-C to stop gracefully.
 
@@ -88,7 +88,7 @@ Press Ctrl-C to stop gracefully.
 
 Manage background scheduler (launchd on macOS, systemd on Linux).
 
-    ocm scheduler install|uninstall|status
+    ocprobe scheduler install|uninstall|status
 
 **install**
 : Install and enable periodic check+alert.
@@ -103,10 +103,10 @@ Manage background scheduler (launchd on macOS, systemd on Linux).
 
 Manage OpenCode sessions.
 
-    ocm session list
-    ocm session backup <session_id>
-    ocm session restore <file.sql>
-    ocm session cleanup
+    ocprobe session list
+    ocprobe session backup <session_id>
+    ocprobe session restore <file.sql>
+    ocprobe session cleanup
 
 **list**
 : List sessions with message counts and timestamps.
@@ -118,13 +118,13 @@ Manage OpenCode sessions.
 : Restore session from SQL dump.
 
 **cleanup**
-: Remove probe sessions (ocmm-probe*).
+: Remove probe sessions (ocprobe-probe*).
 
 ## config
 
 Manage configuration.
 
-    ocm config show|validate|edit|schema|path
+    ocprobe config show|validate|edit|schema|path
 
 **show**
 : Display current config.
@@ -145,7 +145,7 @@ Manage configuration.
 
 Run health checks: opencode binary, Python, jq, sqlite3, config files, DB integrity, auth, disk space, scheduler.
 
-    ocm doctor
+    ocprobe doctor
 
 Exits 0 if all critical checks pass, 1 otherwise.
 
@@ -153,13 +153,13 @@ Exits 0 if all critical checks pass, 1 otherwise.
 
 Show version.
 
-    ocm version
+    ocprobe version
 
 # CONFIGURATION
 
-Configuration file: `~/.config/ocm/config.yaml`
+Configuration file: `~/.config/ocprobe/config.yaml`
 
-See `ocm config schema` for full schema. Key sections:
+See `ocprobe config schema` for full schema. Key sections:
 
 - **opencode**: Paths to opencode config and DB
 - **probe**: Timeouts, parallelism, prompt
@@ -173,64 +173,64 @@ See `ocm config schema` for full schema. Key sections:
 
 # ENVIRONMENT VARIABLES
 
-**OCM_CONFIG**
+**OCPROBE_CONFIG**
 : Override config file path.
 
-**OCM_STATE_DIR**
-: Override state directory (default `~/.local/state/ocm`).
+**OCPROBE_STATE_DIR**
+: Override state directory (default `~/.local/state/ocprobe`).
 
-**OCM_LOG_LEVEL**
+**OCPROBE_LOG_LEVEL**
 : Log level: debug, info, warn, error (default: info).
 
-**OCM_LOG_FORMAT**
+**OCPROBE_LOG_FORMAT**
 : Log format: text, json (default: text).
 
-**OCM_ALLOW_MASS_REMOVE**
+**OCPROBE_ALLOW_MASS_REMOVE**
 : Override mass-removal guard (set to 1).
 
 # FILES
 
-`~/.config/ocm/config.yaml`
+`~/.config/ocprobe/config.yaml`
 : User configuration.
 
-`~/.local/state/ocm/`
+`~/.local/state/ocprobe/`
 : State directory (history, alerts, graveyard, cache).
 
-`~/.local/state/ocm/probe-history.jsonl`
+`~/.local/state/ocprobe/probe-history.jsonl`
 : Probe history (JSON Lines).
 
-`~/.local/state/ocm/alerts.jsonl`
+`~/.local/state/ocprobe/alerts.jsonl`
 : Alert history (JSON Lines).
 
-`~/.local/state/ocm/graveyard.jsonl`
+`~/.local/state/ocprobe/graveyard.jsonl`
 : Deliberately removed models with timestamps.
 
-`~/.local/state/ocm/catalog-cache.json`
+`~/.local/state/ocprobe/catalog-cache.json`
 : Cached full catalog.
 
-`~/.config/opencode/opencode.json.ocm-backup-*`
+`~/.config/opencode/opencode.json.ocprobe-backup-*`
 : Config backups before apply.
 
 # EXAMPLES
 
 Full audit with confirmation:
-    ocm audit
+    ocprobe audit
 
 Fast dry-run:
-    ocm check --quick
+    ocprobe check --quick
 
 Continuous monitoring:
-    ocm scheduler install
-    ocm watch
+    ocprobe scheduler install
+    ocprobe watch
 
 Test single model:
-    ocm probe anthropic/claude-3
+    ocprobe probe anthropic/claude-3
 
 Backup session:
-    ocm session backup ses_abc123
+    ocprobe session backup ses_abc123
 
 Health check:
-    ocm doctor
+    ocprobe doctor
 
 # EXIT STATUS
 

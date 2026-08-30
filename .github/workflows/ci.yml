@@ -8,7 +8,7 @@ on:
     branches: [main, develop]
 
 env:
-  OCM_ROOT: ${{ github.workspace }}
+  OCPROBE_ROOT: ${{ github.workspace }}
 
 jobs:
   lint:
@@ -23,10 +23,10 @@ jobs:
           curl -sL https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz | tar -xJ
           sudo mv shellcheck-v0.11.0/shellcheck /usr/local/bin/
       - name: Run shellcheck
-        run: shellcheck bin/ocm lib/*.sh
+        run: shellcheck bin/ocprobe lib/*.sh
       - name: Check bash syntax
         run: |
-          for f in bin/ocm lib/*.sh; do
+          for f in bin/ocprobe lib/*.sh; do
             bash -n "$f" || exit 1
           done
 
@@ -85,15 +85,15 @@ jobs:
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
       - name: Create release package
         run: |
-          mkdir -p dist/ocm-$VERSION
-          cp -r bin lib config VERSION CHANGELOG.md LICENSE README.md dist/ocm-$VERSION/
+          mkdir -p dist/ocprobe-$VERSION
+          cp -r bin lib config VERSION CHANGELOG.md LICENSE README.md dist/ocprobe-$VERSION/
           cd dist
-          tar -czf ocm-$VERSION.tar.gz ocm-$VERSION/
-          sha256sum ocm-$VERSION.tar.gz > ocm-$VERSION.tar.gz.sha256
+          tar -czf ocprobe-$VERSION.tar.gz ocprobe-$VERSION/
+          sha256sum ocprobe-$VERSION.tar.gz > ocprobe-$VERSION.tar.gz.sha256
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ocm-release
+          name: ocprobe-release
           path: dist/
 
   release:
@@ -106,14 +106,14 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ocm-release
+          name: ocprobe-release
           path: dist/
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/ocm-*.tar.gz
-            dist/ocm-*.tar.gz.sha256
+            dist/ocprobe-*.tar.gz
+            dist/ocprobe-*.tar.gz.sha256
           generate_release_notes: true
 
   homebrew:
@@ -136,28 +136,27 @@ jobs:
         if: ${{ steps.check_token.outputs.has_token == 'true' }}
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
-      - name: Checkout homebrew-ocm tap repo
+      - name: Checkout homebrew-ocprobe tap repo
         if: ${{ steps.check_token.outputs.has_token == 'true' }}
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/homebrew-ocm
+          repository: ${{ github.repository_owner }}/homebrew-ocprobe
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
   
       - name: Update formula
         if: ${{ steps.check_token.outputs.has_token == 'true' }}
         run: |
-          URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/ocm-${VERSION}.tar.gz"
+          URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/ocprobe-${VERSION}.tar.gz"
           SHA256=$(curl -sL "$URL.sha256" | cut -d' ' -f1)
-          sed -i "s/version \".*\"/version \"${VERSION}\"/" Formula/ocm.rb
-          sed -i "s|url \".*\"|url \"${URL}\"|" Formula/ocm.rb
-          sed -i "s/sha256 \".*\"/sha256 \"${SHA256}\"/" Formula/ocm.rb
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" Formula/ocprobe.rb
+          sed -i "s|url \".*\"|url \"${URL}\"|" Formula/ocprobe.rb
+          sed -i "s/sha256 \".*\"/sha256 \"${SHA256}\"/" Formula/ocprobe.rb
 
       - name: Commit and push
         if: ${{ steps.check_token.outputs.has_token == 'true' }}
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add Formula/ocm.rb
-          git commit -m "Update ocm to v${VERSION}"
+          git add Formula/ocprobe.rb
+          git commit -m "Update ocprobe to v${VERSION}"
           git push
-        

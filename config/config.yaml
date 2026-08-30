@@ -1,5 +1,5 @@
-# ocm — OpenCode Model Manager Configuration
-# See: ocm config schema
+# ocprobe — OpenCode Model Probe Configuration
+# See: ocprobe config schema
 version: 1
 
 opencode:
@@ -11,7 +11,7 @@ probe:
   timeout_whitelist: 30
   max_parallel: 4
   prompt: "Reply with exactly: OK"
-  title_prefix: "ocmm-probe"
+  title_prefix: "ocprobe-probe"
 
 catalog:
   cache_ttl_hours: 24
@@ -41,7 +41,7 @@ retention:
 
 safety:
   mass_removal_threshold_pct: 50
-  allow_mass_remove_env: "OCM_ALLOW_MASS_REMOVE"
+  allow_mass_remove_env: "OCPROBE_ALLOW_MASS_REMOVE"
 
 logging:
   level: info

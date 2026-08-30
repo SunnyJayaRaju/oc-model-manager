@@ -13,13 +13,13 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$OCM_STATE_DIR" "$OCM_RUN_DIR"
+  rm -rf "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR"
 }
 
 # Mock opencode for testing
 mock_opencode() {
   local mock_dir
-  mock_dir=$(mktemp -d /tmp/ocm-mock-XXXXXX)
+  mock_dir=$(mktemp -d /tmp/ocprobe-mock-XXXXXX)
   cat > "$mock_dir/opencode" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
@@ -67,7 +67,7 @@ EOF
 
 @test "list_whitelist extracts models from config" {
   local tmpconfig
-  tmpconfig=$(mktemp "${BATS_TEST_TMPDIR}/ocm-test-config-XXXXXX.json")
+  tmpconfig=$(mktemp "${BATS_TEST_TMPDIR}/ocprobe-test-config-XXXXXX.json")
   cat > "$tmpconfig" <<'EOF'
 {
   "provider": {
@@ -76,7 +76,7 @@ EOF
   }
 }
 EOF
-  OCM_OPencode_CONFIG="$tmpconfig"
+  OCPROBE_OPencode_CONFIG="$tmpconfig"
   run list_whitelist
   assert_success
   assert_output --partial "openai/gpt-3.5-turbo"
@@ -85,14 +85,14 @@ EOF
 }
 
 @test "write_worker creates executable script" {
-  local worker_file="$OCM_RUN_DIR/worker.sh"
+  local worker_file="$OCPROBE_RUN_DIR/worker.sh"
   write_worker "$worker_file"
   assert [ -x "$worker_file" ]
   assert [ -f "$worker_file" ]
 }
 
 @test "worker validates model name" {
-  local worker_file="$OCM_RUN_DIR/worker.sh"
+  local worker_file="$OCPROBE_RUN_DIR/worker.sh"
   write_worker "$worker_file"
   run "$worker_file" "invalid@model" "TEST" "10" "prompt"
   assert_failure
@@ -100,7 +100,7 @@ EOF
 }
 
 @test "worker validates timeout" {
-  local worker_file="$OCM_RUN_DIR/worker.sh"
+  local worker_file="$OCPROBE_RUN_DIR/worker.sh"
   write_worker "$worker_file"
   run "$worker_file" "openai/gpt-4" "TEST" "abc" "prompt"
   assert_failure
@@ -109,8 +109,8 @@ EOF
 
 @test "compute_diff finds new and gone models" {
   mock_opencode
-  export OCM_OPencode_CONFIG=$(mktemp "${BATS_TEST_TMPDIR}/ocm-test-config-XXXXXX.json")
-  cat > "$OCM_OPencode_CONFIG" <<'EOF'
+  export OCPROBE_OPencode_CONFIG=$(mktemp "${BATS_TEST_TMPDIR}/ocprobe-test-config-XXXXXX.json")
+  cat > "$OCPROBE_OPencode_CONFIG" <<'EOF'
 {
   "provider": {
     "openai": { "whitelist": ["gpt-4"] }
@@ -119,29 +119,29 @@ EOF
 EOF
   fetch_catalog
   compute_diff
-  assert [ -f "$OCM_RUN_DIR/new.txt" ]
-  assert [ -f "$OCM_RUN_DIR/gone.txt" ]
+  assert [ -f "$OCPROBE_RUN_DIR/new.txt" ]
+  assert [ -f "$OCPROBE_RUN_DIR/gone.txt" ]
   # gpt-3.5-turbo, claude-3, gemini-pro, kilo/~openai/gpt-4 should be NEW
-  run grep -c "openai/gpt-3.5-turbo" "$OCM_RUN_DIR/new.txt"
+  run grep -c "openai/gpt-3.5-turbo" "$OCPROBE_RUN_DIR/new.txt"
   assert_success
   assert_output "1"
 }
 
 @test "graveyard filtering excludes recently removed models" {
   mock_opencode
-  export OCM_OPencode_CONFIG=$(mktemp "${BATS_TEST_TMPDIR}/ocm-test-config-XXXXXX.json")
-  cat > "$OCM_OPencode_CONFIG" <<'EOF'
+  export OCPROBE_OPencode_CONFIG=$(mktemp "${BATS_TEST_TMPDIR}/ocprobe-test-config-XXXXXX.json")
+  cat > "$OCPROBE_OPencode_CONFIG" <<'EOF'
 {"provider": {"openai": {"whitelist": ["gpt-4"]}}}
 EOF
   # Add to graveyard
-  mkdir -p "$OCM_STATE_DIR"
-  echo "$(ms)	openai/gpt-3.5-turbo" >> "$OCM_STATE_DIR/graveyard.jsonl"
+  mkdir -p "$OCPROBE_STATE_DIR"
+  echo "$(ms)	openai/gpt-3.5-turbo" >> "$OCPROBE_STATE_DIR/graveyard.jsonl"
   fetch_catalog
   compute_diff
   # gpt-3.5-turbo should be in cooling.txt, not new.txt
-  run grep "openai/gpt-3.5-turbo" "$OCM_RUN_DIR/cooling.txt"
+  run grep "openai/gpt-3.5-turbo" "$OCPROBE_RUN_DIR/cooling.txt"
   assert_success
-  run grep "openai/gpt-3.5-turbo" "$OCM_RUN_DIR/new.txt"
+  run grep "openai/gpt-3.5-turbo" "$OCPROBE_RUN_DIR/new.txt"
   assert_failure
 }
 

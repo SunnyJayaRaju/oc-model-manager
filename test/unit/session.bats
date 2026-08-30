@@ -14,7 +14,7 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$OCM_STATE_DIR" "$OCM_RUN_DIR"
+  rm -rf "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR"
 }
 
 @test "is_probe_session returns true for valid probe session" {
@@ -95,15 +95,15 @@ teardown() {
 
 @test "cmd_session_backup creates SQL file" {
   create_test_db
-  local backup_dir="$OCM_STATE_DIR/backups"
-  OCM_SESSION_BACKUP_DIR="$backup_dir"
+  local backup_dir="$OCPROBE_STATE_DIR/backups"
+  OCPROBE_SESSION_BACKUP_DIR="$backup_dir"
   # Create test config pointing to test database
   local test_config="$BATS_TEST_TMPDIR/test-session-backup-config.yaml"
   cat > "$test_config" <<EOF
 version: 1
 opencode:
-  config_path: "$OCM_STATE_DIR/opencode.json"
-  db_path: "$OCM_OPencode_DB"
+  config_path: "$OCPROBE_STATE_DIR/opencode.json"
+  db_path: "$OCPROBE_OPencode_DB"
 probe:
   timeout_new: 5
   timeout_whitelist: 5
@@ -126,8 +126,8 @@ logging:
   level: debug
   format: text
 EOF
-  echo '{"provider":{}}' > "$OCM_STATE_DIR/opencode.json"
-  OCM_CONFIG_OVERRIDE="$test_config"
+  echo '{"provider":{}}' > "$OCPROBE_STATE_DIR/opencode.json"
+  OCPROBE_CONFIG_OVERRIDE="$test_config"
   run cmd_session_backup "ses_probe1"
   assert_success
   assert_output --partial "backed up"
@@ -136,14 +136,14 @@ EOF
 
 @test "backup file contains INSERT OR REPLACE" {
   create_test_db
-  local backup_dir="$OCM_STATE_DIR/backups"
-  OCM_SESSION_BACKUP_DIR="$backup_dir"
+  local backup_dir="$OCPROBE_STATE_DIR/backups"
+  OCPROBE_SESSION_BACKUP_DIR="$backup_dir"
   local test_config="$BATS_TEST_TMPDIR/test-session-backup-config.yaml"
   cat > "$test_config" <<EOF
 version: 1
 opencode:
-  config_path: "$OCM_STATE_DIR/opencode.json"
-  db_path: "$OCM_OPencode_DB"
+  config_path: "$OCPROBE_STATE_DIR/opencode.json"
+  db_path: "$OCPROBE_OPencode_DB"
 probe:
   timeout_new: 5
   timeout_whitelist: 5
@@ -166,8 +166,8 @@ logging:
   level: debug
   format: text
 EOF
-  echo '{"provider":{}}' > "$OCM_STATE_DIR/opencode.json"
-  OCM_CONFIG_OVERRIDE="$test_config"
+  echo '{"provider":{}}' > "$OCPROBE_STATE_DIR/opencode.json"
+  OCPROBE_CONFIG_OVERRIDE="$test_config"
   cmd_session_backup "ses_probe1" >/dev/null
   local backup_file
   backup_file=$(ls "$backup_dir"/ses_probe1-*.sql | head -1)

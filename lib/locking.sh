@@ -15,7 +15,7 @@ _has_flock() {
 # Uses atomic file-based locking with flock if available, falls back to mkdir.
 # Waits up to 20 seconds (100 * 0.2s).
 acquire_lock() {
-  local lock_dir="${OCM_LOCK_DIR:-$OCM_STATE_DIR/.lock}"
+  local lock_dir="${OCPROBE_LOCK_DIR:-$OCPROBE_STATE_DIR/.lock}"
   local lock_file="${lock_dir}/lock"
   local waited=0
 
@@ -28,13 +28,13 @@ acquire_lock() {
     # so release_lock can unlock the SAME open file description — flock
     # locks are per-fd, so unlocking a freshly-opened fd to the same path
     # is a no-op and leaves the original lock held.
-    exec {_OCM_LOCK_FD}>"$lock_file"
+    exec {_OCPROBE_LOCK_FD}>"$lock_file"
     local waited_flock=0
-    while ! flock -n "$_OCM_LOCK_FD"; do
+    while ! flock -n "$_OCPROBE_LOCK_FD"; do
       (( waited_flock++ >= 100 )) && {
-        exec {_OCM_LOCK_FD}>&-
-        unset _OCM_LOCK_FD
-        die "Another ocm run holds the lock ($lock_dir)"
+        exec {_OCPROBE_LOCK_FD}>&-
+        unset _OCPROBE_LOCK_FD
+        die "Another ocprobe run holds the lock ($lock_dir)"
       }
       sleep 0.2
     done
@@ -45,7 +45,7 @@ acquire_lock() {
   fi
 
   # Fallback: mkdir-based locking with improved stale lock handling
-  local lock_dir_base="${OCM_LOCK_DIR:-$OCM_STATE_DIR/.lock}"
+  local lock_dir_base="${OCPROBE_LOCK_DIR:-$OCPROBE_STATE_DIR/.lock}"
   local waited=0
 
   while ! mkdir "$lock_dir_base" 2>/dev/null; do
@@ -65,7 +65,7 @@ acquire_lock() {
         continue
       fi
     fi
-    (( waited++ >= 100 )) && die "Another ocm run holds the lock ($lock_dir_base)"
+    (( waited++ >= 100 )) && die "Another ocprobe run holds the lock ($lock_dir_base)"
     sleep 0.2
   done
 
@@ -75,7 +75,7 @@ acquire_lock() {
 
 # ---- Release Lock -----------------------------------------------------------
 release_lock() {
-  local lock_dir="${OCM_LOCK_DIR:-$OCM_STATE_DIR/.lock}"
+  local lock_dir="${OCPROBE_LOCK_DIR:-$OCPROBE_STATE_DIR/.lock}"
   
   # Try flock-based release first
   if _has_flock; then
@@ -86,10 +86,10 @@ release_lock() {
       # ownership check always sees an empty/stale value.
       local locked_pid
       locked_pid=$(cat "${lock_dir}/pid" 2>/dev/null || echo "")
-      if [[ -n "${_OCM_LOCK_FD:-}" ]]; then
-        flock -u "$_OCM_LOCK_FD" 2>/dev/null || true
-        exec {_OCM_LOCK_FD}>&-
-        unset _OCM_LOCK_FD
+      if [[ -n "${_OCPROBE_LOCK_FD:-}" ]]; then
+        flock -u "$_OCPROBE_LOCK_FD" 2>/dev/null || true
+        exec {_OCPROBE_LOCK_FD}>&-
+        unset _OCPROBE_LOCK_FD
       fi
       # Only remove if we own the lock
       if [[ "$locked_pid" == "$$" ]]; then
@@ -102,7 +102,7 @@ release_lock() {
   fi
 
   # Fallback: mkdir-based release
-  local lock_dir_base="${OCM_LOCK_DIR:-$OCM_STATE_DIR/.lock}"
+  local lock_dir_base="${OCPROBE_LOCK_DIR:-$OCPROBE_STATE_DIR/.lock}"
   if [[ -d "$lock_dir_base" ]]; then
     local locked_pid
     locked_pid=$(cat "$lock_dir_base/pid" 2>/dev/null || echo "")
@@ -115,7 +115,7 @@ release_lock() {
 
 # ---- Lock Status ------------------------------------------------------------
 lock_status() {
-  local lock_dir="${OCM_LOCK_DIR:-$OCM_STATE_DIR/.lock}"
+  local lock_dir="${OCPROBE_LOCK_DIR:-$OCPROBE_STATE_DIR/.lock}"
   
   if _has_flock; then
     local lock_file="${lock_dir}/lock"
@@ -131,7 +131,7 @@ lock_status() {
       echo "FREE"
     fi
   else
-    local lock_dir_base="${OCM_LOCK_DIR:-$OCM_STATE_DIR/.lock}"
+    local lock_dir_base="${OCPROBE_LOCK_DIR:-$OCPROBE_STATE_DIR/.lock}"
     if [[ -d "$lock_dir_base" ]]; then
       local pid
       pid=$(cat "$lock_dir_base/pid" 2>/dev/null || echo "unknown")
