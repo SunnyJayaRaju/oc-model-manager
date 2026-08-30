@@ -7,18 +7,34 @@
 set -euo pipefail
 
 # ---- Bootstrap --------------------------------------------------------------
-OCPROBE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export OCPROBE_ROOT
+# Support both development (run from repo) and installed modes.
+# Development: binary at <repo>/bin/ocprobe, lib/ at <repo>/lib/, VERSION at <repo>/VERSION
+# Installed:   binary at ~/.local/bin/ocprobe, lib/ at ~/.local/lib/ocprobe/, VERSION at ~/.local/share/ocprobe/VERSION
+OCPROBE_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Check for VERSION file alongside binary's parent (dev mode: repo/bin/ -> repo/VERSION)
+if [[ -f "${OCPROBE_BIN_DIR}/../VERSION" ]]; then
+    OCPROBE_ROOT="$(cd "${OCPROBE_BIN_DIR}/.." && pwd)"
+    OCPROBE_LIB_DIR="${OCPROBE_ROOT}/lib"
+    OCPROBE_CONFIG_DIR="${OCPROBE_ROOT}/config"
+    OCPROBE_VERSION_FILE="${OCPROBE_ROOT}/VERSION"
+else
+    # Installed mode: binary at ~/.local/bin/ocprobe, lib/ at ~/.local/lib/ocprobe/, VERSION at ~/.local/share/ocprobe/VERSION
+    OCPROBE_ROOT="${OCPROBE_BIN_DIR}/.."
+    OCPROBE_LIB_DIR="${OCPROBE_ROOT}/lib/ocprobe"
+    OCPROBE_CONFIG_DIR="${OCPROBE_ROOT}/share/ocprobe"
+    OCPROBE_VERSION_FILE="${OCPROBE_ROOT}/share/ocprobe/VERSION"
+fi
+export OCPROBE_ROOT OCPROBE_LIB_DIR OCPROBE_CONFIG_DIR
 
 # Load core library
-source "${OCPROBE_ROOT}/lib/core.sh"
-source "${OCPROBE_ROOT}/lib/config.sh"
-source "${OCPROBE_ROOT}/lib/logging.sh"
-source "${OCPROBE_ROOT}/lib/locking.sh"
-source "${OCPROBE_ROOT}/lib/db.sh"
+source "${OCPROBE_LIB_DIR}/core.sh"
+source "${OCPROBE_LIB_DIR}/config.sh"
+source "${OCPROBE_LIB_DIR}/logging.sh"
+source "${OCPROBE_LIB_DIR}/locking.sh"
+source "${OCPROBE_LIB_DIR}/db.sh"
 
 # ---- Version ----------------------------------------------------------------
-OCPROBE_VERSION="$(cat "${OCPROBE_ROOT}/VERSION")"
+OCPROBE_VERSION="$(cat "${OCPROBE_VERSION_FILE}")"
 
 # ---- Help -------------------------------------------------------------------
 usage() {
@@ -104,24 +120,24 @@ main() {
 
   case "$cmd" in
     audit|check|status|alerts|probe|watch|validate)
-      source "${OCPROBE_ROOT}/lib/models.sh"
-      source "${OCPROBE_ROOT}/lib/validate.sh"
+      source "${OCPROBE_LIB_DIR}/models.sh"
+      source "${OCPROBE_LIB_DIR}/validate.sh"
       "cmd_${cmd}" "$@"
       ;;
     scheduler)
-      source "${OCPROBE_ROOT}/lib/scheduler.sh"
+      source "${OCPROBE_LIB_DIR}/scheduler.sh"
       cmd_scheduler "$@"
       ;;
     session)
-      source "${OCPROBE_ROOT}/lib/session.sh"
+      source "${OCPROBE_LIB_DIR}/session.sh"
       cmd_session "$@"
       ;;
     config)
-      source "${OCPROBE_ROOT}/lib/config.sh"
+      source "${OCPROBE_LIB_DIR}/config.sh"
       cmd_config "$@"
       ;;
     doctor)
-      source "${OCPROBE_ROOT}/lib/doctor.sh"
+      source "${OCPROBE_LIB_DIR}/doctor.sh"
       cmd_doctor "$@"
       ;;
     version|--version|-V)

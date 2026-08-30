@@ -54,15 +54,20 @@ $(DIST_DIR):
 	@find $(DIST_DIR) -exec touch -t 202401010000 {} +
 
 install: $(PACKAGE)
-	@echo "Installing to ~/.local/bin..."
-	@mkdir -p ~/.local/bin
+	@echo "Installing to ~/.local..."
+	@mkdir -p ~/.local/bin ~/.local/lib ~/.local/share/ocprobe
 	@tar -xzf $(PACKAGE) -C /tmp/
 	@cp /tmp/ocprobe-$(VERSION)/bin/ocprobe ~/.local/bin/ocprobe
 	@chmod +x ~/.local/bin/ocprobe
+	@cp -r /tmp/ocprobe-$(VERSION)/lib ~/.local/lib/ocprobe
+	@cp -r /tmp/ocprobe-$(VERSION)/config ~/.local/share/ocprobe
+	@cp /tmp/ocprobe-$(VERSION)/VERSION ~/.local/share/ocprobe/VERSION
 	@echo "Installed. Ensure ~/.local/bin is in PATH"
 
 uninstall:
 	@rm -f ~/.local/bin/ocprobe
+	@rm -rf ~/.local/lib/ocprobe
+	@rm -rf ~/.local/share/ocprobe
 	@echo "Uninstalled"
 
 clean:

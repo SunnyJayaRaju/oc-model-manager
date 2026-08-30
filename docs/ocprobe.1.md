@@ -1,4 +1,4 @@
-% OCM(1) General Commands Manual
+% OCPROBE(1) General Commands Manual
 % Sunny Jayaraj
 % August 2026
 
