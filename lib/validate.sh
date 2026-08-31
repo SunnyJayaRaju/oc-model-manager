@@ -114,9 +114,9 @@ probe_model_classify() {
 	local start_ms end_ms
 	start_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
 
-	# Run worker and capture output
+	# Run worker and capture stdout only (stderr has SESSION_ID marker)
 	local output
-	output=$("$worker_file" "$model" "VALIDATE" "$timeout_secs" "$prompt" 2>&1)
+	output=$("$worker_file" "$model" "VALIDATE" "$timeout_secs" "$prompt" 2>/dev/null)
 	local ec=$?
 
 	end_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
@@ -376,16 +376,10 @@ EOF
 		return $?
 	fi
 
+	# Phase 1: Acquire lock, discover providers & models, release lock
 	acquire_lock
-	trap 'release_lock; cleanup_run_dir' EXIT INT TERM
-
-	log_info "=== ocprobe validate $(date) ==="
-	audit_log "=== validate run start apply=$apply_mode provider=${target_provider:-all} ==="
-
-	# Get providers to validate
 	local -a providers=()
 	if [[ -n "$target_provider" ]]; then
-		# Verify this provider has credentials
 		if python3 - "$OCPROBE_OPencode_AUTH" "$target_provider" -c '
 import json,sys,os
 with open(os.path.expanduser(sys.argv[1])) as f: auth=json.load(f)
@@ -397,26 +391,32 @@ else:
 '; then
 			providers=("$target_provider")
 		else
+			release_lock
 			die "Provider '$target_provider' not found or has no valid credentials"
 		fi
 	else
 		mapfile -t providers < <(get_configured_providers)
 	fi
 
+	# Capture config hash for staleness detection (TOCTOU guard)
+	local config_hash
+	config_hash=$(sha256sum "$OCPROBE_OPencode_CONFIG" | awk '{print $1}')
+
+	release_lock
+
 	[[ ${#providers[@]} -gt 0 ]] || die "No providers with valid credentials found"
 
+	log_info "=== ocprobe validate $(date) ==="
+	audit_log "=== validate run start apply=$apply_mode provider=${target_provider:-all} ==="
 	log_info "Validating providers: ${providers[*]}"
 
-	# Results aggregation
+	# Phase 2: Probe all models (NO lock held - avoids FD leakage to command substitutions)
 	local all_results_file="$OCPROBE_RUN_DIR/all_results.tsv"
 	: >"$all_results_file"
-
-	local overall_changes=0
 
 	for provider_id in "${providers[@]}"; do
 		log_info "Processing provider: $provider_id"
 
-		# Get all models for this provider
 		local models_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.models.txt"
 		if [[ -n "$target_model" ]]; then
 			echo "$target_model" >"$models_file"
@@ -428,25 +428,26 @@ else:
 		model_count=$(wc -l <"$models_file" | tr -d ' ')
 		log_info "Provider $provider_id: $model_count models to probe"
 
-		# Probe all models
 		local results_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.results.tsv"
 		: >"$results_file"
 		probe_models_batch "$provider_id" "$models_file" "$results_file"
 
-		# Append to all results
 		cat "$results_file" >>"$all_results_file"
+	done
 
-		# Get current blacklist
+	# Phase 3: Generate proposals & diffs (still no lock needed)
+	local -a provider_results=()
+	local overall_changes=0
+
+	for provider_id in "${providers[@]}"; do
+		local results_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.results.tsv"
 		local current_blacklist_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.current_blacklist.txt"
 		get_current_blacklist "$provider_id" >"$current_blacklist_file"
 
-		# Generate proposed blacklist
 		local proposed_blacklist_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.proposed_blacklist.txt"
 		generate_blacklist_proposal "$provider_id" "$results_file" "$proposed_blacklist_file"
 
-		# Show diff
 		if [[ $json_output -eq 1 ]]; then
-			# JSON output for programmatic consumption
 			python3 - "$provider_id" "$results_file" "$current_blacklist_file" "$proposed_blacklist_file" <<'PY'
 import json, sys, os
 
@@ -493,43 +494,54 @@ PY
 			show_blacklist_diff "$provider_id" "$current_blacklist_file" "$proposed_blacklist_file"
 		fi
 
-		# Check if there are changes
 		local additions_count removals_count
 		additions_count=$(comm -13 <(sort "$current_blacklist_file") <(sort "$proposed_blacklist_file") | wc -l | tr -d ' ')
 		removals_count=$(comm -23 <(sort "$current_blacklist_file") <(sort "$proposed_blacklist_file") | wc -l | tr -d ' ')
 
 		if [[ $additions_count -gt 0 ]] || [[ $removals_count -gt 0 ]]; then
 			overall_changes=1
-			if [[ $apply_mode -eq 1 ]]; then
-				log_info "Applying blacklist for $provider_id..."
-				local backup_file
-				backup_file=$(backup_opencode_config)
-				log_info "Backup created: $backup_file"
-
-				apply_blacklist "$provider_id" "$proposed_blacklist_file"
-
-				# Verify the change took effect
-				log_info "Verifying blacklist effect..."
-				if verify_blacklist_effect "$provider_id" "$proposed_blacklist_file"; then
-					log_info "SUCCESS: Blacklist applied and verified for $provider_id"
-				else
-					log_warn "WARNING: Blacklist written but verification failed (OpenCode bug #32528?)"
-					log_warn "The config was written but models may still appear in picker"
-					log_warn "Run 'opencode models $provider_id' to check actual visibility"
-				fi
-			else
-				log_info "Dry-run mode: no changes applied. Use --apply to write changes."
-			fi
+			provider_results+=("$provider_id:$proposed_blacklist_file:$additions_count:$removals_count")
 		else
 			log_info "Provider $provider_id: No changes needed"
 		fi
 	done
 
+	# Phase 4: Apply changes (re-acquire lock only for write phase)
 	if [[ $apply_mode -eq 1 && $overall_changes -eq 1 ]]; then
+		acquire_lock
+		trap 'release_lock; cleanup_run_dir' EXIT INT TERM
+
+		# Staleness guard: verify opencode.json hasn't changed since Phase 1
+		local current_hash
+		current_hash=$(sha256sum "$OCPROBE_OPencode_CONFIG" | awk '{print $1}')
+		if [[ "$current_hash" != "$config_hash" ]]; then
+			release_lock
+			die "Config changed since discovery (hash mismatch). Re-run validate to get fresh results."
+		fi
+
+		for entry in "${provider_results[@]}"; do
+			IFS=':' read -r provider_id proposed_blacklist_file additions_count removals_count <<<"$entry"
+			log_info "Applying blacklist for $provider_id..."
+			local backup_file
+			backup_file=$(backup_opencode_config)
+			log_info "Backup created: $backup_file"
+
+			apply_blacklist "$provider_id" "$proposed_blacklist_file"
+
+			log_info "Verifying blacklist effect..."
+			if verify_blacklist_effect "$provider_id" "$proposed_blacklist_file"; then
+				log_info "SUCCESS: Blacklist applied and verified for $provider_id"
+			else
+				log_warn "WARNING: Blacklist written but verification failed (OpenCode bug #32528?)"
+				log_warn "The config was written but models may still appear in picker"
+				log_warn "Run 'opencode models $provider_id' to check actual visibility"
+			fi
+		done
+
 		log_info "Validate complete. Changes applied."
 	elif [[ $apply_mode -eq 0 && $overall_changes -eq 1 ]]; then
 		log_info "Validate complete (dry-run). Changes pending. Run with --apply to write."
-		return 1 # Signal pending changes like cmd_check does
+		return 1
 	else
 		log_info "Validate complete. No changes needed."
 		return 0

@@ -18,20 +18,42 @@ m="$1"; src="$2"; secs="$3"; prompt="$4"
 # Validate timeout
 [[ "$secs" =~ ^[0-9]+$ ]] && [[ "$secs" -gt 0 ]] || { echo "INVALID_TIMEOUT" >&2; exit 1; }
 t0=$(python3 -c 'import time; print(int(time.time() * 1000))')
-# Portable timeout
+# Portable timeout with --format json for sessionID capture
 if command -v timeout >/dev/null 2>&1; then
-  res=$(timeout "$secs" opencode run --pure --title ocprobe-probe </dev/null -m "$m" "$prompt" 2>&1); rc=$?
+  res=$(timeout "$secs" opencode run --pure --title ocprobe-probe --format json </dev/null -m "$m" "$prompt" 2>&1); rc=$?
 else
-  res=$(perl -e 'alarm $ARGV[0]; exec @ARGV[1..$#ARGV] or exit 127' "$secs" opencode run --pure --title ocprobe-probe </dev/null -m "$m" "$prompt" 2>&1); rc=$?
+  res=$(perl -e 'alarm $ARGV[0]; exec @ARGV[1..$#ARGV] or exit 127' "$secs" opencode run --pure --title ocprobe-probe --format json </dev/null -m "$m" "$prompt" 2>&1); rc=$?
 fi
 t1=$(python3 -c 'import time; print(int(time.time() * 1000))')
 
+# Extract sessionID from JSON output (first line with sessionID)
+session_id=$(printf '%s' "$res" | grep -o '"sessionID":"[^"]*"' | head -1 | sed 's/"sessionID":"\([^"]*\)"/\1/')
+printf 'SESSION_ID:%s\n' "$session_id" >&2
+
 # More robust status detection with structured output handling
-# First try to extract JSON from output (if opencode supports structured output)
-if printf '%s' "$res" | grep -q '^{"status":'; then
-  st=$(printf '%s' "$res" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status","UNCLEAR"))' 2>/dev/null || echo "UNCLEAR")
-else
-  # Fallback to string matching with more precise patterns
+# Parse JSON events from opencode --format json output
+# Each line is a JSON event; look for status event or error event
+st=UNCLEAR
+while IFS= read -r line; do
+  [[ -n "$line" ]] || continue
+  # Try to extract status from status events
+  if printf '%s' "$line" | grep -q '"type":"status"'; then
+    st=$(printf '%s' "$line" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status","UNCLEAR"))' 2>/dev/null)
+    [[ -n "$st" ]] && break
+  # Try to extract error type from error events
+  elif printf '%s' "$line" | grep -q '"type":"error"'; then
+    err_type=$(printf '%s' "$line" | python3 -c 'import sys,json; d=json.load(sys.stdin); err=d.get("error",{}); print(err.get("data",{}).get("message",""))' 2>/dev/null)
+    if printf '%s' "$err_type" | grep -qi 'No payment method'; then st=PAYWALLED; break
+    elif printf '%s' "$err_type" | grep -qi 'end of life\|Gone'; then st=EOL; break
+    elif printf '%s' "$err_type" | grep -q '404'; then st=NOTFOUND; break
+    elif printf '%s' "$err_type" | grep -qi 'Error'; then st=BROKEN; break
+    else st=ERROR; break
+    fi
+  fi
+done <<<"$res"
+
+# If no status from JSON events, fall back to string matching on full output
+if [[ "$st" == "UNCLEAR" ]]; then
   if   printf '%s' "$res" | grep -qi 'No payment method'; then st=PAYWALLED
   elif printf '%s' "$res" | grep -qi 'end of life\|^Gone'; then st=EOL
   elif printf '%s' "$res" | grep -q '404';                 then st=NOTFOUND
@@ -537,28 +559,25 @@ cmd_probe() {
 	local worker="$OCPROBE_RUN_DIR/.worker"
 	write_worker "$worker"
 
-	# Snapshot sessions
-	local probe_ses_before=()
-	mapfile -t probe_ses_before < <(opencode session list 2>/dev/null | awk '/^ses_/{print $1}')
+	# Run worker, capture stdout and stderr separately
+	local out err session_id
+	out=$("$worker" "$model" "MANUAL" "$OCPROBE_PROBE_TIMEOUT_NEW" "$OCPROBE_PROBE_PROMPT" 2>"$OCPROBE_RUN_DIR/.worker.err")
+	err=$(cat "$OCPROBE_RUN_DIR/.worker.err" 2>/dev/null || true)
+	rm -f "$OCPROBE_RUN_DIR/.worker.err"
 
-	local out
-	out=$("$worker" "$model" "MANUAL" "$OCPROBE_PROBE_TIMEOUT_NEW" "$OCPROBE_PROBE_PROMPT")
+	# Extract session ID from the worker's JSON output marker
+	session_id=$(printf '%s' "$err" | grep '^SESSION_ID:' | head -1 | sed 's/^SESSION_ID://')
+	if [[ -z "$session_id" ]]; then
+		log_warn "could not capture session ID for this probe, skipping automatic cleanup — session will be caught by the next audit/check cleanup pass instead"
+	else
+		log_debug "captured probe session ID: $session_id"
+		# Delete the session directly using captured ID
+		delete_session "$session_id" && log_debug "cleaned probe session $session_id" || log_debug "session $session_id already gone or not deletable"
+	fi
+
 	printf '%s\n' "$out"
 	record_probe_history "$model" "$(awk -F'\t' '{print $3}' <<<"$out")" "$(awk -F'\t' '{print $4}' <<<"$out")"
 	rm -f "$worker"
-
-	# Self-clean - match both new and legacy prefixes
-	while IFS=$'\t' read -r sid title; do
-		[[ -n "$sid" && ("$title" == ${OCPROBE_PROBE_TITLE_PREFIX}* || "$title" == ${OCPROBE_PROBE_TITLE_PREFIX_LEGACY}*) ]] || continue
-		[[ " ${probe_ses_before[*]+${probe_ses_before[*]}} " != *" $sid "* ]] || continue
-		local sid_esc
-		sid_esc=$(sql_escape "$sid") || continue
-		# shellcheck disable=SC2154
-		if sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-			"SELECT 1 FROM session WHERE id='${sid_esc}' AND time_created > (strftime('%s','now')-3600)*1000 LIMIT 1;" 2>/dev/null | grep -q 1; then
-			delete_session "$sid" && log_info "cleaned probe session $sid"
-		fi
-	done < <(list_sessions_with_titles)
 }
 
 cmd_watch() {
