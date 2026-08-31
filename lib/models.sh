@@ -572,7 +572,11 @@ cmd_probe() {
 	else
 		log_debug "captured probe session ID: $session_id"
 		# Delete the session directly using captured ID
-		delete_session "$session_id" && log_debug "cleaned probe session $session_id" || log_debug "session $session_id already gone or not deletable"
+		if delete_session "$session_id"; then
+			log_debug "cleaned probe session $session_id"
+		else
+			log_debug "session $session_id already gone or not deletable"
+		fi
 	fi
 
 	printf '%s\n' "$out"
