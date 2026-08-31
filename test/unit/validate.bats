@@ -109,25 +109,57 @@ case "$cmd" in
         printf 'test-provider/model-a\ntest-provider/model-b\ntest-provider/model-c\n'
         ;;
     run)
+        # Parse args to find model and check for --format json
+        format_json=false
         model=""
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                -m) model="$2"; shift 2 ;;
-                *) shift ;;
-            esac
+        i=1
+        while [[ $i -le $# ]]; do
+            arg="${!i}"
+            if [[ "$arg" == "--format" ]]; then
+                next=$((i+1))
+                if [[ $next -le $# ]] && [[ "${!next}" == "json" ]]; then
+                    format_json=true
+                fi
+                i=$((i+1))
+            elif [[ "$arg" == "-m" ]]; then
+                next=$((i+1))
+                if [[ $next -le $# ]]; then
+                    model="${!next}"
+                fi
+                i=$((i+1))
+            fi
+            i=$((i+1))
         done
-        case "$model" in
-            "test-provider/model-a") echo "OK"; exit 0 ;;
-            "test-provider/model-b")
-                echo "Error: Gone - model reached end of life"
-                exit 1
-                ;;
-            "test-provider/model-c")
-                echo "Error: 404 Not Found"
-                exit 1
-                ;;
-            *) echo "Error: Unknown"; exit 1 ;;
-        esac
+        
+        if [[ "$format_json" == "true" ]]; then
+            # Output JSON with sessionID and status
+            case "$model" in
+                "test-provider/model-a") echo '{"type":"status","timestamp":1234567890,"sessionID":"ses_test123","status":"WORKS","message":"OK"}'; exit 0 ;;
+                "test-provider/model-b")
+                    echo '{"type":"error","timestamp":1234567890,"sessionID":"ses_test456","error":{"name":"APIError","data":{"message":"Gone - model reached end of life"}}}'
+                    exit 1
+                    ;;
+                "test-provider/model-c")
+                    echo '{"type":"error","timestamp":1234567890,"sessionID":"ses_test789","error":{"name":"APIError","data":{"message":"404 Not Found"}}}'
+                    exit 1
+                    ;;
+                *) echo '{"type":"error","timestamp":1234567890,"sessionID":"ses_test999","error":{"name":"UnknownError"}}'; exit 1 ;;
+            esac
+        else
+            # Legacy plain text output
+            case "$model" in
+                "test-provider/model-a") echo "OK"; exit 0 ;;
+                "test-provider/model-b")
+                    echo "Error: Gone - model reached end of life"
+                    exit 1
+                    ;;
+                "test-provider/model-c")
+                    echo "Error: 404 Not Found"
+                    exit 1
+                    ;;
+                *) echo "Error: Unknown"; exit 1 ;;
+            esac
+        fi
         ;;
     *) exit 1 ;;
 esac
@@ -325,6 +357,65 @@ EOF
 }
 
 # ---- Tests for cmd_validate_restore ----
+
+@test "cmd_validate --apply aborts if config changed between discovery and apply" {
+    # This test requires a single --apply run where config changes mid-run.
+    # We simulate this by using a custom mock that modifies the config
+    # during the probe phase (phase 2), between discovery (phase 1) and apply (phase 4).
+    
+    # Override the mock to modify config when opencode run is called
+    local mock_dir="$BATS_TEST_TMPDIR/mock-staleness"
+    mkdir -p "$mock_dir"
+    cat >"$mock_dir/opencode" <<'MOCK_EOF'
+#!/usr/bin/env bash
+cmd="$1"
+shift
+case "$cmd" in
+    models)
+        printf 'test-provider/model-a\ntest-provider/model-b\ntest-provider/model-c\n'
+        ;;
+    run)
+        # On first run call, modify the config file to simulate external change
+        if [[ ! -f "/tmp/ocprobe-staleness-test-modified" ]]; then
+            touch "/tmp/ocprobe-staleness-test-modified"
+            cat >"$BATS_TEST_TMPDIR/opencode.json" <<'EOF'
+{
+  "provider": {
+    "test-provider": {
+      "blacklist": ["test-provider/old-model", "test-provider/external-change"],
+      "whitelist": []
+    }
+  }
+}
+EOF
+        fi
+        # Normal response for model-a
+        if [[ "$*" == *"model-a"* ]]; then
+            echo '{"type":"status","timestamp":1234567890,"sessionID":"ses_test123","status":"WORKS","message":"OK"}'
+            exit 0
+        elif [[ "$*" == *"model-b"* ]]; then
+            echo '{"type":"error","timestamp":1234567890,"sessionID":"ses_test456","error":{"name":"APIError","data":{"message":"Gone - model reached end of life"}}}'
+            exit 1
+        elif [[ "$*" == *"model-c"* ]]; then
+            echo '{"type":"error","timestamp":1234567890,"sessionID":"ses_test789","error":{"name":"APIError","data":{"message":"404 Not Found"}}}'
+            exit 1
+        else
+            echo '{"type":"error","timestamp":1234567890,"sessionID":"ses_test999","error":{"name":"UnknownError"}}'
+            exit 1
+        fi
+        ;;
+    *) exit 1 ;;
+esac
+MOCK_EOF
+    chmod +x "$mock_dir/opencode"
+    export PATH="$mock_dir:$PATH"
+    rm -f "/tmp/ocprobe-staleness-test-modified"
+
+    # Run with --apply (single invocation: discovery -> probe -> apply)
+    run cmd_validate --provider test-provider --apply
+    assert_failure
+    assert_output --partial "Config changed since discovery"
+}
 
 @test "cmd_validate_restore reverts config to backup" {
     # First run with --apply to create backup and modify config
