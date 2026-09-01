@@ -85,12 +85,6 @@ sql_escape() {
 	return 0
 }
 
-# Validates a session ID format (alphanumeric, underscore, hyphen only)
-validate_session_id() {
-	local sid="$1"
-	[[ -n "$sid" ]] && [[ "$sid" =~ ^[a-zA-Z0-9_-]+$ ]]
-}
-
 # ---- Error handling ---------------------------------------------------------
 die() {
 	log_fatal "$*"

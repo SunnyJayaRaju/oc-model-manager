@@ -141,6 +141,30 @@ Manage configuration.
 **path**
 : Show config file path.
 
+## validate
+
+Probe all models for providers with valid credentials and manage provider blacklists.
+
+    ocprobe validate [--provider <id>] [--model <id>] [--apply] [--json]
+    ocprobe validate restore
+
+**--provider** <id>
+: Only validate models for this provider.
+
+**--model** <id>
+: Only validate this specific model (requires --provider).
+
+**--apply**
+: Apply blacklist changes to opencode.json (default: dry-run).
+
+**--json**
+: Output JSON (machine-readable).
+
+**restore**
+: Restore opencode.json from last validate backup.
+
+Exits 0 on success, 1 if changes pending (dry-run) or error, 2 on validation error.
+
 ## doctor
 
 Run health checks: opencode binary, Python, jq, sqlite3, config files, DB integrity, auth, disk space, scheduler.
