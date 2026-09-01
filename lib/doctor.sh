@@ -110,7 +110,7 @@ cmd_doctor() {
 	# OCPROBE_LIB_DIR is set by the binary bootstrap; fall back to relative path
 	# when called directly (e.g., in tests) where bootstrap hasn't run.
 	local lib_dir="${OCPROBE_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-	# shellcheck source=./scheduler.sh
+	# shellcheck disable=SC1091  # dynamic path; scheduler.sh verified to exist at build time
 	source "${lib_dir}/scheduler.sh"
 	cmd_scheduler status
 
