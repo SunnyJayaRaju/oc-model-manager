@@ -6,7 +6,7 @@ VERSION := $(shell cat VERSION)
 DIST_DIR := dist/ocprobe-$(VERSION)
 PACKAGE := dist/ocprobe-$(VERSION).tar.gz
 
-.PHONY: all lint test test-unit test-integration build package install uninstall clean help
+.PHONY: all lint test test-unit test-integration build package install uninstall clean help man
 
 all: lint test build
 
@@ -20,6 +20,7 @@ help:
 	@echo "  make install        - Install to ~/.local/bin"
 	@echo "  make uninstall      - Remove from ~/.local/bin"
 	@echo "  make clean          - Clean build artifacts"
+	@echo "  make man            - Generate man page from Markdown"
 	@echo "  make release        - Create GitHub release (requires tag)"
 
 lint:
@@ -52,6 +53,12 @@ $(DIST_DIR):
 	@cp -r bin lib config VERSION CHANGELOG.md LICENSE README.md CONTRIBUTING.md docs $(DIST_DIR)/
 	# Normalize timestamps for reproducible builds
 	@find $(DIST_DIR) -exec touch -t 202401010000 {} +
+
+# Man page generation
+man: docs/ocprobe.1
+
+docs/ocprobe.1: docs/ocprobe.1.md
+	pandoc docs/ocprobe.1.md -s -t man -o docs/ocprobe.1
 
 install: $(PACKAGE)
 	@echo "Installing to ~/.local..."

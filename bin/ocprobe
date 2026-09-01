@@ -162,7 +162,11 @@ OCPROBE_JSON_OUTPUT=0
 OCPROBE_VERBOSE=0
 OCPROBE_CONFIG_OVERRIDE=""
 
+# Array to hold remaining args after global flags are parsed
+OCPROBE_REMAINING_ARGS=()
+
 parse_global_flags() {
+  OCPROBE_REMAINING_ARGS=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --quick) OCPROBE_QUICK=1 ;;
@@ -179,12 +183,14 @@ parse_global_flags() {
     esac
     shift
   done
+  # Remaining non-flag args
+  OCPROBE_REMAINING_ARGS=("$@")
 }
 
 # Initialize logging early
 parse_global_flags "$@"
 init_logging
 
-# Re-parse without global flags for command
-set -- "${@}"  # remaining args after global flags
+# Use remaining args for command dispatch
+set -- "${OCPROBE_REMAINING_ARGS[@]}"
 main "$@"

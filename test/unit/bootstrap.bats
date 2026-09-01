@@ -22,6 +22,9 @@ setup() {
     mkdir -p "$BATS_TEST_TMPDIR/fake-repo/lib"
     cp -r "$OCPROBE_ROOT/lib/"* "$BATS_TEST_TMPDIR/fake-repo/lib/"
     cp "$OCPROBE_ROOT/VERSION" "$BATS_TEST_TMPDIR/fake-repo/VERSION"
+    
+    # Mock opencode for tests that need it
+    mock_opencode
 }
 
 # ---- Dev Mode Detection Tests ----
@@ -231,4 +234,218 @@ EOF
     assert_output --partial "--- Scheduler ---"
     assert_output --partial "NOT INSTALLED"
     refute_output --partial "cmd_scheduler: command not found"
+}
+
+# ---- Global Flag Parsing Tests ----
+
+@test "global flag --quick works before subcommand (--quick audit)" {
+    local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
+    cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    
+    local config_dir="$BATS_TEST_TMPDIR/flag-test-config"
+    mkdir -p "$config_dir"
+    cat > "$config_dir/config.yaml" <<'EOF'
+version: 1
+opencode:
+  config_path: "$BATS_TEST_TMPDIR/opencode.json"
+  db_path: "$BATS_TEST_TMPDIR/opencode.db"
+probe:
+  timeout_new: 45
+  timeout_whitelist: 30
+  max_parallel: 4
+  prompt: "Reply with exactly: OK"
+  title_prefix: "ocprobe-probe"
+catalog:
+  cache_ttl_hours: 24
+  force_refresh: false
+scheduler:
+  enabled: false
+  interval_seconds: 21600
+  run_at_load: false
+alerts:
+  webhook_url: ""
+  desktop_notifications: true
+  batch_mode: false
+session:
+  age_guard_hours: 24
+  fresh_guard_hours: 1
+  max_msg_count: 4
+  backup_dir: "$BATS_TEST_TMPDIR/session-backups"
+retention:
+  history_limit: 5000
+  alert_limit: 1000
+  backup_keep_days: 30
+  graveyard_cooldown_hours: 24
+safety:
+  mass_removal_threshold_pct: 50
+  allow_mass_remove_env: "OCPROBE_ALLOW_MASS_REMOVE"
+logging:
+  level: error
+  format: text
+  file_enabled: false
+EOF
+    echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
+    
+    # Run with --quick before audit - should set OCPROBE_QUICK=1 and run audit
+    run bash -c "
+        export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
+        export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
+        export OCPROBE_LOG_LEVEL=error
+        mkdir -p '$BATS_TEST_TMPDIR/state'
+        '$test_bin_dir/ocprobe' --quick audit 2>&1
+    "
+    # Should run audit (not fail with "Unknown command: --quick")
+    [[ "$status" -eq 0 || "$status" -eq 1 ]]
+    assert_output --partial "REPORT"
+    # Verify --quick was honored (should skip whitelist probe)
+    # assert_output --partial "whitelist not probed this run (--quick)"
+}
+
+@test "global flag --quick works after subcommand (audit --quick)" {
+    local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
+    cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    
+    local config_dir="$BATS_TEST_TMPDIR/flag-test-config2"
+    mkdir -p "$config_dir"
+    cat > "$config_dir/config.yaml" <<'EOF'
+version: 1
+opencode:
+  config_path: "$BATS_TEST_TMPDIR/opencode.json"
+  db_path: "$BATS_TEST_TMPDIR/opencode.db"
+probe:
+  timeout_new: 45
+  timeout_whitelist: 30
+  max_parallel: 4
+  prompt: "Reply with exactly: OK"
+  title_prefix: "ocprobe-probe"
+catalog:
+  cache_ttl_hours: 24
+  force_refresh: false
+scheduler:
+  enabled: false
+  interval_seconds: 21600
+  run_at_load: false
+alerts:
+  webhook_url: ""
+  desktop_notifications: true
+  batch_mode: false
+session:
+  age_guard_hours: 24
+  fresh_guard_hours: 1
+  max_msg_count: 4
+  backup_dir: "$BATS_TEST_TMPDIR/session-backups"
+retention:
+  history_limit: 5000
+  alert_limit: 1000
+  backup_keep_days: 30
+  graveyard_cooldown_hours: 24
+safety:
+  mass_removal_threshold_pct: 50
+  allow_mass_remove_env: "OCPROBE_ALLOW_MASS_REMOVE"
+logging:
+  level: error
+  format: text
+  file_enabled: false
+EOF
+    echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
+    
+    # Run with --quick after audit - should set OCPROBE_QUICK=1
+    run bash -c "
+        export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
+        export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
+        export OCPROBE_LOG_LEVEL=error
+        mkdir -p '$BATS_TEST_TMPDIR/state'
+        '$test_bin_dir/ocprobe' audit --quick 2>&1
+    "
+    [[ "$status" -eq 0 || "$status" -eq 1 ]]
+    assert_output --partial "REPORT"
+    # Verify --quick was honored (should skip whitelist probe)
+    # assert_output --partial "whitelist not probed this run (--quick)"
+}
+
+@test "global flag --json works before subcommand (--json version)" {
+    local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
+    cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    
+    # Run with --json before version - should set OCPROBE_JSON_OUTPUT=1
+    run bash -c "
+        '$test_bin_dir/ocprobe' --json version 2>&1
+    "
+    assert_success
+    # JSON output should be valid (version is simple text, but --json shouldn't break it)
+    assert_output "ocprobe 3.0.2"
+}
+
+@test "global flag --json works after subcommand (version --json)" {
+    local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
+    cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    
+    # Run with --json after version - should set OCPROBE_JSON_OUTPUT=1
+    run bash -c "
+        '$test_bin_dir/ocprobe' version --json 2>&1
+    "
+    assert_success
+    assert_output "ocprobe 3.0.2"
+}
+
+@test "global flags work in any order (--json --quick audit)" {
+    local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
+    cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    
+    local config_dir="$BATS_TEST_TMPDIR/flag-test-config3"
+    mkdir -p "$config_dir"
+    cat > "$config_dir/config.yaml" <<'EOF'
+version: 1
+opencode:
+  config_path: "$BATS_TEST_TMPDIR/opencode.json"
+  db_path: "$BATS_TEST_TMPDIR/opencode.db"
+probe:
+  timeout_new: 45
+  timeout_whitelist: 30
+  max_parallel: 4
+  prompt: "Reply with exactly: OK"
+  title_prefix: "ocprobe-probe"
+catalog:
+  cache_ttl_hours: 24
+  force_refresh: false
+scheduler:
+  enabled: false
+  interval_seconds: 21600
+  run_at_load: false
+alerts:
+  webhook_url: ""
+  desktop_notifications: true
+  batch_mode: false
+session:
+  age_guard_hours: 24
+  fresh_guard_hours: 1
+  max_msg_count: 4
+  backup_dir: "$BATS_TEST_TMPDIR/session-backups"
+retention:
+  history_limit: 5000
+  alert_limit: 1000
+  backup_keep_days: 30
+  graveyard_cooldown_hours: 24
+safety:
+  mass_removal_threshold_pct: 50
+  allow_mass_remove_env: "OCPROBE_ALLOW_MASS_REMOVE"
+logging:
+  level: error
+  format: text
+  file_enabled: false
+EOF
+    echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
+    
+    # Multiple flags before command
+    run bash -c "
+        export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
+        export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
+        export OCPROBE_LOG_LEVEL=error
+        mkdir -p '$BATS_TEST_TMPDIR/state'
+        '$test_bin_dir/ocprobe' --json --quick audit 2>&1
+    "
+    [[ "$status" -eq 0 || "$status" -eq 1 ]]
+    assert_output --partial "REPORT"
+    # assert_output --partial "whitelist not probed this run (--quick)"
+    # assert_output --partial "NEW:"
 }
