@@ -155,6 +155,9 @@ logging:
 EOF
     echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
     
+    # Set up mock opencode
+    mock_opencode
+    
     # Run doctor in installed mode - should not error on scheduler check
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
@@ -218,6 +221,10 @@ logging:
 EOF
     echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
     
+    # Set up mock opencode
+    mock_opencode
+    
+    # Run doctor in dev mode - should not error on scheduler check
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
         export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
