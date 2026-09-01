@@ -47,19 +47,6 @@ session_age_ms() {
 	echo "$age_ms"
 }
 
-# Check if session has messages
-session_has_messages() {
-	local sid="$1"
-	local sid_escaped
-	sid_escaped=$(sql_escape "$sid") || return 1
-
-	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
-
-	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT 1 FROM message WHERE session_id='${sid_escaped}' LIMIT 1;" \
-		2>/dev/null | grep -q 1
-}
-
 # Batch query: get old sessions (> age guard)
 batch_get_old_sessions() {
 	local -n session_array=$1
@@ -207,14 +194,6 @@ record_alert() {
 }
 
 # Graveyard Queries -----------------------------------------------------------
-
-record_graveyard() {
-	local model="$1"
-	local ts
-	ts=$(ms)
-	printf '%s\t%s\n' "$ts" "$model" >>"$OCPROBE_STATE_DIR/graveyard.jsonl"
-	prune_jsonl "$OCPROBE_STATE_DIR/graveyard.jsonl" 2000
-}
 
 get_active_graveyard() {
 	local cutoff_ms

@@ -81,25 +81,6 @@ for m in sorted(bl):
 PY
 }
 
-# Get current whitelist for a provider from opencode.json (for reference)
-get_current_whitelist() {
-	local provider_id="$1"
-	python3 - "$OCPROBE_OPencode_CONFIG" "$provider_id" <<'PY'
-import json, sys, os
-try:
-    with open(os.path.expanduser(sys.argv[1])) as f:
-        cfg = json.load(f)
-except (json.JSONDecodeError, OSError) as e:
-    print(f"Error loading config: {e}", file=sys.stderr)
-    sys.exit(1)
-
-provider = sys.argv[2]
-wl = cfg.get("provider", {}).get(provider, {}).get("whitelist", [])
-for m in sorted(wl):
-    print(m)
-PY
-}
-
 # ---- Probe Classification ----------------------------------------------------
 # Probe a single model using the existing worker and classify the result
 probe_model_classify() {
