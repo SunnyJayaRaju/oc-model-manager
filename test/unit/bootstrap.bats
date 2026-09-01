@@ -155,15 +155,79 @@ logging:
 EOF
     echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
     
-    # Set up mock opencode
-    mock_opencode
-    
     # Run doctor in installed mode - should not error on scheduler check
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
         export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
         export OCPROBE_LOG_LEVEL=error
         mkdir -p '$BATS_TEST_TMPDIR/state'
+        
+        # Set up mock opencode inside this shell
+        mock_opencode() {
+            local mock_dir
+            mock_dir=\$(mktemp -d /tmp/ocprobe-mock-XXXXXX)
+            cat >\"\$mock_dir/opencode\" <<'EOF'
+#!/usr/bin/env bash
+case \"\$1\" in
+  models)
+    cat <<'MODELS'
+openai/gpt-4
+openai/gpt-3.5-turbo
+anthropic/claude-3
+google/gemini-pro
+kilo/~openai/gpt-4
+MODELS
+    ;;
+  run)
+    if [[ \"\$*\" == *\"gpt-4\"* ]]; then
+      sleep 0.1
+      echo \"OK\"
+      exit 0
+    elif [[ \"\$*\" == *\"gpt-3.5\"* ]]; then
+      echo \"Error: model not found\"
+      exit 1
+    elif [[ \"\$*\" == *\"claude\"* ]]; then
+      echo \"No payment method\"
+      exit 1
+    elif [[ \"\$*\" == *\"gemini\"* ]]; then
+      sleep 0.1
+      echo \"OK\"
+      exit 0
+    else
+      echo \"OK\"
+      exit 0
+    fi
+    ;;
+  session)
+    case \"\$2\" in
+      list)
+        echo \"ses_abc123  ocmm-probe-test  2024-01-01\"
+        echo \"ses_def456  Real Session  2024-01-01\"
+        ;;
+      delete)
+        exit 0
+        ;;
+    esac
+    ;;
+  --version)
+    echo \"opencode 0.1.0-test\"
+    ;;
+esac
+EOF
+            chmod +x \"\$mock_dir/opencode\"
+            cat > \"\$mock_dir/timeout\" <<'EOF'
+#!/usr/bin/env bash
+if [[ \$# -lt 2 ]]; then
+  echo \"Usage: timeout SECONDS COMMAND [ARGS...]\" >&2
+  exit 1
+fi
+shift
+exec \"\@\"
+EOF
+            chmod +x \"\$mock_dir/timeout\"
+            export PATH=\"\$mock_dir:\$PATH\"
+        }
+        mock_opencode
         '$test_bin_dir/ocprobe' doctor 2>&1
     "
     assert_success
@@ -221,15 +285,79 @@ logging:
 EOF
     echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
     
-    # Set up mock opencode
-    mock_opencode
-    
     # Run doctor in dev mode - should not error on scheduler check
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
         export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
         export OCPROBE_LOG_LEVEL=error
         mkdir -p '$BATS_TEST_TMPDIR/state'
+        
+        # Set up mock opencode inside this shell
+        mock_opencode() {
+            local mock_dir
+            mock_dir=\$(mktemp -d /tmp/ocprobe-mock-XXXXXX)
+            cat >\"\$mock_dir/opencode\" <<'EOF'
+#!/usr/bin/env bash
+case \"\$1\" in
+  models)
+    cat <<'MODELS'
+openai/gpt-4
+openai/gpt-3.5-turbo
+anthropic/claude-3
+google/gemini-pro
+kilo/~openai/gpt-4
+MODELS
+    ;;
+  run)
+    if [[ \"\$*\" == *\"gpt-4\"* ]]; then
+      sleep 0.1
+      echo \"OK\"
+      exit 0
+    elif [[ \"\$*\" == *\"gpt-3.5\"* ]]; then
+      echo \"Error: model not found\"
+      exit 1
+    elif [[ \"\$*\" == *\"claude\"* ]]; then
+      echo \"No payment method\"
+      exit 1
+    elif [[ \"\$*\" == *\"gemini\"* ]]; then
+      sleep 0.1
+      echo \"OK\"
+      exit 0
+    else
+      echo \"OK\"
+      exit 0
+    fi
+    ;;
+  session)
+    case \"\$2\" in
+      list)
+        echo \"ses_abc123  ocmm-probe-test  2024-01-01\"
+        echo \"ses_def456  Real Session  2024-01-01\"
+        ;;
+      delete)
+        exit 0
+        ;;
+    esac
+    ;;
+  --version)
+    echo \"opencode 0.1.0-test\"
+    ;;
+esac
+EOF
+            chmod +x \"\$mock_dir/opencode\"
+            cat > \"\$mock_dir/timeout\" <<'EOF'
+#!/usr/bin/env bash
+if [[ \$# -lt 2 ]]; then
+  echo \"Usage: timeout SECONDS COMMAND [ARGS...]\" >&2
+  exit 1
+fi
+shift
+exec \"\@\"
+EOF
+            chmod +x \"\$mock_dir/timeout\"
+            export PATH=\"\$mock_dir:\$PATH\"
+        }
+        mock_opencode
         '$test_bin_dir/ocprobe' doctor 2>&1
     "
     assert_success
