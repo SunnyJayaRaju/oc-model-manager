@@ -107,6 +107,11 @@ cmd_doctor() {
 	# 11. Scheduler status
 	echo
 	echo "--- Scheduler ---"
+	# OCPROBE_LIB_DIR is set by the binary bootstrap; fall back to relative path
+	# when called directly (e.g., in tests) where bootstrap hasn't run.
+	local lib_dir="${OCPROBE_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+	# shellcheck source=./scheduler.sh
+	source "${lib_dir}/scheduler.sh"
 	cmd_scheduler status
 
 	# 12. State files

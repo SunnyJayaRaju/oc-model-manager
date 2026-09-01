@@ -105,3 +105,128 @@ setup() {
     assert_success
     assert_output --partial "lib/ocprobe"
 }
+
+@test "installed mode doctor command scheduler check works (sources scheduler.sh)" {
+    local test_bin_dir="$BATS_TEST_TMPDIR/fake-installed/bin"
+    cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    
+    # Create minimal config for doctor to run
+    local config_dir="$BATS_TEST_TMPDIR/installed-config"
+    mkdir -p "$config_dir"
+    cat > "$config_dir/config.yaml" <<'EOF'
+version: 1
+opencode:
+  config_path: "$BATS_TEST_TMPDIR/opencode.json"
+  db_path: "$BATS_TEST_TMPDIR/opencode.db"
+probe:
+  timeout_new: 45
+  timeout_whitelist: 30
+  max_parallel: 4
+  prompt: "Reply with exactly: OK"
+  title_prefix: "ocprobe-probe"
+catalog:
+  cache_ttl_hours: 24
+  force_refresh: false
+scheduler:
+  enabled: false
+  interval_seconds: 21600
+  run_at_load: false
+alerts:
+  webhook_url: ""
+  desktop_notifications: true
+  batch_mode: false
+session:
+  age_guard_hours: 24
+  fresh_guard_hours: 1
+  max_msg_count: 4
+  backup_dir: "$BATS_TEST_TMPDIR/session-backups"
+retention:
+  history_limit: 5000
+  alert_limit: 1000
+  backup_keep_days: 30
+  graveyard_cooldown_hours: 24
+safety:
+  mass_removal_threshold_pct: 50
+  allow_mass_remove_env: "OCPROBE_ALLOW_MASS_REMOVE"
+logging:
+  level: error
+  format: text
+  file_enabled: false
+EOF
+    echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
+    
+    # Run doctor in installed mode - should not error on scheduler check
+    run bash -c "
+        export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
+        export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
+        export OCPROBE_LOG_LEVEL=error
+        mkdir -p '$BATS_TEST_TMPDIR/state'
+        '$test_bin_dir/ocprobe' doctor 2>&1
+    "
+    assert_success
+    assert_output --partial "--- Scheduler ---"
+    assert_output --partial "NOT INSTALLED"
+    # Should NOT contain the error
+    refute_output --partial "cmd_scheduler: command not found"
+}
+
+@test "dev mode doctor command scheduler check works" {
+    local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
+    cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    
+    local config_dir="$BATS_TEST_TMPDIR/dev-config"
+    mkdir -p "$config_dir"
+    cat > "$config_dir/config.yaml" <<'EOF'
+version: 1
+opencode:
+  config_path: "$BATS_TEST_TMPDIR/opencode.json"
+  db_path: "$BATS_TEST_TMPDIR/opencode.db"
+probe:
+  timeout_new: 45
+  timeout_whitelist: 30
+  max_parallel: 4
+  prompt: "Reply with exactly: OK"
+  title_prefix: "ocprobe-probe"
+catalog:
+  cache_ttl_hours: 24
+  force_refresh: false
+scheduler:
+  enabled: false
+  interval_seconds: 21600
+  run_at_load: false
+alerts:
+  webhook_url: ""
+  desktop_notifications: true
+  batch_mode: false
+session:
+  age_guard_hours: 24
+  fresh_guard_hours: 1
+  max_msg_count: 4
+  backup_dir: "$BATS_TEST_TMPDIR/session-backups"
+retention:
+  history_limit: 5000
+  alert_limit: 1000
+  backup_keep_days: 30
+  graveyard_cooldown_hours: 24
+safety:
+  mass_removal_threshold_pct: 50
+  allow_mass_remove_env: "OCPROBE_ALLOW_MASS_REMOVE"
+logging:
+  level: error
+  format: text
+  file_enabled: false
+EOF
+    echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
+    
+    run bash -c "
+        export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
+        export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
+        export OCPROBE_LOG_LEVEL=error
+        mkdir -p '$BATS_TEST_TMPDIR/state'
+        '$test_bin_dir/ocprobe' doctor 2>&1
+    "
+    assert_success
+    assert_output --partial "--- Scheduler ---"
+    assert_output --partial "NOT INSTALLED"
+    refute_output --partial "cmd_scheduler: command not found"
+}
