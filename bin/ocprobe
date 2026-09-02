@@ -139,28 +139,52 @@ extract_subcommand() {
   echo "help"
 }
 
-# Parse global flags from ALL arguments (excluding the subcommand itself)
+# Parse global flags from ALL arguments, scanning through entire list
+# The subcommand is identified and excluded from flag parsing but kept in remaining args
 
 parse_global_flags() {
+  local args=("$@")
+  local subcmd="${args[-1]}"  # subcmd passed as last argument
+  local args_len=${#args[@]}
+  
+  OCPROBE_QUICK=0
+  OCPROBE_FORCE_REFRESH=0
+  OCPROBE_ASSUME_YES=0
+  OCPROBE_JSON_OUTPUT=0
+  OCPROBE_VERBOSE=0
+  OCPROBE_CONFIG_OVERRIDE=""
   OCPROBE_REMAINING_ARGS=()
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
+  
+  # Scan ALL args except the last one (which is subcmd)
+  for ((i=0; i<args_len-1; i++)); do
+    local arg="${args[i]}"
+    
+    case "$arg" in
       --quick) OCPROBE_QUICK=1 ;;
       --force-refresh) OCPROBE_FORCE_REFRESH=1 ;;
       --yes|-y) OCPROBE_ASSUME_YES=1 ;;
       --json) OCPROBE_JSON_OUTPUT=1 ;;
       --verbose|-v) OCPROBE_VERBOSE=1 ;;
-      --config) OCPROBE_CONFIG_OVERRIDE="$2"; shift ;;
-      --config=*) OCPROBE_CONFIG_OVERRIDE="${1#*=}" ;;
+      --config) 
+        # Handle --config value in next iteration
+        ((i++))
+        if [[ $i -lt $((args_len-1)) ]]; then
+          OCPROBE_CONFIG_OVERRIDE="${args[i]}"
+        fi
+        ;;
+      --config=*) OCPROBE_CONFIG_OVERRIDE="${arg#*=}" ;;
       --help|-h) usage; exit 0 ;;
-      --) shift; break ;;
-      -*) log_error "Unknown global flag: $1"; exit 1 ;;
-      *) break ;;
+      --) break ;;
+      -*) log_error "Unknown global flag: $arg"; exit 1 ;;
+      *) 
+        # Non-flag argument - add to remaining (including subcommand if it appears)
+        OCPROBE_REMAINING_ARGS+=("$arg")
+        ;;
     esac
-    shift
   done
-  # Remaining non-flag args
-  OCPROBE_REMAINING_ARGS=("$@")
+  
+  # Finally, append the subcommand to remaining args (it belongs in the command position)
+  OCPROBE_REMAINING_ARGS+=("$subcmd")
 }
 
 # ---- Command Dispatch -------------------------------------------------------
@@ -211,10 +235,10 @@ main() {
 # Parse subcommand first (first non-flag arg)
 subcmd=$(extract_subcommand "$@")
 
-# Parse global flags from ALL args (excluding subcommand)
+# Parse global flags from ALL args (pass subcmd as last arg for identification)
 parse_global_flags "$@" "$subcmd"
 init_logging
 
-# Build remaining args for command: subcommand + remaining positional args
-set -- "$subcmd" "${OCPROBE_REMAINING_ARGS[@]}"
+# Remaining args already contain subcommand in correct position
+set -- "${OCPROBE_REMAINING_ARGS[@]}"
 main "$@"

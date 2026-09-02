@@ -305,7 +305,7 @@ EOF
     [[ "$status" -eq 0 || "$status" -eq 1 ]]
     assert_output --partial "REPORT"
     # Verify --quick was honored (should skip whitelist probe)
-    # assert_output --partial "whitelist not probed this run (--quick)"
+    assert_output --partial "whitelist not probed this run (--quick)"
 }
 
 @test "global flag --quick works after subcommand (audit --quick)" {
@@ -368,7 +368,7 @@ EOF
     [[ "$status" -eq 0 || "$status" -eq 1 ]]
     assert_output --partial "REPORT"
     # Verify --quick was honored (should skip whitelist probe)
-    # assert_output --partial "whitelist not probed this run (--quick)"
+    assert_output --partial "whitelist not probed this run (--quick)"
 }
 
 @test "global flag --json works before subcommand (--json version)" {
@@ -457,6 +457,6 @@ EOF
     "
     [[ "$status" -eq 0 || "$status" -eq 1 ]]
     assert_output --partial "REPORT"
-    # assert_output --partial "whitelist not probed this run (--quick)"
+    assert_output --partial "whitelist not probed this run (--quick)"
     # assert_output --partial "NEW:"
 }
