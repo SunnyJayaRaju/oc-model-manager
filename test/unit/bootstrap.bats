@@ -165,7 +165,7 @@ EOF
     
     # Run doctor in installed mode - should not error on scheduler check
     run bash -c "
-        export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
+        export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
         export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
         export OCPROBE_LOG_LEVEL=error
         mkdir -p '$BATS_TEST_TMPDIR/state'
@@ -230,7 +230,7 @@ EOF
     
     # Run doctor in dev mode - should not error on scheduler check
     run bash -c "
-        export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
+        export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
         export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
         export OCPROBE_LOG_LEVEL=error
         mkdir -p '$BATS_TEST_TMPDIR/state'
@@ -295,7 +295,7 @@ EOF
     
     # Run with --quick before audit - should set OCPROBE_QUICK=1 and run audit
     run bash -c "
-        export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
+        export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
         export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
         export OCPROBE_LOG_LEVEL=error
         mkdir -p '$BATS_TEST_TMPDIR/state'
@@ -359,7 +359,7 @@ EOF
     
     # Run with --quick after audit - should set OCPROBE_QUICK=1
     run bash -c "
-        export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
+        export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
         export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
         export OCPROBE_LOG_LEVEL=error
         mkdir -p '$BATS_TEST_TMPDIR/state'
@@ -449,7 +449,7 @@ EOF
     
     # Multiple flags before command
     run bash -c "
-        export OCPROBE_CONFIG_OVERRIDE='$config_dir/config.yaml'
+        export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
         export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
         export OCPROBE_LOG_LEVEL=error
         mkdir -p '$BATS_TEST_TMPDIR/state'
