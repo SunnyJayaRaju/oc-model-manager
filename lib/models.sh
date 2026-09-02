@@ -337,7 +337,7 @@ generate_report() {
 	done < <(awk -F'\t' '$1=="WHITELIST"&&$3!="WORKS"' "$OCPROBE_RESULTS_FILE")
 
 	# Write dead list for apply
-	printf '%s\n' "${DEAD[@]}" | awk -F' \[' 'NF{print $1}' >"$OCPROBE_RUN_DIR/dead.txt"
+	printf '%s\n' "${DEAD[@]}" | awk -F' [[]' 'NF{print $1}' >"$OCPROBE_RUN_DIR/dead.txt"
 
 	local dead_n=${#DEAD[@]}
 	local ok_count
