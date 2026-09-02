@@ -308,7 +308,9 @@ ocprobe (entry point)
 │   ├── models.sh      # Catalog diff, probe engine, apply
 │   ├── session.sh     # Session backup/restore/cleanup
 │   ├── scheduler.sh   # launchd/systemd management
-│   └── doctor.sh      # Health checks
+│   ├── doctor.sh      # Health checks
+│   ├── validate.sh    # Provider/model validation & blacklist management
+│   └── shim_helpers.sh # Shared shim utilities
 ├── config/
 │   └── schema.json    # JSON Schema for config validation
 ├── test/

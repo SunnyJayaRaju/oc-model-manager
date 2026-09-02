@@ -110,6 +110,37 @@ migrate_config() {
   fi
 }
 
+# Parse global flags from ALL arguments in a single pass
+# Recognized global flags are extracted, everything else preserved in OCPROBE_REMAINING_ARGS
+# in original order (including subcommand and its args)
+
+parse_global_flags() {
+  OCPROBE_QUICK=0
+  OCPROBE_FORCE_REFRESH=0
+  OCPROBE_ASSUME_YES=0
+  OCPROBE_JSON_OUTPUT=0
+  OCPROBE_VERBOSE=0
+  OCPROBE_CONFIG_OVERRIDE=""
+  OCPROBE_REMAINING_ARGS=()
+  
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --quick) OCPROBE_QUICK=1 ;;
+      --force-refresh) OCPROBE_FORCE_REFRESH=1 ;;
+      --yes|-y) OCPROBE_ASSUME_YES=1 ;;
+      --json) OCPROBE_JSON_OUTPUT=1 ;;
+      --verbose|-v) OCPROBE_VERBOSE=1 ;;
+      --config) OCPROBE_CONFIG_OVERRIDE="$2"; shift ;;
+      --config=*) OCPROBE_CONFIG_OVERRIDE="${1#*=}" ;;
+      --help|-h) usage; exit 0 ;;
+      --) shift; OCPROBE_REMAINING_ARGS+=("$@"); break ;;
+      -*) log_error "Unknown global flag: $1"; exit 1 ;;
+      *) OCPROBE_REMAINING_ARGS+=("$1") ;;
+    esac
+    shift
+  done
+}
+
 # ---- Command Dispatch -------------------------------------------------------
 main() {
   local cmd="${1:-help}"
@@ -154,37 +185,11 @@ main() {
   esac
 }
 
-# ---- Global Flag Parsing ----------------------------------------------------
-OCPROBE_QUICK=0
-OCPROBE_FORCE_REFRESH=0
-OCPROBE_ASSUME_YES=0
-OCPROBE_JSON_OUTPUT=0
-OCPROBE_VERBOSE=0
-OCPROBE_CONFIG_OVERRIDE=""
-
-parse_global_flags() {
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --quick) OCPROBE_QUICK=1 ;;
-      --force-refresh) OCPROBE_FORCE_REFRESH=1 ;;
-      --yes|-y) OCPROBE_ASSUME_YES=1 ;;
-      --json) OCPROBE_JSON_OUTPUT=1 ;;
-      --verbose|-v) OCPROBE_VERBOSE=1 ;;
-      --config) OCPROBE_CONFIG_OVERRIDE="$2"; shift ;;
-      --config=*) OCPROBE_CONFIG_OVERRIDE="${1#*=}" ;;
-      --help|-h) usage; exit 0 ;;
-      --) shift; break ;;
-      -*) log_error "Unknown global flag: $1"; exit 1 ;;
-      *) break ;;
-    esac
-    shift
-  done
-}
-
-# Initialize logging early
+# ---- Entry Point --------------------------------------------------------------
+# Parse global flags from ALL arguments in a single pass
 parse_global_flags "$@"
 init_logging
 
-# Re-parse without global flags for command
-set -- "${@}"  # remaining args after global flags
+# Use remaining args for command dispatch
+set -- "${OCPROBE_REMAINING_ARGS[@]}"
 main "$@"
