@@ -32,6 +32,7 @@ setup() {
 @test "bootstrap detects dev mode when VERSION file exists alongside binary parent" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    chmod +x "$test_bin_dir/ocprobe"
     
     run bash -c "
         source '$test_bin_dir/ocprobe'
@@ -48,6 +49,7 @@ setup() {
 @test "bootstrap detects installed mode when VERSION file is NOT alongside binary parent" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-installed/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    chmod +x "$test_bin_dir/ocprobe"
     
     run bash -c "
         source '$test_bin_dir/ocprobe'
@@ -64,6 +66,7 @@ setup() {
 @test "installed mode binary can source libs from ~/.local/lib/ocprobe/" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-installed/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    chmod +x "$test_bin_dir/ocprobe"
     
     run bash -c "
         source '$test_bin_dir/ocprobe' 2>&1
@@ -76,6 +79,7 @@ setup() {
 @test "dev mode binary can source libs from repo lib/" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    chmod +x "$test_bin_dir/ocprobe"
     
     run bash -c "
         source '$test_bin_dir/ocprobe' 2>&1
@@ -112,11 +116,12 @@ setup() {
 @test "installed mode doctor command scheduler check works (sources scheduler.sh)" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-installed/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    chmod +x "$test_bin_dir/ocprobe"
     
     # Create minimal config for doctor to run
     local config_dir="$BATS_TEST_TMPDIR/installed-config"
     mkdir -p "$config_dir"
-    cat > "$config_dir/config.yaml" <<'EOF'
+    cat > "$config_dir/config.yaml" <<EOF
 version: 1
 opencode:
   config_path: "$BATS_TEST_TMPDIR/opencode.json"
@@ -177,10 +182,11 @@ EOF
 @test "dev mode doctor command scheduler check works" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    chmod +x "$test_bin_dir/ocprobe"
     
     local config_dir="$BATS_TEST_TMPDIR/dev-config"
     mkdir -p "$config_dir"
-    cat > "$config_dir/config.yaml" <<'EOF'
+    cat > "$config_dir/config.yaml" <<EOF
 version: 1
 opencode:
   config_path: "$BATS_TEST_TMPDIR/opencode.json"
@@ -241,10 +247,11 @@ EOF
 @test "global flag --quick works before subcommand (--quick audit)" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    chmod +x "$test_bin_dir/ocprobe"
     
     local config_dir="$BATS_TEST_TMPDIR/flag-test-config"
     mkdir -p "$config_dir"
-    cat > "$config_dir/config.yaml" <<'EOF'
+    cat > "$config_dir/config.yaml" <<EOF
 version: 1
 opencode:
   config_path: "$BATS_TEST_TMPDIR/opencode.json"
@@ -304,10 +311,11 @@ EOF
 @test "global flag --quick works after subcommand (audit --quick)" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    chmod +x "$test_bin_dir/ocprobe"
     
     local config_dir="$BATS_TEST_TMPDIR/flag-test-config2"
     mkdir -p "$config_dir"
-    cat > "$config_dir/config.yaml" <<'EOF'
+    cat > "$config_dir/config.yaml" <<EOF
 version: 1
 opencode:
   config_path: "$BATS_TEST_TMPDIR/opencode.json"
@@ -366,6 +374,7 @@ EOF
 @test "global flag --json works before subcommand (--json version)" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    chmod +x "$test_bin_dir/ocprobe"
     
     # Run with --json before version - should set OCPROBE_JSON_OUTPUT=1
     run bash -c "
@@ -379,6 +388,7 @@ EOF
 @test "global flag --json works after subcommand (version --json)" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    chmod +x "$test_bin_dir/ocprobe"
     
     # Run with --json after version - should set OCPROBE_JSON_OUTPUT=1
     run bash -c "
@@ -391,10 +401,11 @@ EOF
 @test "global flags work in any order (--json --quick audit)" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    chmod +x "$test_bin_dir/ocprobe"
     
     local config_dir="$BATS_TEST_TMPDIR/flag-test-config3"
     mkdir -p "$config_dir"
-    cat > "$config_dir/config.yaml" <<'EOF'
+    cat > "$config_dir/config.yaml" <<EOF
 version: 1
 opencode:
   config_path: "$BATS_TEST_TMPDIR/opencode.json"

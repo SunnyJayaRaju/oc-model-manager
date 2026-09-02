@@ -111,6 +111,59 @@ migrate_config() {
 }
 
 # ---- Command Dispatch -------------------------------------------------------
+# Valid commands (subcommands) - used to identify where the subcommand is in the arg list
+OCPROBE_COMMANDS=(
+  audit check status alerts probe watch validate
+  scheduler session config doctor version help
+)
+
+# Extract the subcommand from args (first non-flag argument)
+# Returns the command name, or "help" if none found
+extract_subcommand() {
+  local args=("$@")
+  for arg in "${args[@]}"; do
+    if [[ "$arg" != -* ]]; then
+      # Check if it's a valid command
+      for cmd in "${OCPROBE_COMMANDS[@]}"; do
+        if [[ "$arg" == "$cmd" ]]; then
+          echo "$arg"
+          return 0
+        fi
+      done
+      # If it's not a flag but also not a valid command, it's probably a model name or similar
+      # In that case, default to help (will show error)
+      echo "help"
+      return 0
+    fi
+  done
+  echo "help"
+}
+
+# Parse global flags from ALL arguments (excluding the subcommand itself)
+
+parse_global_flags() {
+  OCPROBE_REMAINING_ARGS=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --quick) OCPROBE_QUICK=1 ;;
+      --force-refresh) OCPROBE_FORCE_REFRESH=1 ;;
+      --yes|-y) OCPROBE_ASSUME_YES=1 ;;
+      --json) OCPROBE_JSON_OUTPUT=1 ;;
+      --verbose|-v) OCPROBE_VERBOSE=1 ;;
+      --config) OCPROBE_CONFIG_OVERRIDE="$2"; shift ;;
+      --config=*) OCPROBE_CONFIG_OVERRIDE="${1#*=}" ;;
+      --help|-h) usage; exit 0 ;;
+      --) shift; break ;;
+      -*) log_error "Unknown global flag: $1"; exit 1 ;;
+      *) break ;;
+    esac
+    shift
+  done
+  # Remaining non-flag args
+  OCPROBE_REMAINING_ARGS=("$@")
+}
+
+# ---- Command Dispatch -------------------------------------------------------
 main() {
   local cmd="${1:-help}"
   shift || true
@@ -154,43 +207,14 @@ main() {
   esac
 }
 
-# ---- Global Flag Parsing ----------------------------------------------------
-OCPROBE_QUICK=0
-OCPROBE_FORCE_REFRESH=0
-OCPROBE_ASSUME_YES=0
-OCPROBE_JSON_OUTPUT=0
-OCPROBE_VERBOSE=0
-OCPROBE_CONFIG_OVERRIDE=""
+# ---- Entry Point --------------------------------------------------------------
+# Parse subcommand first (first non-flag arg)
+subcmd=$(extract_subcommand "$@")
 
-# Array to hold remaining args after global flags are parsed
-OCPROBE_REMAINING_ARGS=()
-
-parse_global_flags() {
-  OCPROBE_REMAINING_ARGS=()
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --quick) OCPROBE_QUICK=1 ;;
-      --force-refresh) OCPROBE_FORCE_REFRESH=1 ;;
-      --yes|-y) OCPROBE_ASSUME_YES=1 ;;
-      --json) OCPROBE_JSON_OUTPUT=1 ;;
-      --verbose|-v) OCPROBE_VERBOSE=1 ;;
-      --config) OCPROBE_CONFIG_OVERRIDE="$2"; shift ;;
-      --config=*) OCPROBE_CONFIG_OVERRIDE="${1#*=}" ;;
-      --help|-h) usage; exit 0 ;;
-      --) shift; break ;;
-      -*) log_error "Unknown global flag: $1"; exit 1 ;;
-      *) break ;;
-    esac
-    shift
-  done
-  # Remaining non-flag args
-  OCPROBE_REMAINING_ARGS=("$@")
-}
-
-# Initialize logging early
-parse_global_flags "$@"
+# Parse global flags from ALL args (excluding subcommand)
+parse_global_flags "$@" "$subcmd"
 init_logging
 
-# Use remaining args for command dispatch
-set -- "${OCPROBE_REMAINING_ARGS[@]}"
+# Build remaining args for command: subcommand + remaining positional args
+set -- "$subcmd" "${OCPROBE_REMAINING_ARGS[@]}"
 main "$@"

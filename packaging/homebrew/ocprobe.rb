@@ -15,7 +15,7 @@ class Ocprobe < Formula
     libexec.install "bin", "lib", "config"
     bin.install_symlink libexec/"bin/ocprobe" => "ocprobe"
     # Install man page
-    man1.install "docs/ocprobe.1.md" => "ocprobe.1"
+    man1.install "docs/ocprobe.1" => "ocprobe.1"
   end
 
   def caveats
