@@ -64,6 +64,7 @@ GLOBAL OPTIONS:
   --force-refresh Force catalog refresh (ignore cache)
   --yes, -y       Assume yes to prompts
   --json          Output JSON (machine-readable)
+  --dry-run       Show what would be done without doing it
   --config <path> Override config file
   --verbose, -v   Verbose logging
   --help, -h      Show help
@@ -120,7 +121,8 @@ parse_global_flags() {
   OCPROBE_ASSUME_YES=0
   OCPROBE_JSON_OUTPUT=0
   OCPROBE_VERBOSE=0
-  OCPROBE_CONFIG_OVERRIDE=""
+  OCPROBE_DRY_RUN=0
+  : "${OCPROBE_CONFIG_OVERRIDE:=}"
   OCPROBE_REMAINING_ARGS=()
   
   while [[ $# -gt 0 ]]; do
@@ -130,6 +132,7 @@ parse_global_flags() {
       --yes|-y) OCPROBE_ASSUME_YES=1 ;;
       --json) OCPROBE_JSON_OUTPUT=1 ;;
       --verbose|-v) OCPROBE_VERBOSE=1 ;;
+      --dry-run) OCPROBE_DRY_RUN=1 ;;
       --config) OCPROBE_CONFIG_OVERRIDE="$2"; shift ;;
       --config=*) OCPROBE_CONFIG_OVERRIDE="${1#*=}" ;;
       --help|-h) usage; exit 0 ;;
