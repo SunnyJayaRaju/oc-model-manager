@@ -166,9 +166,9 @@ EOF
     # Run doctor in installed mode - should not error on scheduler check
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
-        export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
+        export OCPROBE_STATE_DIR="$BATS_TEST_TMPDIR/state"
         export OCPROBE_LOG_LEVEL=error
-        mkdir -p '$BATS_TEST_TMPDIR/state'
+        mkdir -p "$BATS_TEST_TMPDIR/state"
         '$test_bin_dir/ocprobe' doctor 2>&1
     "
     # Doctor may fail due to missing opencode, but scheduler check should work
@@ -231,9 +231,9 @@ EOF
     # Run doctor in dev mode - should not error on scheduler check
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
-        export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
+        export OCPROBE_STATE_DIR="$BATS_TEST_TMPDIR/state"
         export OCPROBE_LOG_LEVEL=error
-        mkdir -p '$BATS_TEST_TMPDIR/state'
+        mkdir -p "$BATS_TEST_TMPDIR/state"
         '$test_bin_dir/ocprobe' doctor 2>&1
     "
     [[ "$status" -eq 0 || "$status" -eq 1 ]]
@@ -296,9 +296,9 @@ EOF
     # Run with --quick before audit - should set OCPROBE_QUICK=1 and run audit
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
-        export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
+        export OCPROBE_STATE_DIR="$BATS_TEST_TMPDIR/state"
         export OCPROBE_LOG_LEVEL=error
-        mkdir -p '$BATS_TEST_TMPDIR/state'
+        mkdir -p "$BATS_TEST_TMPDIR/state"
         '$test_bin_dir/ocprobe' --quick audit 2>&1
     "
     # Should run audit (not fail with "Unknown command: --quick")
@@ -360,9 +360,9 @@ EOF
     # Run with --quick after audit - should set OCPROBE_QUICK=1
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
-        export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
+        export OCPROBE_STATE_DIR="$BATS_TEST_TMPDIR/state"
         export OCPROBE_LOG_LEVEL=error
-        mkdir -p '$BATS_TEST_TMPDIR/state'
+        mkdir -p "$BATS_TEST_TMPDIR/state"
         '$test_bin_dir/ocprobe' audit --quick 2>&1
     "
     [[ "$status" -eq 0 || "$status" -eq 1 ]]
@@ -450,9 +450,9 @@ EOF
     # Multiple flags before command
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
-        export OCPROBE_STATE_DIR='$BATS_TEST_TMPDIR/state'
+        export OCPROBE_STATE_DIR="$BATS_TEST_TMPDIR/state"
         export OCPROBE_LOG_LEVEL=error
-        mkdir -p '$BATS_TEST_TMPDIR/state'
+        mkdir -p "$BATS_TEST_TMPDIR/state"
         '$test_bin_dir/ocprobe' --json --quick audit 2>&1
     "
     [[ "$status" -eq 0 || "$status" -eq 1 ]]
