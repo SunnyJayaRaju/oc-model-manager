@@ -155,6 +155,7 @@ ocprobe session backup ses_abc  # Backup session to SQL dump
 | `--force-refresh` | Force catalog refresh (ignore cache) |
 | `--yes, -y` | Assume yes to prompts |
 | `--json` | Output JSON (machine-readable) |
+| `--dry-run` | Show what would be done without doing it |
 | `--config <path>` | Override config file |
 | `--verbose, -v` | Verbose logging |
 | `--help, -h` | Show help |
@@ -227,7 +228,7 @@ See `ocprobe config schema` for full schema.
 - **Scheduler** — launchd (macOS) / systemd (Linux) integration for continuous monitoring
 - **Session Management** — Backup/restore sessions to replayable SQL dumps
 - **Health Checks** — `doctor` command validates entire stack (config, DB, auth, disk)
-- **Observability** — Structured JSON logging (`--json`), Prometheus metrics
+- **Observability** — Structured JSON logging (`--json`), structured output for observability
 - **Configuration** — YAML config with JSON Schema validation (`ocprobe config validate`)
 
 ---
