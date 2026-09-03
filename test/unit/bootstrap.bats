@@ -382,9 +382,9 @@ EOF
     "
     assert_success
     # JSON output should be valid (version is simple text, but --json shouldn't break it)
-    assert_output "ocprobe 3.0.2"
+assert_output "ocprobe 3.0.3"
 }
-
+ 
 @test "global flag --json works after subcommand (version --json)" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
@@ -395,7 +395,7 @@ EOF
         '$test_bin_dir/ocprobe' version --json 2>&1
     "
     assert_success
-    assert_output "ocprobe 3.0.2"
+    assert_output "ocprobe 3.0.3"
 }
 
 @test "global flags work in any order (--json --quick audit)" {
