@@ -97,7 +97,12 @@ make install
 # Latest release: https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest
 VERSION=$(curl -s https://api.github.com/repos/SunnyJayaRaju/oc-model-manager/releases/latest | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4 | sed 's/^v//')
 curl -sSL "https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest/download/ocprobe-${VERSION}.tar.gz" | tar -xz
-sudo cp "ocprobe-${VERSION}/bin/ocprobe" /usr/local/bin/
+mkdir -p ~/.local/bin ~/.local/lib/ocprobe ~/.local/share/ocprobe
+cp "ocprobe-${VERSION}/bin/ocprobe" ~/.local/bin/
+cp -r "ocprobe-${VERSION}/lib/"* ~/.local/lib/ocprobe/
+cp -r "ocprobe-${VERSION}/config" ~/.local/share/ocprobe/
+cp "ocprobe-${VERSION}/VERSION" ~/.local/share/ocprobe/
+# Ensure ~/.local/bin is in PATH (add to ~/.bashrc, ~/.zshrc, or ~/.profile if not already)
 ```
 
 ---
