@@ -29,6 +29,8 @@ jobs:
           for f in bin/ocprobe lib/*.sh; do
             bash -n "$f" || exit 1
           done
+      - name: Check version consistency (README badge vs VERSION)
+        run: make version-check
 
   secret-scan:
     name: Secret Scan (gitleaks)

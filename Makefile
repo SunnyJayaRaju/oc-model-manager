@@ -95,6 +95,10 @@ release-check:
 	@if [ -z "$$(git tag -l v$(VERSION))" ]; then echo "Tag v$(VERSION) not found"; exit 1; fi
 	@echo "Tag v$(VERSION) exists, ready for release"
 
-# Check version consistency
+# Check version consistency (README badge must match VERSION file)
 version-check:
-	@grep -r "OCPROBE_VERSION" bin/ lib/ | grep -v "$(VERSION)" && echo "Version mismatch!" && exit 1 || echo "Version consistent"
+	@BADGE_VERSION=$$(grep -o 'version-[0-9.]\+-blue' README.md | sed 's/version-\(.*\)-blue/\1/'); \
+	if [[ "$(VERSION)" != "$$BADGE_VERSION" ]]; then \
+		echo "README badge version ($$BADGE_VERSION) != VERSION ($(VERSION))"; exit 1; \
+	fi; \
+	echo "README badge version ($$BADGE_VERSION) matches VERSION ($(VERSION))"
