@@ -5,7 +5,7 @@
 </p>
 
 [![CI](https://github.com/SunnyJayaRaju/oc-model-manager/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square)](https://github.com/SunnyJayaRaju/oc-model-manager/actions)
-[![Version](https://img.shields.io/badge/version-3.0.2-blue.svg?style=flat-square)](VERSION)
+[![Version](https://img.shields.io/badge/version-3.0.3-blue.svg?style=flat-square)](VERSION)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 [![Homebrew](https://img.shields.io/badge/homebrew-SunnyJayaRaju%2Focprobe-orange.svg?style=flat-square)](https://github.com/SunnyJayaRaju/homebrew-ocprobe)
 
