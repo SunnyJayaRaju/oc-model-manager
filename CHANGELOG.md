@@ -14,7 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Glob matcher: `policy_glob_match` / `policy_match_any` (bash glob semantics, `*` matches `/`, case-sensitive)
   - CLI: `ocprobe policy` with `show|validate|path|init` subcommands
   - Unit tests for glob matcher in `test/unit/policy.bats`
-- Disabled by default; no effect on audit/check in this release.
+- Policy engine wired into audit/check pipeline:
+  - `compute_diff`: filters new-model candidates via `never_add` and per-provider `include`/`exclude` rules; excluded models written to `excluded.txt`
+  - `generate_report`: three-way classification (DEAD / PROTECTED by `never_remove` / DEFER); new report sections for protected and excluded models
+  - `apply_changes`: global `auto_apply` skips confirmation prompt; mass-removal guard still enforced; backups and graveyard recording unchanged
+  - New CLI: `ocprobe policy dry-run` shows candidate/excluded models without probing or applying
+  - Integration tests in `test/integration/policy_wiring.bats` covering exclusion, protection, mass-removal guard, dry-run, and no-op without policy
+- Per-provider `auto_apply` accepted by schema but not yet enforced (global only for now)
+
+### Changed
+- Disabled by default; policy engine now active in audit/check when `enabled: true`
 
 ## [3.0.3] - 2026-09-03
 

@@ -328,12 +328,13 @@ Each model is classified as:
 | `ocprobe policy validate` | Validate policy file against schema |
 | `ocprobe policy path` | Print resolved policy file path |
 | `ocprobe policy init` | Create a scaffold policy file (disabled) at default location |
+| `ocprobe policy dry-run` | Show candidates & exclusions without probing or applying |
 
 ### Current status
 
-**Not yet wired into audit/check** — this release only adds the schema,
-loader, and `ocprobe policy` inspection commands. Enforcement lands
-in a future release.
+**Wired into audit/check** — new-model candidates are filtered by `never_add` and provider `include`/`exclude` rules before probing; whitelisted models matching `never_remove` are protected from removal regardless of probe failures. The `auto_apply` setting (global only) skips the confirmation prompt but **never bypasses** the mass-removal guard, backups, or graveyard recording.
+
+**Per-provider `auto_apply` is accepted by the schema but NOT YET ENFORCED** — only the global `auto_apply` currently has an effect. This is a known limitation and will be addressed in a future release.
 
 ---
 
