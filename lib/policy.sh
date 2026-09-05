@@ -185,6 +185,84 @@ policy_match_any() {
 	return 1
 }
 
+# ---- Policy File Writers -----------------------------------------------------
+
+# policy_write_never_remove_file() — materializes the flat never_remove
+# list (global, top-level only per schema — NOT provider-scoped) into
+# $OCPROBE_RUN_DIR/policy-never_remove.txt for consumption by
+# policy_match_any(). Writes an EMPTY file when policy is disabled or
+# missing, so callers never need a conditional branch.
+policy_write_never_remove_file() {
+	local out="$OCPROBE_RUN_DIR/policy-never_remove.txt"
+	: >"$out"
+	[[ "${OCPROBE_POLICY_ENABLED:-0}" -eq 1 && -n "${OCPROBE_POLICY_FILE:-}" ]] || return 0
+	python3 - "$OCPROBE_POLICY_FILE" "$out" <<'PY'
+import sys, yaml
+policy_file, out_file = sys.argv[1], sys.argv[2]
+with open(policy_file) as f:
+    cfg = yaml.safe_load(f) or {}
+patterns = cfg.get('never_remove') or []
+with open(out_file, 'w') as f:
+    f.write('\n'.join(patterns) + ('\n' if patterns else ''))
+PY
+}
+
+# apply_policy_new_filter() — filters new_file IN PLACE, moving excluded
+# entries to excluded_file. Handles never_add, per-provider enabled/exclude/include
+# in ONE python pass over the whole policy file. Uses Python's fnmatch.fnmatchcase,
+# which matches bash's [[ == $glob ]] semantics (case-sensitive, * matches / too,
+# ? single char) — so behavior stays consistent with the bash-side matcher.
+apply_policy_new_filter() {
+	local new_file="$1" excluded_file="$2"
+	: >"$excluded_file"
+	[[ "${OCPROBE_POLICY_ENABLED:-0}" -eq 1 && -n "${OCPROBE_POLICY_FILE:-}" ]] || return 0
+	[[ -s "$new_file" ]] || return 0
+
+	local kept_file="${new_file}.kept"
+	python3 - "$OCPROBE_POLICY_FILE" "$new_file" "$kept_file" "$excluded_file" <<'PY'
+import sys, yaml, fnmatch
+
+policy_file, new_file, kept_file, excluded_file = sys.argv[1:5]
+with open(policy_file) as f:
+    cfg = yaml.safe_load(f) or {}
+
+never_add = cfg.get('never_add') or []
+providers = cfg.get('providers') or {}
+
+def excluded(model_id):
+    for pat in never_add:
+        if fnmatch.fnmatchcase(model_id, pat):
+            return True
+    pid = model_id.split('/', 1)[0]
+    prov = providers.get(pid)
+    if prov is None:
+        return False
+    if prov.get('enabled', True) is False:
+        return True
+    for pat in (prov.get('exclude') or []):
+        if fnmatch.fnmatchcase(model_id, pat):
+            return True
+    include = prov.get('include') or ['*']
+    if include != ['*'] and not any(fnmatch.fnmatchcase(model_id, pat) for pat in include):
+        return True
+    return False
+
+kept, exc = [], []
+with open(new_file) as f:
+    for line in f:
+        mid = line.strip()
+        if not mid:
+            continue
+        (exc if excluded(mid) else kept).append(mid)
+
+with open(kept_file, 'w') as f:
+    f.write('\n'.join(kept) + ('\n' if kept else ''))
+with open(excluded_file, 'w') as f:
+    f.write('\n'.join(exc) + ('\n' if exc else ''))
+PY
+	mv "$kept_file" "$new_file"
+}
+
 # ---- Default Policy Scaffold -------------------------------------------------
 create_default_policy() {
 	local file="$1"
@@ -238,6 +316,27 @@ cmd_policy() {
 		fi
 		create_default_policy "$policy_file"
 		echo "Created policy scaffold (disabled) at: $policy_file"
+		;;
+	dry-run)
+		load_config
+		load_policy
+		policy_write_never_remove_file
+		acquire_lock
+		trap 'release_lock; cleanup_run_dir' EXIT INT TERM
+		fetch_catalog
+		compute_diff
+		local new_n excluded_n
+		new_n=$(wc -l <"$OCPROBE_RUN_DIR/new.txt" 2>/dev/null | tr -d ' ')
+		excluded_n=$(wc -l <"$OCPROBE_RUN_DIR/excluded.txt" 2>/dev/null | tr -d ' ')
+		{
+			echo
+			echo "========= POLICY DRY-RUN (no probing, no apply) ========="
+			echo "-- candidates that WOULD be probed (${new_n:-0}) — WORKS/failure not yet known:"
+			[[ -s "$OCPROBE_RUN_DIR/new.txt" ]] && sed 's/^/    ? /' "$OCPROBE_RUN_DIR/new.txt" || echo "    none"
+			echo "-- excluded by policy, never probed (${excluded_n:-0}):"
+			[[ -s "$OCPROBE_RUN_DIR/excluded.txt" ]] && sed 's/^/    x /' "$OCPROBE_RUN_DIR/excluded.txt" || echo "    none"
+			echo "==========================================================="
+		} >&2
 		;;
 	*)
 		log_error "Unknown policy command: $subcmd"

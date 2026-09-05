@@ -55,7 +55,7 @@ COMMANDS:
   scheduler       Manage launchd/systemd scheduler [install|uninstall|status]
   session         Session management [list|backup|restore|cleanup]
   config          Configuration [show|validate|edit|schema]
-  policy          Manage declarative policy (experimental) [show|validate|path|init]
+  policy          Manage declarative policy (experimental) [show|validate|path|init|dry-run]
   doctor          Health check: config, DB, auth, disk
   version         Show version
   help            Show this help
@@ -175,6 +175,7 @@ config)
       cmd_config "$@"
       ;;
     policy)
+      source "${OCPROBE_LIB_DIR}/models.sh"
       source "${OCPROBE_LIB_DIR}/policy.sh"
       cmd_policy "$@"
       ;;

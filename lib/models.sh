@@ -6,6 +6,10 @@ set -euo pipefail
 # lib/models.sh — Model catalog management (diff, probe, apply)
 # ============================================================================
 
+# Source policy engine (only if OCPROBE_LIB_DIR is set, i.e., not during test setup)
+# shellcheck disable=SC1091
+[[ -n "${OCPROBE_LIB_DIR:-}" ]] && source "${OCPROBE_LIB_DIR}/policy.sh"
+
 # ---- Worker Script Generation -----------------------------------------------
 write_worker() {
 	local worker_file="$1"
@@ -144,12 +148,16 @@ compute_diff() {
 	sort -u "$OCPROBE_RUN_DIR/new.txt" -o "$OCPROBE_RUN_DIR/new.txt"
 	sort -u "$OCPROBE_RUN_DIR/cooling.txt" -o "$OCPROBE_RUN_DIR/cooling.txt"
 
-	local new_n gone_n cooling_n
+	# Policy: filter new models by never_add / provider include/exclude
+	apply_policy_new_filter "$OCPROBE_RUN_DIR/new.txt" "$OCPROBE_RUN_DIR/excluded.txt"
+
+	local new_n gone_n cooling_n excluded_n
 	new_n=$(wc -l <"$OCPROBE_RUN_DIR/new.txt" | tr -d ' ')
 	gone_n=$(wc -l <"$OCPROBE_RUN_DIR/gone.txt" | tr -d ' ')
 	cooling_n=$(wc -l <"$OCPROBE_RUN_DIR/cooling.txt" | tr -d ' ')
+	excluded_n=$(wc -l <"$OCPROBE_RUN_DIR/excluded.txt" 2>/dev/null | tr -d ' ')
 
-	log_info "[3/7] NEW: $new_n | GONE-from-catalog: $gone_n | known-dead cooling: $cooling_n"
+	log_info "[3/7] NEW: $new_n | GONE-from-catalog: $gone_n | known-dead cooling: $cooling_n | excluded-by-policy: ${excluded_n:-0}"
 
 	# Alert on catalog shrink
 	if [[ $gone_n -gt 0 ]]; then
@@ -327,10 +335,15 @@ generate_report() {
 	while IFS=$'\t' read -r _ model _; do [[ -n "$model" ]] && ADDS+=("$model"); done < <(awk -F'\t' '$1=="NEW"&&$3=="WORKS"{print $2}' "$OCPROBE_RESULTS_FILE")
 
 	# Deferred/confirmed dead models
+	local -a PROTECTED=()
 	while IFS=$'\t' read -r _src model st _lat; do
 		[[ -n "$model" ]] || continue
 		if is_confirmed_dead "$model" "$st"; then
-			DEAD+=("$model [$st]")
+			if [[ "${OCPROBE_POLICY_ENABLED:-0}" -eq 1 ]] && policy_match_any "$model" "$OCPROBE_RUN_DIR/policy-never_remove.txt"; then
+				PROTECTED+=("$model [$st]")
+			else
+				DEAD+=("$model [$st]")
+			fi
 		else
 			DEFER+=("$model [$st]")
 		fi
@@ -353,6 +366,8 @@ generate_report() {
 		[[ ${#ADDS[@]} -gt 0 ]] && printf '    + %s\n' "${ADDS[@]}" || echo "    none"
 		echo "-- REMOVE (confirmed dead):"
 		[[ ${#DEAD[@]} -gt 0 ]] && printf '    - %s\n' "${DEAD[@]}" || echo "    none"
+		echo "-- protected by policy (kept despite failures):"
+		[[ ${#PROTECTED[@]} -gt 0 ]] && printf '    * %s\n' "${PROTECTED[@]}" || echo "    none"
 		echo "-- degraded (kept; removes after next failed probe):"
 		[[ ${#DEFER[@]} -gt 0 ]] && printf '    ~ %s\n' "${DEFER[@]}" || echo "    none"
 		if [[ $OCPROBE_QUICK -eq 1 ]] && ! grep -q '^WHITELIST' "$OCPROBE_RESULTS_FILE" 2>/dev/null; then
@@ -364,6 +379,10 @@ generate_report() {
 			echo "-- gone upstream:"
 			sed 's/^/    ! /' "$OCPROBE_RUN_DIR/gone.txt"
 		}
+		[[ -s "$OCPROBE_RUN_DIR/excluded.txt" ]] && {
+			echo "-- excluded by policy (never_add / provider filters):"
+			sed 's/^/    x /' "$OCPROBE_RUN_DIR/excluded.txt"
+		}
 		(($(wc -l <"$OCPROBE_RUN_DIR/cooling.txt" | tr -d ' ') > 0)) && echo "-- known-dead, cooling down (${OCPROBE_GRAVEYARD_COOLDOWN_HOURS}h): $(wc -l <"$OCPROBE_RUN_DIR/cooling.txt" | tr -d ' ') skipped"
 		echo "========================================"
 	} >&2
@@ -372,6 +391,7 @@ generate_report() {
 	export REPORT_ADDS=("${ADDS[@]}")
 	export REPORT_DEAD=("${DEAD[@]}")
 	export REPORT_DEFER=("${DEFER[@]}")
+	export REPORT_PROTECTED=("${PROTECTED[@]}")
 	export REPORT_DEAD_N=$dead_n
 	export REPORT_OK_COUNT=$ok_count
 	export REPORT_WL_COUNT=$wl_count
@@ -407,7 +427,16 @@ apply_changes() {
 		return 0
 	fi
 
-	if [[ $OCPROBE_ASSUME_YES -eq 0 ]]; then
+	local policy_auto_apply=0
+	if [[ "${OCPROBE_POLICY_ENABLED:-0}" -eq 1 && "${OCPROBE_POLICY_AUTO_APPLY:-0}" -eq 1 ]]; then
+		policy_auto_apply=1
+	fi
+
+	if [[ $OCPROBE_ASSUME_YES -eq 0 && $policy_auto_apply -eq 1 ]]; then
+		log_info "policy auto_apply: skipping confirmation prompt"
+	fi
+
+	if [[ $OCPROBE_ASSUME_YES -eq 0 && $policy_auto_apply -eq 0 ]]; then
 		printf 'Apply changes to %s? [y/N] ' "$OCPROBE_OPencode_CONFIG" >&2
 		read -r ans || ans=""
 		[[ "${ans:-n}" =~ ^[Yy]$ ]] || {
@@ -476,6 +505,9 @@ cmd_audit() {
 	log_info "=== ocprobe audit $(date) ==="
 	audit_log "=== run start mode=audit quick=$OCPROBE_QUICK ==="
 
+	load_policy
+	policy_write_never_remove_file
+
 	fetch_catalog
 	compute_diff
 
@@ -497,6 +529,9 @@ cmd_check() {
 
 	log_info "=== ocprobe check $(date) ==="
 	audit_log "=== run start mode=check quick=$OCPROBE_QUICK ==="
+
+	load_policy
+	policy_write_never_remove_file
 
 	fetch_catalog
 	compute_diff

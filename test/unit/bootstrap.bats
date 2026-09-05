@@ -246,7 +246,10 @@ EOF
 
 @test "global flag --quick works before subcommand (--quick audit)" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
+    local test_lib_dir="$BATS_TEST_TMPDIR/fake-repo/lib"
+    mkdir -p "$test_bin_dir" "$test_lib_dir"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    cp -r "$OCPROBE_ROOT/lib" "$test_lib_dir"
     chmod +x "$test_bin_dir/ocprobe"
     
     local config_dir="$BATS_TEST_TMPDIR/flag-test-config"
@@ -310,7 +313,10 @@ EOF
 
 @test "global flag --quick works after subcommand (audit --quick)" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
+    local test_lib_dir="$BATS_TEST_TMPDIR/fake-repo/lib"
+    mkdir -p "$test_bin_dir" "$test_lib_dir"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    cp -r "$OCPROBE_ROOT/lib" "$test_lib_dir"
     chmod +x "$test_bin_dir/ocprobe"
     
     local config_dir="$BATS_TEST_TMPDIR/flag-test-config2"
@@ -400,7 +406,10 @@ assert_output "ocprobe 3.0.3"
 
 @test "global flags work in any order (--json --quick audit)" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
+    local test_lib_dir="$BATS_TEST_TMPDIR/fake-repo/lib"
+    mkdir -p "$test_bin_dir" "$test_lib_dir"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    cp -r "$OCPROBE_ROOT/lib" "$test_lib_dir"
     chmod +x "$test_bin_dir/ocprobe"
     
     local config_dir="$BATS_TEST_TMPDIR/flag-test-config3"
