@@ -100,19 +100,14 @@ cmd_session_cleanup() {
 		# Only delete fresh (<1h) probe sessions
 		if sqlite3 -readonly "$OCPROBE_OPencode_DB" \
 			"SELECT 1 FROM session WHERE id='${sid_esc}' AND time_created > (strftime('%s','now')-3600)*1000 LIMIT 1;" 2>/dev/null | grep -q 1; then
-			if [[ "${OCPROBE_DRY_RUN:-0}" -eq 1 ]]; then
-				log_info "[dry-run] would delete probe session $sid ($title)"
+			delete_session "$sid" && {
 				deleted=$((deleted + 1))
-			else
-				delete_session "$sid" && {
-					deleted=$((deleted + 1))
-					log_info "deleted probe session $sid"
-				}
-			fi
+				log_info "deleted probe session $sid"
+			}
 		fi
 	done < <(list_sessions_with_titles)
 
-	log_info "cleaned $deleted probe session(s)$([ "${OCPROBE_DRY_RUN:-0}" -eq 1 ] && echo " (dry-run)")"
+	log_info "cleaned $deleted probe session(s)"
 }
 
 # ---- Command Dispatcher -----------------------------------------------------
