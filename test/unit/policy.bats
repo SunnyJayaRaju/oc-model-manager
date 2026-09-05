@@ -81,3 +81,285 @@ EOF
 	assert_output --partial "INVALID"
 	rm -f "$invalid_policy"
 }
+
+# ---- policy_write_never_remove_file tests ----
+
+@test "policy_write_never_remove_file: creates empty file when policy disabled" {
+	local policy_file
+	policy_file=$(mktemp)
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: false
+never_remove:
+  - "openai/gpt-4"
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_RUN_DIR=$(mktemp -d /tmp/ocprobe-test-XXXXXX)
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=0
+	policy_write_never_remove_file
+	[[ -f "$OCPROBE_RUN_DIR/policy-never_remove.txt" ]]
+	[[ ! -s "$OCPROBE_RUN_DIR/policy-never_remove.txt" ]]
+	rm -rf "$OCPROBE_RUN_DIR" "$policy_file"
+}
+
+@test "policy_write_never_remove_file: writes never_remove patterns when enabled" {
+	local policy_file
+	policy_file=$(mktemp)
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: true
+never_remove:
+  - "openai/gpt-4"
+  - "anthropic/claude-3"
+never_add: []
+providers: {}
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_RUN_DIR=$(mktemp -d /tmp/ocprobe-test-XXXXXX)
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=1
+	OCPROBE_POLICY_FILE="$policy_file"
+	policy_write_never_remove_file
+	run cat "$OCPROBE_RUN_DIR/policy-never_remove.txt"
+	assert_success
+	assert_output --partial "openai/gpt-4"
+	assert_output --partial "anthropic/claude-3"
+	rm -rf "$OCPROBE_RUN_DIR" "$policy_file"
+}
+
+# ---- apply_policy_new_filter tests ----
+
+@test "apply_policy_new_filter: excludes never_add models" {
+	local policy_file new_file excluded_file
+	policy_file=$(mktemp)
+	new_file=$(mktemp)
+	excluded_file=$(mktemp)
+
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: true
+never_remove: []
+never_add:
+  - "openai/gpt-3.5-turbo"
+  - "anthropic/claude-3"
+providers: {}
+EOF
+
+	cat >"$new_file" <<'EOF'
+openai/gpt-4
+openai/gpt-3.5-turbo
+anthropic/claude-3
+google/gemini-pro
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=1
+	OCPROBE_POLICY_FILE="$policy_file"
+	apply_policy_new_filter "$new_file" "$excluded_file"
+
+	run cat "$excluded_file"
+	assert_success
+	assert_output --partial "openai/gpt-3.5-turbo"
+	assert_output --partial "anthropic/claude-3"
+
+	run cat "$new_file"
+	assert_success
+	refute_output --partial "openai/gpt-3.5-turbo"
+	refute_output --partial "anthropic/claude-3"
+	assert_output --partial "openai/gpt-4"
+	assert_output --partial "google/gemini-pro"
+
+	rm -f "$new_file" "$excluded_file" "$policy_file"
+}
+
+@test "apply_policy_new_filter: excludes by provider exclude pattern" {
+	local policy_file new_file excluded_file
+	policy_file=$(mktemp)
+	new_file=$(mktemp)
+	excluded_file=$(mktemp)
+
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: true
+never_remove: []
+never_add: []
+providers:
+  openai:
+    enabled: true
+    include: ["*"]
+    exclude:
+      - "openai/gpt-3.5-*"
+EOF
+
+	cat >"$new_file" <<'EOF'
+openai/gpt-4
+openai/gpt-3.5-turbo
+openai/gpt-3.5-instruct
+google/gemini-pro
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=1
+	OCPROBE_POLICY_FILE="$policy_file"
+	apply_policy_new_filter "$new_file" "$excluded_file"
+
+	run cat "$excluded_file"
+	assert_success
+	assert_output --partial "openai/gpt-3.5-turbo"
+	assert_output --partial "openai/gpt-3.5-instruct"
+
+	run cat "$new_file"
+	assert_success
+	refute_output --partial "openai/gpt-3.5-turbo"
+	refute_output --partial "openai/gpt-3.5-instruct"
+	assert_output --partial "openai/gpt-4"
+	assert_output --partial "google/gemini-pro"
+
+	rm -f "$new_file" "$excluded_file" "$policy_file"
+}
+
+@test "apply_policy_new_filter: respects provider include list (only matching models kept)" {
+	local policy_file new_file excluded_file
+	policy_file=$(mktemp)
+	new_file=$(mktemp)
+	excluded_file=$(mktemp)
+
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: true
+never_remove: []
+never_add: []
+providers:
+  openai:
+    enabled: true
+    include:
+      - "openai/gpt-4*"
+EOF
+
+	cat >"$new_file" <<'EOF'
+openai/gpt-4
+openai/gpt-4-turbo
+openai/gpt-3.5-turbo
+google/gemini-pro
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=1
+	OCPROBE_POLICY_FILE="$policy_file"
+	apply_policy_new_filter "$new_file" "$excluded_file"
+
+	run cat "$excluded_file"
+	assert_success
+	assert_output --partial "openai/gpt-3.5-turbo"
+
+	run cat "$new_file"
+	assert_success
+	refute_output --partial "openai/gpt-3.5-turbo"
+	assert_output --partial "openai/gpt-4"
+	assert_output --partial "openai/gpt-4-turbo"
+	assert_output --partial "google/gemini-pro"
+
+	rm -f "$new_file" "$excluded_file" "$policy_file"
+}
+
+@test "apply_policy_new_filter: disabled provider excludes all its models" {
+	local policy_file new_file excluded_file
+	policy_file=$(mktemp)
+	new_file=$(mktemp)
+	excluded_file=$(mktemp)
+
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: true
+never_remove: []
+never_add: []
+providers:
+  openai:
+    enabled: false
+EOF
+
+	cat >"$new_file" <<'EOF'
+openai/gpt-4
+openai/gpt-3.5-turbo
+google/gemini-pro
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=1
+	OCPROBE_POLICY_FILE="$policy_file"
+	apply_policy_new_filter "$new_file" "$excluded_file"
+
+	run cat "$excluded_file"
+	assert_success
+	assert_output --partial "openai/gpt-4"
+	assert_output --partial "openai/gpt-3.5-turbo"
+
+	run cat "$new_file"
+	assert_success
+	refute_output --partial "openai/gpt-4"
+	refute_output --partial "openai/gpt-3.5-turbo"
+	assert_output --partial "google/gemini-pro"
+
+	rm -f "$new_file" "$excluded_file" "$policy_file"
+}
+
+@test "apply_policy_new_filter: does nothing when policy disabled" {
+	local policy_file new_file excluded_file
+	policy_file=$(mktemp)
+	new_file=$(mktemp)
+	excluded_file=$(mktemp)
+
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: false
+never_remove: []
+never_add:
+  - "openai/gpt-3.5-turbo"
+providers: {}
+EOF
+
+	cat >"$new_file" <<'EOF'
+openai/gpt-4
+openai/gpt-3.5-turbo
+google/gemini-pro
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=0
+	OCPROBE_POLICY_FILE="$policy_file"
+	apply_policy_new_filter "$new_file" "$excluded_file"
+
+	run cat "$excluded_file"
+	assert_success
+	assert_output ""
+
+	run cat "$new_file"
+	assert_success
+	assert_output --partial "openai/gpt-4"
+	assert_output --partial "openai/gpt-3.5-turbo"
+	assert_output --partial "google/gemini-pro"
+
+	rm -f "$new_file" "$excluded_file" "$policy_file"
+}
