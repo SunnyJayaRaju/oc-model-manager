@@ -340,7 +340,7 @@ cmd_policy() {
 		;;
 	*)
 		log_error "Unknown policy command: $subcmd"
-		echo "Usage: ocprobe policy [show|validate|path|init]"
+		echo "Usage: ocprobe policy [show|validate|path|init|dry-run]"
 		return 1
 		;;
 	esac
