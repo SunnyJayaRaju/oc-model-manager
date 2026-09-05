@@ -287,6 +287,56 @@ Each model is classified as:
 
 ---
 
+## Policy (experimental)
+
+`ocprobe policy` provides a declarative rule engine for the audit/check pipeline.
+**Disabled by default** — a missing file or `enabled: false` is a true no-op.
+
+### Schema fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `version` | integer | **required** | Must be `1` |
+| `enabled` | boolean | `false` | Master switch for the policy engine |
+| `auto_apply` | boolean | `false` | Apply policy decisions without confirmation |
+| `never_remove` | array of strings | `[]` | Models (provider/model) to never remove from whitelist |
+| `never_add` | array of strings | `[]` | Models (provider/model) to never add to whitelist |
+| `providers` | object | `{}` | Per-provider rules (see below) |
+
+**Per-provider rules** (`providers.<provider>`):
+- `enabled` (boolean, default: `true`) — enable/disable policy for this provider
+- `include` (array of globs, default: `["*"]`) — models to consider
+- `exclude` (array of globs, default: `[]`) — models to skip
+- `auto_apply` (boolean, optional) — override global `auto_apply` for this provider
+
+### Glob semantics
+
+- Matching is against the FULL "provider/model" string, not path-segment-aware.
+- `*` matches any sequence of characters, **including `/`** (so `anthropic/*`
+  matches `anthropic/claude-3` and would also match `anthropic/x/y` — there
+  is no slash-boundary special-casing).
+- `?` matches exactly one character.
+- `[...]` character classes work (native bash glob).
+- Matching is case-sensitive.
+- Empty or missing patterns file = no match, never an error.
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `ocprobe policy show` | Display current policy file (or note if missing) |
+| `ocprobe policy validate` | Validate policy file against schema |
+| `ocprobe policy path` | Print resolved policy file path |
+| `ocprobe policy init` | Create a scaffold policy file (disabled) at default location |
+
+### Current status
+
+**Not yet wired into audit/check** — this release only adds the schema,
+loader, and `ocprobe policy` inspection commands. Enforcement lands
+in a future release.
+
+---
+
 ## Safety Guarantees
 
 1. **Session Isolation** — Only sessions created during *this run* with the exact probe prompt (`Reply with exactly: OK`) in the first message are deleted. Real conversations are never touched.
