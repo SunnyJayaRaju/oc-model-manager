@@ -178,7 +178,7 @@ config)
       source "${OCPROBE_LIB_DIR}/policy.sh"
       cmd_policy "$@"
       ;;
-  doctor)
+    doctor)
       source "${OCPROBE_LIB_DIR}/doctor.sh"
       cmd_doctor "$@"
       ;;

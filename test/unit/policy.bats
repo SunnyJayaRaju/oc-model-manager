@@ -66,3 +66,18 @@ EOF
 	! policy_match_any "google/gemini-pro" "$patterns_file"
 	rm -f "$patterns_file"
 }
+
+# ---- cmd_policy validate tests ----
+
+@test "cmd_policy validate: invalid policy file returns failure" {
+	local invalid_policy
+	invalid_policy=$(mktemp)
+	cat >"$invalid_policy" <<'EOF'
+version: 2
+enabled: true
+EOF
+	run bash -c "export OCPROBE_CONFIG_DIR='$BATS_TEST_DIRNAME/../../config'; source '$BATS_TEST_DIRNAME/../helpers/setup_libs.bash'; OCPROBE_POLICY_OVERRIDE='$invalid_policy' cmd_policy validate"
+	assert_failure
+	assert_output --partial "INVALID"
+	rm -f "$invalid_policy"
+}

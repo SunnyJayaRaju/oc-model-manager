@@ -225,6 +225,8 @@ cmd_policy() {
 		fi
 		if validate_policy "$policy_file"; then
 			echo "Policy is valid: $policy_file"
+		else
+			return 1
 		fi
 		;;
 	path)
