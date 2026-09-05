@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Experimental policy engine scaffold:
+  - Schema: `config/policy.schema.json` (version, enabled, auto_apply, never_remove, never_add, providers)
+  - Loader: `lib/policy.sh` with fail-closed validation (parse error or invalid+enabled → die; invalid+disabled → warn and ignore; missing → no-op)
+  - Glob matcher: `policy_glob_match` / `policy_match_any` (bash glob semantics, `*` matches `/`, case-sensitive)
+  - CLI: `ocprobe policy` with `show|validate|path|init` subcommands
+  - Unit tests for glob matcher in `test/unit/policy.bats`
+- Disabled by default; no effect on audit/check in this release.
+
 ## [3.0.3] - 2026-09-03
 
 ### Fixed

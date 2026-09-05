@@ -55,6 +55,7 @@ COMMANDS:
   scheduler       Manage launchd/systemd scheduler [install|uninstall|status]
   session         Session management [list|backup|restore|cleanup]
   config          Configuration [show|validate|edit|schema]
+  policy          Manage declarative policy (experimental) [show|validate|path|init]
   doctor          Health check: config, DB, auth, disk
   version         Show version
   help            Show this help
@@ -66,6 +67,7 @@ GLOBAL OPTIONS:
   --json          Output JSON (machine-readable)
   --dry-run       Show what would be done without doing it
   --config <path> Override config file
+  --policy <path> Override policy file path
   --verbose, -v   Verbose logging
   --help, -h      Show help
 
@@ -135,6 +137,8 @@ parse_global_flags() {
       --dry-run) OCPROBE_DRY_RUN=1 ;;
       --config) OCPROBE_CONFIG_OVERRIDE="$2"; shift ;;
       --config=*) OCPROBE_CONFIG_OVERRIDE="${1#*=}" ;;
+      --policy) OCPROBE_POLICY_OVERRIDE="$2"; shift ;;
+      --policy=*) OCPROBE_POLICY_OVERRIDE="${1#*=}" ;;
       --help|-h) usage; exit 0 ;;
       --) shift; OCPROBE_REMAINING_ARGS+=("$@"); break ;;
       -*) log_error "Unknown global flag: $1"; exit 1 ;;
@@ -166,11 +170,15 @@ main() {
       source "${OCPROBE_LIB_DIR}/session.sh"
       cmd_session "$@"
       ;;
-    config)
+config)
       source "${OCPROBE_LIB_DIR}/config.sh"
       cmd_config "$@"
       ;;
-    doctor)
+    policy)
+      source "${OCPROBE_LIB_DIR}/policy.sh"
+      cmd_policy "$@"
+      ;;
+  doctor)
       source "${OCPROBE_LIB_DIR}/doctor.sh"
       cmd_doctor "$@"
       ;;
