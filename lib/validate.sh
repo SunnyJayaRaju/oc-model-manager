@@ -24,24 +24,29 @@ set -euo pipefail
 : "${OCPROBE_VALIDATE_PROGRESS_INTERVAL:=25}"
 : "${OCPROBE_VALIDATE_LARGE_RUN_THRESHOLD:=200}"
 
+# Validate-local config directory (derived from OCPROBE_OPencode_CONFIG, not from lib/config.sh's OCPROBE_CONFIG_DIR)
+# shellcheck disable=SC2034
+OCPROBE_VALIDATE_CONFIG_DIR="$(dirname "${OCPROBE_OPencode_CONFIG:-~/.config/opencode/opencode.json}")"
+: "${OCPROBE_VALIDATE_CONFIG_DIR:=$(dirname "${OCPROBE_OPencode_CONFIG:-~/.config/opencode/opencode.json}")}"
+
 # ---- Modality Skip Patterns ---------------------------------------------------
 # Local glob matcher — semantics intentionally match policy_glob_match()
 # in lib/policy.sh (case-sensitive, * matches /, ? = one char) but this
 # is a deliberately separate, non-shared copy for this track. See
 # feature/validate-hardening design notes: do not merge with policy.sh.
-# shellcheck disable=SC2053,SC2329
+# shellcheck disable=SC2053
 validate_glob_match() {
 	local pattern="$1" value="$2"
 	[[ "$value" == $pattern ]]
 }
 
 # is_modality_skip(model_id) — returns 0 if model matches any skip pattern
-# Checks curated defaults at $OCPROBE_CONFIG_DIR/validate-skip-patterns.txt
+# Checks curated defaults at $OCPROBE_VALIDATE_CONFIG_DIR/validate-skip-patterns.txt
 # and optional user file at $OCPROBE_STATE_DIR/validate-skip-patterns-user.txt
 # shellcheck disable=SC2329
 is_modality_skip() {
 	local model_id="$1"
-	local skip_file="$OCPROBE_CONFIG_DIR/validate-skip-patterns.txt"
+	local skip_file="$OCPROBE_VALIDATE_CONFIG_DIR/validate-skip-patterns.txt"
 	local user_skip_file="$OCPROBE_STATE_DIR/validate-skip-patterns-user.txt"
 	local patterns_file
 
@@ -68,7 +73,7 @@ is_modality_skip() {
 }
 
 # Path to skip patterns files (exported for external reference, only when dirs are set)
-[[ -n "${OCPROBE_CONFIG_DIR:-}" ]] && export OCPROBE_VALIDATE_SKIP_PATTERNS_FILE="${OCPROBE_CONFIG_DIR}/validate-skip-patterns.txt"
+[[ -n "${OCPROBE_VALIDATE_CONFIG_DIR:-}" ]] && export OCPROBE_VALIDATE_SKIP_PATTERNS_FILE="${OCPROBE_VALIDATE_CONFIG_DIR}/validate-skip-patterns.txt"
 [[ -n "${OCPROBE_STATE_DIR:-}" ]] && export OCPROBE_VALIDATE_USER_SKIP_PATTERNS_FILE="${OCPROBE_STATE_DIR}/validate-skip-patterns-user.txt"
 
 # Path to opencode auth file (credentials)
@@ -861,24 +866,7 @@ PY
 		total_still_visible=$((total_still_visible + s))
 	done
 
-	# Three-bucket summary (available for both apply and dry-run modes)
-	local total_written=0 total_hidden=0 total_still_visible=0
-	for entry in "${provider_results[@]}"; do
-		IFS=':' read -r provider_id proposed_blacklist_file additions_count removals_count <<<"$entry"
-		local results_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.results.tsv"
-		local w=0 h=0 s=0
-		[[ -f "$proposed_blacklist_file" ]] && w=$(wc -l <"$proposed_blacklist_file" | tr -d ' ')
-		[[ -f "${proposed_blacklist_file}.tentative" ]] && s=$(wc -l <"${proposed_blacklist_file}.tentative" | tr -d ' ')
-		# hidden = written - still_visible (approximate)
-		h=$((w - s))
-		total_written=$((total_written + w))
-		total_hidden=$((total_hidden + h))
-		total_still_visible=$((total_still_visible + s))
-	done
-
-	# Phase 4: Apply changes (re-acquire lock only for write phase)
 	if [[ $apply_mode -eq 1 && $overall_changes -eq 1 ]]; then
-		acquire_lock
 		trap 'release_lock; cleanup_run_dir' EXIT INT TERM
 
 		# Staleness guard: verify opencode.json hasn't changed since Phase 1
