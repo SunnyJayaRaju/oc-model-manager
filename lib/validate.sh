@@ -276,6 +276,7 @@ PY
 
 # ---- Probe Classification ----------------------------------------------------
 # Probe a single model using the existing worker and classify the result
+# shellcheck disable=SC2329
 probe_model_classify() {
 	local model="$1"
 	local timeout_secs="${2:-$OCPROBE_VALIDATE_PROBE_TIMEOUT}"
@@ -320,6 +321,134 @@ probe_model_classify() {
 	else
 		# Worker failed to run or produced no output
 		status="ERROR"
+	fi
+
+	printf '%s\t%s\t%d\n' "$model" "$status" "$latency"
+}
+
+# ---- Validate-Local Worker (AUTH_ERROR detection) ---------------------------------
+# Captures FULL raw response text from opencode run --format json
+# and performs auth-pattern detection locally within validate.sh.
+# Does NOT modify lib/models.sh's write_worker() to avoid ripple effects.
+# shellcheck disable=SC2329
+write_validate_worker() {
+	local worker_file="$1"
+	cat >"$worker_file" <<'WORKER'
+#!/usr/bin/env bash
+set -u
+m="$1"; src="$2"; secs="$3"; prompt="$4"
+# Validate model name
+[[ "$m" =~ ^[a-zA-Z0-9_./:~:-]+$ ]] || { echo "INVALID_MODEL: $m" >&2; exit 1; }
+# Validate timeout
+[[ "$secs" =~ ^[0-9]+$ ]] && [[ "$secs" -gt 0 ]] || { echo "INVALID_TIMEOUT" >&2; exit 1; }
+t0=$(python3 -c 'import time; print(int(time.time() * 1000))')
+# Portable timeout with --format json for sessionID capture
+if command -v timeout >/dev/null 2>&1; then
+  res=$(timeout "$secs" opencode run --pure --title ocprobe-validate --format json </dev/null -m "$m" "$prompt" 2>&1); rc=$?
+else
+  res=$(perl -e 'alarm $ARGV[0]; exec @ARGV[1..$#ARGV] or exit 127' "$secs" opencode run --pure --title ocprobe-validate --format json </dev/null -m "$m" "$prompt" 2>&1); rc=$?
+fi
+t1=$(python3 -c 'import time; print(int(time.time() * 1000))')
+
+# Output RAW response to stderr for auth detection, classified status to stdout
+printf '%s\n' "$res" >&2
+
+# Parse JSON events from opencode --format json output
+# Each line is a JSON event; look for status event or error event
+st=UNCLEAR
+while IFS= read -r line; do
+  [[ -n "$line" ]] || continue
+  # Try to extract status from status events
+  if printf '%s' "$line" | grep -q '"type":"status"'; then
+    st=$(printf '%s' "$line" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status","UNCLEAR"))' 2>/dev/null)
+    [[ -n "$st" ]] && break
+  # Try to extract error type from error events
+  elif printf '%s' "$line" | grep -q '"type":"error"'; then
+    err_type=$(printf '%s' "$line" | python3 -c 'import sys,json; d=json.load(sys.stdin); err=d.get("error",{}); print(err.get("data",{}).get("message",""))' 2>/dev/null)
+    if printf '%s' "$err_type" | grep -qi 'No payment method'; then st=PAYWALLED; break
+    elif printf '%s' "$err_type" | grep -qi 'end of life\|^Gone'; then st=EOL; break
+    elif printf '%s' "$err_type" | grep -q '404'; then st=NOTFOUND; break
+    elif printf '%s' "$err_type" | grep -qi 'Error'; then st=BROKEN; break
+    else st=ERROR; break
+    fi
+  fi
+done <<<"$res"
+
+# If no status from JSON events, fall back to string matching on full output
+if [[ "$st" == "UNCLEAR" ]]; then
+  if   printf '%s' "$res" | grep -qi 'No payment method'; then st=PAYWALLED
+  elif printf '%s' "$res" | grep -qi 'end of life\|^Gone'; then st=EOL
+  elif printf '%s' "$res" | grep -q '404';                 then st=NOTFOUND
+  elif printf '%s' "$res" | grep -qi 'Error:';              then st=BROKEN
+  elif printf '%s' "$res" | grep -qE '(^|[^a-zA-Z])OK([[:punct:][:space:]]|$)'; then st=WORKS
+  elif [[ $rc -eq 127 ]];                                   then st=ERROR
+  elif [[ $rc -ne 0 ]];                                     then st=TIMEOUT
+  else st=UNCLEAR; fi
+fi
+printf '%s\t%s\t%s\t%s\n' "$src" "$m" "$st" "$((t1-t0))"
+WORKER
+	chmod +x "$worker_file"
+}
+
+# Probe a single model using validate-local worker with auth detection
+# shellcheck disable=SC2329
+probe_model_classify() {
+	local model="$1"
+	local timeout_secs="${2:-$OCPROBE_VALIDATE_PROBE_TIMEOUT}"
+	local prompt="${3:-$OCPROBE_VALIDATE_PROBE_PROMPT}"
+
+	local worker_file
+	worker_file=$(mktemp "${OCPROBE_RUN_DIR}/validate_worker.XXXXXX")
+	write_validate_worker "$worker_file"
+
+	local start_ms end_ms
+	start_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
+
+	# Run worker and capture stdout (status) and stderr (raw response for auth detection)
+	local output
+	output=$("$worker_file" "$model" "VALIDATE" "$timeout_secs" "$prompt" 2>"${OCPROBE_RUN_DIR}/.validate_raw_response")
+	local ec=$?
+
+	end_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
+
+	local latency=$((end_ms - start_ms))
+
+	rm -f "$worker_file"
+
+	# Read raw response for auth detection
+	local raw_response
+	raw_response=$(cat "${OCPROBE_RUN_DIR}/.validate_raw_response" 2>/dev/null || true)
+	rm -f "${OCPROBE_RUN_DIR}/.validate_raw_response"
+
+	# Parse worker output (TSV: src\tmodel\tstatus\tlatency)
+	local status
+	if [[ $ec -eq 0 && -n "$output" ]]; then
+		# Worker succeeded, parse its classification
+		status=$(printf '%s' "$output" | awk -F'\t' '{print $3}')
+		# Map worker statuses to validate statuses
+		case "$status" in
+		WORKS) status="WORKS" ;;
+		PAYWALLED) status="BILLING_ERROR" ;;
+		EOL) status="NOT_FOUND" ;;
+		NOTFOUND) status="NOT_FOUND" ;;
+		BROKEN) status="ERROR" ;;
+		ERROR) status="ERROR" ;;
+		TIMEOUT) status="TIMEOUT" ;;
+		AUTH_ERROR) status="AUTH_ERROR" ;;
+		*) status="UNCLEAR" ;;
+		esac
+	elif [[ $ec -eq 124 ]] || [[ $ec -eq 137 ]] || [[ $ec -eq 142 ]]; then
+		status="TIMEOUT"
+	else
+		# Worker failed to run or produced no output
+		status="ERROR"
+	fi
+
+	# Auth detection on raw response (if status not already AUTH_ERROR)
+	if [[ "$status" != "AUTH_ERROR" ]]; then
+		if printf '%s' "$raw_response" | grep -Eqi '401|403|Unauthorized|invalid_api_key|invalid api key|authentication failed|auth failed|quota exceeded|rate limit'; then
+			status="AUTH_ERROR"
+		fi
 	fi
 
 	printf '%s\t%s\t%d\n' "$model" "$status" "$latency"
