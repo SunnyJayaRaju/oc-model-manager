@@ -333,10 +333,10 @@ EOF
     local original
     original=$(cat "$BATS_TEST_TMPDIR/opencode.json")
 
-    # Run validate in dry-run mode (no --apply) - exits 2 when some changes would be visible
+    # Run validate in dry-run mode (no --apply) - exits 1 when changes pending but all hidden
     run cmd_validate --provider test-provider
     assert_failure
-    assert_equal 2 "$status"
+    assert_equal 1 "$status"
 
     # Verify config unchanged
     local current
