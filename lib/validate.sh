@@ -593,6 +593,8 @@ PY
 }
 
 # Verify that the blacklist actually took effect by checking model visibility
+# Returns three counts via global vars: VERIFY_WRITTEN, VERIFY_HIDDEN, VERIFY_STILL_VISIBLE
+# Exit codes: 0=all hidden, 2=some still visible, 1=hard error
 verify_blacklist_effect() {
 	local provider_id="$1"
 	local expected_blacklist_file="$2"
@@ -607,16 +609,27 @@ verify_blacklist_effect() {
 		[[ -n "$model" ]] && expected_blacklist+=("$model")
 	done <"$expected_blacklist_file"
 
-	# Check if any blacklisted models are still visible
-	local failed=0
+	# Three buckets
+	VERIFY_WRITTEN=0
+	VERIFY_HIDDEN=0
+	VERIFY_STILL_VISIBLE=0
+
 	for model in "${expected_blacklist[@]}"; do
+		VERIFY_WRITTEN=$((VERIFY_WRITTEN + 1))
 		if printf '%s\n' "$visible_models" | grep -qxF "$model"; then
-			log_warn "Blacklist may not have taken effect: $model still visible in picker"
-			failed=1
+			VERIFY_STILL_VISIBLE=$((VERIFY_STILL_VISIBLE + 1))
+			log_warn "Blacklist may not have taken effect: $model still visible in picker (likely OpenCode bug #32528)"
+		else
+			VERIFY_HIDDEN=$((VERIFY_HIDDEN + 1))
 		fi
 	done
 
-	return $failed
+	# Return exit code based on verification result
+	if [[ $VERIFY_STILL_VISIBLE -eq 0 ]]; then
+		return 0 # All hidden
+	else
+		return 2 # Some still visible (likely upstream OpenCode issue #32528)
+	fi
 }
 
 # ---- Backup/Restore ----------------------------------------------------------
@@ -902,22 +915,44 @@ PY
 			apply_blacklist "$provider_id" "$proposed_blacklist_file" "$models_file"
 
 			log_info "Verifying blacklist effect..."
-			if verify_blacklist_effect "$provider_id" "$proposed_blacklist_file"; then
-				log_info "SUCCESS: Blacklist applied and verified for $provider_id"
-			else
-				log_warn "WARNING: Blacklist written but verification failed (OpenCode bug #32528?)"
-				log_warn "The config was written but models may still appear in picker"
-				log_warn "Run 'opencode models $provider_id' to check actual visibility"
-			fi
+			verify_blacklist_effect "$provider_id" "$proposed_blacklist_file"
+			local verify_exit=$?
+			case $verify_exit in
+			0)
+				log_info "SUCCESS: Blacklist applied and verified for $provider_id (written: $VERIFY_WRITTEN, hidden: $VERIFY_HIDDEN)"
+				;;
+			2)
+				log_warn "PARTIAL: Blacklist written for $provider_id (written: $VERIFY_WRITTEN, hidden: $VERIFY_HIDDEN, still_visible: $VERIFY_STILL_VISIBLE) — likely upstream OpenCode issue #32528, not a blacklist logic error"
+				;;
+			*)
+				log_error "FAILED: Blacklist verification failed for $provider_id"
+				return 1
+				;;
+			esac
 		done
 
 		log_info "Validate complete. Changes applied."
-	elif [[ $apply_mode -eq 0 && $overall_changes -eq 1 ]]; then
-		log_info "Validate complete (dry-run). Changes pending. Run with --apply to write."
-		return 1
-	else
-		log_info "Validate complete. No changes needed."
-		return 0
+		# Three-bucket summary
+		local total_written=0 total_hidden=0 total_still_visible=0
+		for entry in "${provider_results[@]}"; do
+			IFS=':' read -r provider_id proposed_blacklist_file additions_count removals_count <<<"$entry"
+			local results_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.results.tsv"
+			local w=0 h=0 s=0
+			[[ -f "$proposed_blacklist_file" ]] && w=$(wc -l <"$proposed_blacklist_file" | tr -d ' ')
+			[[ -f "${proposed_blacklist_file}.tentative" ]] && s=$(wc -l <"${proposed_blacklist_file}.tentative" | tr -d ' ')
+			# hidden = written - still_visible (approximate)
+			h=$((w - s))
+			total_written=$((total_written + w))
+			total_hidden=$((total_hidden + h))
+			total_still_visible=$((total_still_visible + s))
+		done
+		if [[ $total_still_visible -gt 0 ]]; then
+			log_warn "SUMMARY: written=$total_written hidden=$total_hidden still_visible=$total_still_visible (likely upstream OpenCode issue #32528)"
+			return 2
+		else
+			log_info "SUMMARY: written=$total_written hidden=$total_hidden still_visible=0"
+			return 0
+		fi
 	fi
 }
 

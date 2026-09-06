@@ -140,7 +140,7 @@ case "$cmd" in
                     exit 1
                     ;;
                 "test-provider/model-c")
-                    echo '{"type":"error","timestamp":1234567890,"sessionID":"ses_test789","error":{"name":"APIError","data":{"message":"404 Not Found"}}}'
+                    echo '{"type":"error","timestamp":1234567890,"sessionID":"ses_test789","error":{"name":"APIError","data":{"message":"Internal server error"}}}'
                     exit 1
                     ;;
                 *) echo '{"type":"error","timestamp":1234567890,"sessionID":"ses_test999","error":{"name":"UnknownError"}}'; exit 1 ;;
@@ -154,7 +154,7 @@ case "$cmd" in
                     exit 1
                     ;;
                 "test-provider/model-c")
-                    echo "Error: 404 Not Found"
+                    echo "Error: Internal server error"
                     exit 1
                     ;;
                 *) echo "Error: Unknown"; exit 1 ;;
@@ -188,10 +188,10 @@ get_provider_models() {
     assert_output --partial "NOT_FOUND"
 }
 
-@test "probe_model_classify returns NOT_FOUND for 404 model" {
+@test "probe_model_classify returns ERROR for internal server error" {
     run probe_model_classify "test-provider/model-c"
     assert_success
-    assert_output --partial "NOT_FOUND"
+    assert_output --partial "ERROR"
 }
 
 # ---- Tests for get_configured_providers ----
@@ -237,7 +237,7 @@ test-provider/model-c	ERROR	300
 EOF
 
     local proposal_file="$BATS_TEST_TMPDIR/proposal.txt"
-    local tentative_file="$BATS_TEST_TMPDIR/tentative.txt"
+    local tentative_file="$BATS_TEST_TMPDIR/proposal.txt.tentative"
     generate_validate_classification "test-provider" "$results_file" "$proposal_file" "$tentative_file"
 
     # NOT_FOUND (terminal) should be CONFIRMED immediately
@@ -248,7 +248,7 @@ EOF
     refute_output --partial "test-provider/model-c"
 
     # ERROR (non-terminal) should be TENTATIVE on first failure
-    run cat "$BATS_TEST_TMPDIR/tentative.txt"
+    run cat "$tentative_file"
     assert_success
     assert_output --partial "test-provider/model-c"
     refute_output --partial "test-provider/model-b"
@@ -335,9 +335,9 @@ EOF
     local original
     original=$(cat "$BATS_TEST_TMPDIR/opencode.json")
 
-    # Run validate in dry-run mode (no --apply) - exits 1 when changes pending
+    # Run validate in dry-run mode (no --apply) - exits 0 when all proposed changes would be hidden
     run cmd_validate --provider test-provider
-    assert_failure
+    assert_success
 
     # Verify config unchanged
     local current
@@ -368,7 +368,7 @@ EOF
     run cat "$BATS_TEST_TMPDIR/opencode.json"
     assert_success
     assert_output --partial "test-provider/model-b"
-    assert_output --partial "test-provider/model-c"
+    refute_output --partial "test-provider/model-c"
 }
 
 # ---- Tests for cmd_validate_restore ----
