@@ -20,6 +20,55 @@ set -euo pipefail
 : "${OCPROBE_VALIDATE_TITLE_PREFIX:=ocprobe-validate}"
 : "${OCPROBE_VALIDATE_MAX_PARALLEL:=4}"
 
+# ---- Modality Skip Patterns ---------------------------------------------------
+# Local glob matcher — semantics intentionally match policy_glob_match()
+# in lib/policy.sh (case-sensitive, * matches /, ? = one char) but this
+# is a deliberately separate, non-shared copy for this track. See
+# feature/validate-hardening design notes: do not merge with policy.sh.
+# shellcheck disable=SC2053
+validate_glob_match() {
+	local pattern="$1" value="$2"
+	[[ "$value" == $pattern ]]
+}
+
+# is_modality_skip(model_id) — returns 0 if model matches any skip pattern
+# Checks curated defaults at $OCPROBE_CONFIG_DIR/validate-skip-patterns.txt
+# and optional user file at $OCPROBE_STATE_DIR/validate-skip-patterns-user.txt
+# is_modality_skip(model_id) — returns 0 if model matches any skip pattern
+# Checks curated defaults at $OCPROBE_CONFIG_DIR/validate-skip-patterns.txt
+# and optional user file at $OCPROBE_STATE_DIR/validate-skip-patterns-user.txt
+is_modality_skip() {
+	local model_id="$1"
+	local skip_file="$OCPROBE_CONFIG_DIR/validate-skip-patterns.txt"
+	local user_skip_file="$OCPROBE_STATE_DIR/validate-skip-patterns-user.txt"
+	local patterns_file
+
+	# Build combined patterns file (defaults + user extensions)
+	patterns_file=$(mktemp)
+	cat "$skip_file" >"$patterns_file"
+	[[ -f "$user_skip_file" ]] && cat "$user_skip_file" >>"$patterns_file"
+
+	# Read patterns into array first to avoid SC2094
+	local -a patterns=()
+	local line
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		[[ "$line" =~ ^# ]] && continue
+		patterns+=("$line")
+	done <"$patterns_file"
+	rm -f "$patterns_file"
+
+	local pattern
+	for pattern in "${patterns[@]}"; do
+		validate_glob_match "$pattern" "$model_id" && return 0
+	done
+	return 1
+}
+
+# Path to skip patterns files (exported for external reference, only when dirs are set)
+[[ -n "${OCPROBE_CONFIG_DIR:-}" ]] && export OCPROBE_VALIDATE_SKIP_PATTERNS_FILE="${OCPROBE_CONFIG_DIR}/validate-skip-patterns.txt"
+[[ -n "${OCPROBE_STATE_DIR:-}" ]] && export OCPROBE_VALIDATE_USER_SKIP_PATTERNS_FILE="${OCPROBE_STATE_DIR}/validate-skip-patterns-user.txt"
+
 # Path to opencode auth file (credentials)
 OCPROBE_OPencode_AUTH="${OCPROBE_OPencode_AUTH:-$HOME/.local/share/opencode/auth.json}"
 
@@ -144,11 +193,20 @@ probe_models_batch() {
 
 	log_info "Probing $count models for provider $provider_id..."
 
+	local skipped_count=0
 	while IFS= read -r model; do
 		[[ -n "$model" ]] || continue
+		if is_modality_skip "$model"; then
+			# Modality-skip: write SKIPPED_MODALITY status without probing
+			echo -e "${model}\tSKIPPED_MODALITY\t0" >>"$results_file"
+			skipped_count=$((skipped_count + 1))
+			continue
+		fi
 		result=$(probe_model_classify "$model")
 		echo "$result" >>"$results_file"
 	done <"$models_file"
+
+	[[ $skipped_count -gt 0 ]] && log_info "Skipped $skipped_count modality-excluded models for provider $provider_id"
 }
 
 # ---- Blacklist Management ----------------------------------------------------
@@ -158,8 +216,8 @@ generate_blacklist_proposal() {
 	local results_file="$2"
 	local proposal_file="$3"
 
-	# Extract models that did NOT work
-	awk -F'\t' '$2 != "WORKS" {print $1}' "$results_file" | sort -u >"$proposal_file"
+	# Extract models that did NOT work (excluding WORKS and SKIPPED_MODALITY)
+	awk -F'\t' '$2 != "WORKS" && $2 != "SKIPPED_MODALITY" {print $1}' "$results_file" | sort -u >"$proposal_file"
 }
 
 # Show diff between current and proposed blacklist
@@ -428,14 +486,19 @@ else:
 		local proposed_blacklist_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.proposed_blacklist.txt"
 		generate_blacklist_proposal "$provider_id" "$results_file" "$proposed_blacklist_file"
 
+		# Count skipped modality models for reporting
+		local skipped_count=0
+		skipped_count=$(awk -F'\t' '$2 == "SKIPPED_MODALITY" {count++} END {print count+0}' "$results_file")
+
 		if [[ $json_output -eq 1 ]]; then
-			python3 - "$provider_id" "$results_file" "$current_blacklist_file" "$proposed_blacklist_file" <<'PY'
+			python3 - "$provider_id" "$results_file" "$current_blacklist_file" "$proposed_blacklist_file" "$skipped_count" <<'PY'
 import json, sys, os
 
 provider_id = sys.argv[1]
 results_file = sys.argv[2]
 current_file = sys.argv[3]
 proposed_file = sys.argv[4]
+skipped_count = int(sys.argv[5])
 
 results = []
 with open(results_file) as f:
@@ -461,9 +524,10 @@ print(json.dumps({
     "total_probed": len(results),
     "works": len([r for r in results if r["status"] == "WORKS"]),
     "failures": len([r for r in results if r["status"] != "WORKS"]),
+    "skipped_modality": skipped_count,
     "status_breakdown": {
         s: len([r for r in results if r["status"] == s])
-        for s in ["WORKS", "TIMEOUT", "AUTH_ERROR", "BILLING_ERROR", "NOT_FOUND", "ERROR", "UNCLEAR"]
+        for s in ["WORKS", "TIMEOUT", "AUTH_ERROR", "BILLING_ERROR", "NOT_FOUND", "ERROR", "UNCLEAR", "SKIPPED_MODALITY"]
     },
     "current_blacklist_count": len(current),
     "proposed_blacklist_count": len(proposed),
@@ -473,6 +537,7 @@ print(json.dumps({
 PY
 		else
 			show_blacklist_diff "$provider_id" "$current_blacklist_file" "$proposed_blacklist_file"
+			[[ $skipped_count -gt 0 ]] && echo "    Skipped (modality): $skipped_count"
 		fi
 
 		local additions_count removals_count

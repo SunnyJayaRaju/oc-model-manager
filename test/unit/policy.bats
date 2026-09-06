@@ -6,6 +6,84 @@ load '../helpers/bats-assert/load'
 
 setup() {
   source "$BATS_TEST_DIRNAME/../helpers/setup_libs.bash"
+
+  # Create test config directory with config.yaml that points to test opencode.json
+  local test_config_dir="$BATS_TEST_TMPDIR/config"
+  mkdir -p "$test_config_dir"
+  cp "$OCPROBE_ROOT/config/policy.schema.json" "$test_config_dir/policy.schema.json"
+
+  # Also copy schema to the directory where opencode.json will be (load_config derives OCPROBE_CONFIG_DIR from opencode.json location)
+  cp "$OCPROBE_ROOT/config/policy.schema.json" "$BATS_TEST_TMPDIR/policy.schema.json"
+
+  # Create test config.yaml with correct opencode.config_path pointing to test opencode.json
+  cat >"$test_config_dir/config.yaml" <<EOF
+version: 1
+opencode:
+  config_path: "$BATS_TEST_TMPDIR/opencode.json"
+  db_path: "$BATS_TEST_TMPDIR/opencode.db"
+probe:
+  timeout_new: 45
+  timeout_whitelist: 30
+  max_parallel: 4
+  prompt: "Reply with exactly: OK"
+  title_prefix: "ocprobe-probe"
+catalog:
+  cache_ttl_hours: 24
+  force_refresh: false
+scheduler:
+  enabled: false
+  interval_seconds: 21600
+  run_at_load: false
+alerts:
+  webhook_url: ""
+  desktop_notifications: true
+  batch_mode: false
+session:
+  age_guard_hours: 24
+  fresh_guard_hours: 1
+  max_msg_count: 4
+  backup_dir: "$BATS_TEST_TMPDIR/session-backups"
+retention:
+  history_limit: 5000
+  alert_limit: 1000
+  backup_keep_days: 30
+  graveyard_cooldown_hours: 24
+safety:
+  mass_removal_threshold_pct: 50
+  allow_mass_remove_env: "OCPROBE_ALLOW_MASS_REMOVE"
+logging:
+  level: error
+  format: text
+  file_enabled: false
+EOF
+
+  # Create minimal opencode.json and auth.json for policy tests
+  cat >"$BATS_TEST_TMPDIR/opencode.json" <<EOF
+{
+  "provider": {
+    "test-provider": {
+      "blacklist": [],
+      "whitelist": []
+    }
+  }
+}
+EOF
+  cat >"$BATS_TEST_TMPDIR/auth.json" <<EOF
+{
+  "test-provider": {
+    "type": "api",
+    "key": "test-key"
+  }
+}
+EOF
+
+  # Set config override to use test config
+  export OCPROBE_CONFIG_OVERRIDE="$test_config_dir/config.yaml"
+  export OCPROBE_OPencode_CONFIG="$BATS_TEST_TMPDIR/opencode.json"
+  export OCPROBE_OPencode_AUTH="$BATS_TEST_TMPDIR/auth.json"
+
+  # Initialize logging
+  init_logging
 }
 
 # ---- policy_glob_match tests ----
