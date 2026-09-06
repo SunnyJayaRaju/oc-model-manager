@@ -259,12 +259,18 @@ EOF
 
 @test "apply_blacklist writes blacklist to opencode.json" {
     local blacklist_file="$BATS_TEST_TMPDIR/blacklist.txt"
+    local models_file="$BATS_TEST_TMPDIR/models.txt"
     cat >"$blacklist_file" <<EOF
 test-provider/model-a
 test-provider/model-b
 EOF
+cat >"$models_file" <<EOF
+test-provider/model-a
+test-provider/model-b
+test-provider/model-c
+EOF
 
-    apply_blacklist "test-provider" "$blacklist_file"
+    apply_blacklist "test-provider" "$blacklist_file" "$models_file"
 
     # Verify the config was updated
     run cat "$BATS_TEST_TMPDIR/opencode.json"

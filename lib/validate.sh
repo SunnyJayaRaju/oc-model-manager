@@ -526,30 +526,61 @@ show_blacklist_diff() {
 	rm -f "$current_proposed"
 }
 
-# Apply blacklist to opencode.json
+# Apply blacklist to opencode.json (merge by model-id, not wholesale replace)
+# Reads probed_models_file to know which models were in scope this run.
+# new_blacklist = (previous - probed_this_run) ∪ confirmed_dead_this_run
+# This preserves prior blacklist entries for models NOT probed this run.
 apply_blacklist() {
 	local provider_id="$1"
-	local blacklist_file="$2"
+	local confirmed_file="$2"
+	local probed_models_file="$3"
 
-	# Read blacklist into array
-	local -a blacklist=()
-	while IFS= read -r model; do
-		[[ -n "$model" ]] && blacklist+=("$model")
-	done <"$blacklist_file"
+	# Read previous blacklist
+	local -a prev_blacklist=()
+	[[ -f "$OCPROBE_OPencode_CONFIG" ]] &&
+		mapfile -t prev_blacklist < <(
+			python3 - "$OCPROBE_OPencode_CONFIG" "$provider_id" <<'PY'
+import json, sys, os
+config_path = os.path.expanduser(sys.argv[1])
+provider_id = sys.argv[2]
+with open(config_path) as f:
+    cfg = json.load(f)
+bl = cfg.get("provider", {}).get(provider_id, {}).get("blacklist", [])
+for m in bl:
+    print(m)
+PY
+		)
 
-	python3 - "$OCPROBE_OPencode_CONFIG" "$provider_id" "$(printf '%s\n' "${blacklist[@]}")" <<'PY'
+	# Read probed models this run
+	local -a probed=()
+	[[ -f "$probed_models_file" ]] && mapfile -t probed <"$probed_models_file"
+
+	# Read confirmed dead (new blacklist proposal)
+	local -a confirmed=()
+	[[ -f "$confirmed_file" ]] && mapfile -t confirmed <"$confirmed_file"
+
+	# Merge: (previous - probed) ∪ confirmed
+	python3 - "$OCPROBE_OPencode_CONFIG" "$provider_id" \
+		"$(printf '%s\n' "${probed[@]}")" \
+		"$(printf '%s\n' "${confirmed[@]}")" \
+		"$(printf '%s\n' "${prev_blacklist[@]}")" <<'PY'
 import json, sys, os
 
 config_path = os.path.expanduser(sys.argv[1])
 provider_id = sys.argv[2]
-blacklist = sys.argv[3].splitlines() if sys.argv[3] else []
+probed = set(sys.argv[3].splitlines()) if sys.argv[3] else set()
+confirmed = set(sys.argv[4].splitlines()) if sys.argv[4] else set()
+previous = set(sys.argv[5].splitlines()) if sys.argv[5] else set()
 
 with open(config_path) as f:
     cfg = json.load(f)
 
 providers = cfg.setdefault("provider", {})
 provider = providers.setdefault(provider_id, {})
-provider["blacklist"] = sorted(set(blacklist))
+
+# Keep previous entries NOT probed this run, add confirmed dead this run
+new_blacklist = (previous - probed) | confirmed
+provider["blacklist"] = sorted(new_blacklist)
 
 # Write atomically
 tmp = config_path + ".tmp"
@@ -557,7 +588,7 @@ with open(tmp, "w") as f:
     json.dump(cfg, f, indent=2)
 os.replace(tmp, config_path)
 
-print("Applied blacklist for provider:", provider_id, "with", len(blacklist), "models")
+print("Applied blacklist for provider:", provider_id, "with", len(new_blacklist), "models")
 PY
 }
 
@@ -868,7 +899,7 @@ PY
 			backup_file=$(backup_opencode_config)
 			log_info "Backup created: $backup_file"
 
-			apply_blacklist "$provider_id" "$proposed_blacklist_file"
+			apply_blacklist "$provider_id" "$proposed_blacklist_file" "$models_file"
 
 			log_info "Verifying blacklist effect..."
 			if verify_blacklist_effect "$provider_id" "$proposed_blacklist_file"; then
