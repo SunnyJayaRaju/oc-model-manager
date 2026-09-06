@@ -228,7 +228,7 @@ EOF
 
 # ---- Tests for generate_blacklist_proposal ----
 
-@test "generate_blacklist_proposal includes non-WORKS models" {
+@test "generate_blacklist_proposal includes non-WORKS models with two-failure gate" {
     local results_file="$BATS_TEST_TMPDIR/results.tsv"
     cat >"$results_file" <<EOF
 test-provider/model-a	WORKS	100
@@ -237,12 +237,21 @@ test-provider/model-c	ERROR	300
 EOF
 
     local proposal_file="$BATS_TEST_TMPDIR/proposal.txt"
-    generate_blacklist_proposal "test-provider" "$results_file" "$proposal_file"
+    local tentative_file="$BATS_TEST_TMPDIR/tentative.txt"
+    generate_validate_classification "test-provider" "$results_file" "$proposal_file" "$tentative_file"
 
+    # NOT_FOUND (terminal) should be CONFIRMED immediately
     run cat "$proposal_file"
     assert_success
     assert_output --partial "test-provider/model-b"
+    refute_output --partial "test-provider/model-a"
+    refute_output --partial "test-provider/model-c"
+
+    # ERROR (non-terminal) should be TENTATIVE on first failure
+    run cat "$BATS_TEST_TMPDIR/tentative.txt"
+    assert_success
     assert_output --partial "test-provider/model-c"
+    refute_output --partial "test-provider/model-b"
     refute_output --partial "test-provider/model-a"
 }
 

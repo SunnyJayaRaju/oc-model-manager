@@ -25,7 +25,7 @@ set -euo pipefail
 # in lib/policy.sh (case-sensitive, * matches /, ? = one char) but this
 # is a deliberately separate, non-shared copy for this track. See
 # feature/validate-hardening design notes: do not merge with policy.sh.
-# shellcheck disable=SC2053
+# shellcheck disable=SC2053,SC2329
 validate_glob_match() {
 	local pattern="$1" value="$2"
 	[[ "$value" == $pattern ]]
@@ -34,6 +34,46 @@ validate_glob_match() {
 # is_modality_skip(model_id) — returns 0 if model matches any skip pattern
 # Checks curated defaults at $OCPROBE_CONFIG_DIR/validate-skip-patterns.txt
 # and optional user file at $OCPROBE_STATE_DIR/validate-skip-patterns-user.txt
+# shellcheck disable=SC2329
+is_modality_skip() {
+	local model_id="$1"
+	local skip_file="$OCPROBE_CONFIG_DIR/validate-skip-patterns.txt"
+	local user_skip_file="$OCPROBE_STATE_DIR/validate-skip-patterns-user.txt"
+	local patterns_file
+
+	# Build combined patterns file (defaults + user extensions)
+	patterns_file=$(mktemp)
+	cat "$skip_file" >"$patterns_file"
+	[[ -f "$user_skip_file" ]] && cat "$user_skip_file" >>"$patterns_file"
+
+	# Read patterns into array first to avoid SC2094
+	local -a patterns=()
+	local line
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		[[ "$line" =~ ^# ]] && continue
+		patterns+=("$line")
+	done <"$patterns_file"
+	rm -f "$patterns_file"
+
+	local pattern
+	for pattern in "${patterns[@]}"; do
+		validate_glob_match "$pattern" "$model_id" && return 0
+	done
+	return 1
+}
+
+# ---- Modality Skip Patterns ---------------------------------------------------
+# Local glob matcher — semantics intentionally match policy_glob_match()
+# in lib/policy.sh (case-sensitive, * matches /, ? = one char) but this
+# is a deliberately separate, non-shared copy for this track. See
+# feature/validate-hardening design notes: do not merge with policy.sh.
+# shellcheck disable=SC2053
+validate_glob_match() {
+	local pattern="$1" value="$2"
+	[[ "$value" == $pattern ]]
+}
+
 # is_modality_skip(model_id) — returns 0 if model matches any skip pattern
 # Checks curated defaults at $OCPROBE_CONFIG_DIR/validate-skip-patterns.txt
 # and optional user file at $OCPROBE_STATE_DIR/validate-skip-patterns-user.txt
@@ -68,6 +108,110 @@ is_modality_skip() {
 # Path to skip patterns files (exported for external reference, only when dirs are set)
 [[ -n "${OCPROBE_CONFIG_DIR:-}" ]] && export OCPROBE_VALIDATE_SKIP_PATTERNS_FILE="${OCPROBE_CONFIG_DIR}/validate-skip-patterns.txt"
 [[ -n "${OCPROBE_STATE_DIR:-}" ]] && export OCPROBE_VALIDATE_USER_SKIP_PATTERNS_FILE="${OCPROBE_STATE_DIR}/validate-skip-patterns-user.txt"
+
+# Path to opencode auth file (credentials)
+OCPROBE_OPencode_AUTH="${OCPROBE_OPencode_AUTH:-$HOME/.local/share/opencode/auth.json}"
+
+# ---- Validate History (validate-history.jsonl) ---------------------------------
+# SEPARATE from probe-history.jsonl (audit/check's file). Never read or write
+# probe-history.jsonl from validate.sh.
+
+# load_validate_history() — populates VALIDATE_FAIL_COUNT
+# Uses safe_key pattern (model with / replaced by _) same as lib/models.sh
+load_validate_history() {
+	local -n fail_count=$1
+
+	[[ -f "$OCPROBE_STATE_DIR/validate-history.jsonl" ]] || return 0
+
+	local line
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		local model status
+		model=$(printf '%s' "$line" | awk '{print $1}')
+		status=$(printf '%s' "$line" | awk '{print $2}')
+		[[ -n "$model" && -n "$status" ]] || continue
+		local safe_key="${model//\//_}"
+		VALIDATE_FAIL_COUNT["$safe_key"]="${fail_count[$safe_key]:-0}"
+	done <"$OCPROBE_STATE_DIR/validate-history.jsonl"
+}
+
+# record_validate_history(model, status) — append one line, then prune_jsonl
+# Reuses the generic prune_jsonl utility from lib/db.sh (pure utility, not audit-specific)
+record_validate_history() {
+	local model="$1" status="$2"
+	local history_file="$OCPROBE_STATE_DIR/validate-history.jsonl"
+	mkdir -p "$(dirname "$history_file")"
+	# Portable millisecond timestamp: python for cross-platform support
+	local timestamp
+	timestamp=$(python3 -c 'import time; print(int(time.time() * 1000))')
+	printf '%s\t%s\t%d\n' "$model" "$status" "$timestamp" >>"$history_file"
+	prune_jsonl "$history_file" "$OCPROBE_HISTORY_LIMIT"
+}
+
+# ---- Validate Classification ---------------------------------------------------
+# generate_validate_classification() — two-consecutive-failure state machine
+# For each non-WORKS, non-SKIPPED_MODALITY model in results_file:
+#   - EOL or NOT_FOUND (validate's mapping) → CONFIRMED immediately
+#   - Other non-WORKS → check VALIDATE_FAIL_COUNT:
+#       0 (first time) → TENTATIVE, record failure, do NOT add to blacklist
+#       >=1 (second consecutive) → CONFIRMED, add to blacklist
+#   - WORKS → if VALIDATE_FAIL_COUNT > 0, record WORKS to reset count
+# Output: proposal file (CONFIRMED only), tentative_file (TENTATIVE only)
+generate_validate_classification() {
+	local provider_id="$1"
+	local results_file="$2"
+	local proposal_file="$3"
+	local tentative_file="$4"
+
+	: >"$proposal_file"
+	: >"$tentative_file"
+
+	[[ -s "$results_file" ]] || return 0
+
+	# Load history for this run
+	declare -gA VALIDATE_FAIL_COUNT=()
+	load_validate_history VALIDATE_FAIL_COUNT
+
+	local model status
+	while IFS=$'\t' read -r model status _lat; do
+		[[ -n "$model" ]] || continue
+		local safe_key="${model//\//_}"
+
+		case "$status" in
+		WORKS)
+			# Reset failure count on success
+			if [[ "${VALIDATE_FAIL_COUNT[$safe_key]:-0}" -gt 0 ]]; then
+				VALIDATE_FAIL_COUNT["$safe_key"]=0
+				record_validate_history "$model" "WORKS"
+			fi
+			;;
+		EOL | NOT_FOUND)
+			# Terminal failures — confirm immediately regardless of history
+			echo "$model" >>"$proposal_file"
+			VALIDATE_FAIL_COUNT["$safe_key"]=2 # mark as confirmed
+			record_validate_history "$model" "$status"
+			;;
+		SKIPPED_MODALITY)
+			# Already filtered out by generate_blacklist_proposal, but handle gracefully
+			;;
+		*)
+			# Other failures: TIMEOUT, AUTH_ERROR, BILLING_ERROR, ERROR, UNCLEAR
+			local fail_count="${VALIDATE_FAIL_COUNT[$safe_key]:-0}"
+			if [[ $fail_count -eq 0 ]]; then
+				# First failure → TENTATIVE
+				VALIDATE_FAIL_COUNT["$safe_key"]=1
+				record_validate_history "$model" "$status"
+				echo "$model" >>"$tentative_file"
+			else
+				# Second consecutive failure → CONFIRMED
+				echo "$model" >>"$proposal_file"
+				VALIDATE_FAIL_COUNT["$safe_key"]=2
+				record_validate_history "$model" "$status"
+			fi
+			;;
+		esac
+	done < <(awk -F'\t' '$2 != "WORKS" && $2 != "SKIPPED_MODALITY" {print $1 "\t" $2}' "$results_file")
+}
 
 # Path to opencode auth file (credentials)
 OCPROBE_OPencode_AUTH="${OCPROBE_OPencode_AUTH:-$HOME/.local/share/opencode/auth.json}"
@@ -210,14 +354,16 @@ probe_models_batch() {
 }
 
 # ---- Blacklist Management ----------------------------------------------------
-# Generate proposed blacklist from probe results
+# Generate proposed blacklist from probe results (uses two-failure gate)
 generate_blacklist_proposal() {
 	local provider_id="$1"
 	local results_file="$2"
 	local proposal_file="$3"
 
-	# Extract models that did NOT work (excluding WORKS and SKIPPED_MODALITY)
-	awk -F'\t' '$2 != "WORKS" && $2 != "SKIPPED_MODALITY" {print $1}' "$results_file" | sort -u >"$proposal_file"
+	local tentative_file="${proposal_file}.tentative"
+	generate_validate_classification "$provider_id" "$results_file" "$proposal_file" "$tentative_file"
+	# Clean up tentative file (used for reporting only)
+	rm -f "$tentative_file"
 }
 
 # Show diff between current and proposed blacklist
@@ -486,12 +632,14 @@ else:
 		local proposed_blacklist_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.proposed_blacklist.txt"
 		generate_blacklist_proposal "$provider_id" "$results_file" "$proposed_blacklist_file"
 
-		# Count skipped modality models for reporting
-		local skipped_count=0
+		# Count skipped modality and tentative models for reporting
+		local skipped_count=0 tentative_count=0
 		skipped_count=$(awk -F'\t' '$2 == "SKIPPED_MODALITY" {count++} END {print count+0}' "$results_file")
+		local tentative_file="${proposed_blacklist_file}.tentative"
+		[[ -f "$tentative_file" ]] && tentative_count=$(wc -l <"$tentative_file" | tr -d ' ')
 
 		if [[ $json_output -eq 1 ]]; then
-			python3 - "$provider_id" "$results_file" "$current_blacklist_file" "$proposed_blacklist_file" "$skipped_count" <<'PY'
+			python3 - "$provider_id" "$results_file" "$current_blacklist_file" "$proposed_blacklist_file" "$skipped_count" "$tentative_count" <<'PY'
 import json, sys, os
 
 provider_id = sys.argv[1]
@@ -499,6 +647,7 @@ results_file = sys.argv[2]
 current_file = sys.argv[3]
 proposed_file = sys.argv[4]
 skipped_count = int(sys.argv[5])
+tentative_count = int(sys.argv[6])
 
 results = []
 with open(results_file) as f:
@@ -525,6 +674,7 @@ print(json.dumps({
     "works": len([r for r in results if r["status"] == "WORKS"]),
     "failures": len([r for r in results if r["status"] != "WORKS"]),
     "skipped_modality": skipped_count,
+    "tentative": tentative_count,
     "status_breakdown": {
         s: len([r for r in results if r["status"] == s])
         for s in ["WORKS", "TIMEOUT", "AUTH_ERROR", "BILLING_ERROR", "NOT_FOUND", "ERROR", "UNCLEAR", "SKIPPED_MODALITY"]
@@ -538,6 +688,7 @@ PY
 		else
 			show_blacklist_diff "$provider_id" "$current_blacklist_file" "$proposed_blacklist_file"
 			[[ $skipped_count -gt 0 ]] && echo "    Skipped (modality): $skipped_count"
+			[[ $tentative_count -gt 0 ]] && echo "    Tentative (watching): $tentative_count"
 		fi
 
 		local additions_count removals_count
