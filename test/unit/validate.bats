@@ -328,16 +328,15 @@ EOF
     refute_output --partial "test-provider/new-model"
 }
 
-# ---- Tests for dry-run mode ----
-
 @test "cmd_validate dry-run does not modify opencode.json" {
     # Capture original config
     local original
     original=$(cat "$BATS_TEST_TMPDIR/opencode.json")
 
-    # Run validate in dry-run mode (no --apply) - exits 0 when all proposed changes would be hidden
+    # Run validate in dry-run mode (no --apply) - exits 2 when some changes would be visible
     run cmd_validate --provider test-provider
-    assert_success
+    assert_failure
+    assert_equal 2 "$status"
 
     # Verify config unchanged
     local current

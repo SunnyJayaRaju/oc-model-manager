@@ -67,48 +67,6 @@ is_modality_skip() {
 	return 1
 }
 
-# ---- Modality Skip Patterns ---------------------------------------------------
-# Local glob matcher — semantics intentionally match policy_glob_match()
-# in lib/policy.sh (case-sensitive, * matches /, ? = one char) but this
-# is a deliberately separate, non-shared copy for this track. See
-# feature/validate-hardening design notes: do not merge with policy.sh.
-# shellcheck disable=SC2053
-validate_glob_match() {
-	local pattern="$1" value="$2"
-	[[ "$value" == $pattern ]]
-}
-
-# is_modality_skip(model_id) — returns 0 if model matches any skip pattern
-# Checks curated defaults at $OCPROBE_CONFIG_DIR/validate-skip-patterns.txt
-# and optional user file at $OCPROBE_STATE_DIR/validate-skip-patterns-user.txt
-is_modality_skip() {
-	local model_id="$1"
-	local skip_file="$OCPROBE_CONFIG_DIR/validate-skip-patterns.txt"
-	local user_skip_file="$OCPROBE_STATE_DIR/validate-skip-patterns-user.txt"
-	local patterns_file
-
-	# Build combined patterns file (defaults + user extensions)
-	patterns_file=$(mktemp)
-	cat "$skip_file" >"$patterns_file"
-	[[ -f "$user_skip_file" ]] && cat "$user_skip_file" >>"$patterns_file"
-
-	# Read patterns into array first to avoid SC2094
-	local -a patterns=()
-	local line
-	while IFS= read -r line; do
-		[[ -n "$line" ]] || continue
-		[[ "$line" =~ ^# ]] && continue
-		patterns+=("$line")
-	done <"$patterns_file"
-	rm -f "$patterns_file"
-
-	local pattern
-	for pattern in "${patterns[@]}"; do
-		validate_glob_match "$pattern" "$model_id" && return 0
-	done
-	return 1
-}
-
 # Path to skip patterns files (exported for external reference, only when dirs are set)
 [[ -n "${OCPROBE_CONFIG_DIR:-}" ]] && export OCPROBE_VALIDATE_SKIP_PATTERNS_FILE="${OCPROBE_CONFIG_DIR}/validate-skip-patterns.txt"
 [[ -n "${OCPROBE_STATE_DIR:-}" ]] && export OCPROBE_VALIDATE_USER_SKIP_PATTERNS_FILE="${OCPROBE_STATE_DIR}/validate-skip-patterns-user.txt"
@@ -281,55 +239,6 @@ PY
 # ---- Probe Classification ----------------------------------------------------
 # Probe a single model using the existing worker and classify the result
 # shellcheck disable=SC2329
-probe_model_classify() {
-	local model="$1"
-	local timeout_secs="${2:-$OCPROBE_VALIDATE_PROBE_TIMEOUT}"
-	local prompt="${3:-$OCPROBE_VALIDATE_PROBE_PROMPT}"
-
-	local worker_file
-	worker_file=$(mktemp "${OCPROBE_RUN_DIR}/worker.XXXXXX")
-	write_worker "$worker_file"
-
-	local start_ms end_ms
-	start_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
-
-	# Run worker and capture stdout only (stderr has SESSION_ID marker)
-	local output
-	output=$("$worker_file" "$model" "VALIDATE" "$timeout_secs" "$prompt" 2>/dev/null)
-	local ec=$?
-
-	end_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
-
-	local latency=$((end_ms - start_ms))
-
-	rm -f "$worker_file"
-
-	# Parse worker output (TSV: src\tmodel\tstatus\tlatency)
-	local status
-	if [[ $ec -eq 0 && -n "$output" ]]; then
-		# Worker succeeded, parse its classification
-		status=$(printf '%s' "$output" | awk -F'\t' '{print $3}')
-		# Map worker statuses to validate statuses
-		case "$status" in
-		WORKS) status="WORKS" ;;
-		PAYWALLED) status="BILLING_ERROR" ;;
-		EOL) status="NOT_FOUND" ;;
-		NOTFOUND) status="NOT_FOUND" ;;
-		BROKEN) status="ERROR" ;;
-		ERROR) status="ERROR" ;;
-		TIMEOUT) status="TIMEOUT" ;;
-		*) status="UNCLEAR" ;;
-		esac
-	elif [[ $ec -eq 124 ]] || [[ $ec -eq 137 ]] || [[ $ec -eq 142 ]]; then
-		status="TIMEOUT"
-	else
-		# Worker failed to run or produced no output
-		status="ERROR"
-	fi
-
-	printf '%s\t%s\t%d\n' "$model" "$status" "$latency"
-}
-
 # ---- Validate-Local Worker (AUTH_ERROR detection) ---------------------------------
 # Captures FULL raw response text from opencode run --format json
 # and performs auth-pattern detection locally within validate.sh.
@@ -510,8 +419,7 @@ generate_blacklist_proposal() {
 
 	local tentative_file="${proposal_file}.tentative"
 	generate_validate_classification "$provider_id" "$results_file" "$proposal_file" "$tentative_file"
-	# Clean up tentative file (used for reporting only)
-	rm -f "$tentative_file"
+	# Tentative file is kept for dry-run reporting; caller is responsible for cleanup
 }
 
 # Show diff between current and proposed blacklist
@@ -869,6 +777,8 @@ else:
 		skipped_count=$(awk -F'\t' '$2 == "SKIPPED_MODALITY" {count++} END {print count+0}' "$results_file")
 		local tentative_file="${proposed_blacklist_file}.tentative"
 		[[ -f "$tentative_file" ]] && tentative_count=$(wc -l <"$tentative_file" | tr -d ' ')
+		# Clean up tentative file after reading count
+		rm -f "$tentative_file"
 
 		if [[ $json_output -eq 1 ]]; then
 			python3 - "$provider_id" "$results_file" "$current_blacklist_file" "$proposed_blacklist_file" "$skipped_count" "$tentative_count" <<'PY'
@@ -936,6 +846,36 @@ PY
 		fi
 	done
 
+	# Three-bucket summary (available for both apply and dry-run modes)
+	local total_written=0 total_hidden=0 total_still_visible=0
+	for entry in "${provider_results[@]}"; do
+		IFS=':' read -r provider_id proposed_blacklist_file additions_count removals_count <<<"$entry"
+		local results_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.results.tsv"
+		local w=0 h=0 s=0
+		[[ -f "$proposed_blacklist_file" ]] && w=$(wc -l <"$proposed_blacklist_file" | tr -d ' ')
+		[[ -f "${proposed_blacklist_file}.tentative" ]] && s=$(wc -l <"${proposed_blacklist_file}.tentative" | tr -d ' ')
+		# hidden = written - still_visible (approximate)
+		h=$((w - s))
+		total_written=$((total_written + w))
+		total_hidden=$((total_hidden + h))
+		total_still_visible=$((total_still_visible + s))
+	done
+
+	# Three-bucket summary (available for both apply and dry-run modes)
+	local total_written=0 total_hidden=0 total_still_visible=0
+	for entry in "${provider_results[@]}"; do
+		IFS=':' read -r provider_id proposed_blacklist_file additions_count removals_count <<<"$entry"
+		local results_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.results.tsv"
+		local w=0 h=0 s=0
+		[[ -f "$proposed_blacklist_file" ]] && w=$(wc -l <"$proposed_blacklist_file" | tr -d ' ')
+		[[ -f "${proposed_blacklist_file}.tentative" ]] && s=$(wc -l <"${proposed_blacklist_file}.tentative" | tr -d ' ')
+		# hidden = written - still_visible (approximate)
+		h=$((w - s))
+		total_written=$((total_written + w))
+		total_hidden=$((total_hidden + h))
+		total_still_visible=$((total_still_visible + s))
+	done
+
 	# Phase 4: Apply changes (re-acquire lock only for write phase)
 	if [[ $apply_mode -eq 1 && $overall_changes -eq 1 ]]; then
 		acquire_lock
@@ -976,20 +916,6 @@ PY
 		done
 
 		log_info "Validate complete. Changes applied."
-		# Three-bucket summary
-		local total_written=0 total_hidden=0 total_still_visible=0
-		for entry in "${provider_results[@]}"; do
-			IFS=':' read -r provider_id proposed_blacklist_file additions_count removals_count <<<"$entry"
-			local results_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.results.tsv"
-			local w=0 h=0 s=0
-			[[ -f "$proposed_blacklist_file" ]] && w=$(wc -l <"$proposed_blacklist_file" | tr -d ' ')
-			[[ -f "${proposed_blacklist_file}.tentative" ]] && s=$(wc -l <"${proposed_blacklist_file}.tentative" | tr -d ' ')
-			# hidden = written - still_visible (approximate)
-			h=$((w - s))
-			total_written=$((total_written + w))
-			total_hidden=$((total_hidden + h))
-			total_still_visible=$((total_still_visible + s))
-		done
 		if [[ $total_still_visible -gt 0 ]]; then
 			log_warn "SUMMARY: written=$total_written hidden=$total_hidden still_visible=$total_still_visible (likely upstream OpenCode issue #32528)"
 			return 2
@@ -998,6 +924,23 @@ PY
 			return 0
 		fi
 	fi
+
+	# Dry-run mode or no changes: return appropriate exit code
+	if [[ $apply_mode -eq 0 ]]; then
+		if [[ $total_still_visible -gt 0 ]]; then
+			log_info "DRY-RUN SUMMARY: written=$total_written hidden=$total_hidden still_visible=$total_still_visible (likely upstream OpenCode issue #32528)"
+			return 2
+		elif [[ $overall_changes -eq 1 ]]; then
+			log_info "DRY-RUN SUMMARY: written=$total_written hidden=$total_hidden still_visible=0 (changes pending, use --apply to write)"
+			return 1
+		else
+			log_info "No changes needed."
+			return 0
+		fi
+	fi
+
+	log_info "Validate complete. No changes needed."
+	return 0
 }
 
 cmd_validate_restore() {
