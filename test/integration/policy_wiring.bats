@@ -439,3 +439,117 @@ EOF
 	# Cleanup
 	rm -rf "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR"
 }
+
+# ---- Test 7: provider-wide AUTH_ERROR threshold aborts blacklist changes ----
+@test "provider-wide AUTH_ERROR threshold aborts blacklist changes" {
+	local policy_file
+	policy_file=$(mktemp /tmp/ocprobe-test-policy-XXXXXX.yaml)
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: true
+auto_apply: true
+never_remove: []
+never_add: []
+providers:
+  test-provider:
+    enabled: true
+    include: ["*"]
+    exclude: []
+    auto_apply: true
+EOF
+
+	local opencode_config
+	opencode_config=$(mktemp /tmp/ocprobe-test-opencode-XXXXXX.json)
+	
+	# Create opencode.json with 5 whitelisted models under one provider
+	cat >"$opencode_config" <<EOF
+{
+  "provider": {
+    "test-provider": {
+      "whitelist": [
+        "test-provider/model-a",
+        "test-provider/model-b",
+        "test-provider/model-c",
+        "test-provider/model-d",
+        "test-provider/model-e"
+      ]
+    }
+  }
+}
+EOF
+
+	# Mock opencode to return results with 4 AUTH_ERROR out of 5 models (80%)
+	local mock_dir
+	mock_dir=$(mktemp -d /tmp/ocprobe-mock-XXXXXX)
+	cat >"$mock_dir/opencode" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  models)
+    cat <<'MODELS'
+test-provider/model-a
+test-provider/model-b
+test-provider/model-c
+test-provider/model-d
+test-provider/model-e
+MODELS
+    ;;
+  --version)
+    echo "opencode 0.1.0-test"
+    ;;
+esac
+EOF
+	chmod +x "$mock_dir/opencode"
+
+	# Mock timeout
+	cat >"$mock_dir/timeout" <<'EOF'
+#!/usr/bin/env bash
+if [[ $# -lt 2 ]]; then
+  echo "Usage: timeout SECONDS COMMAND [ARGS...]" >&2
+  exit 1
+fi
+shift
+exec "$@"
+EOF
+	chmod +x "$mock_dir/timeout"
+
+	export PATH="$mock_dir:$PATH"
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_OPencode_CONFIG="$opencode_config"
+	export OCPROBE_STATE_DIR=$(mktemp -d /tmp/ocprobe-test-state-XXXXXX)
+	export OCPROBE_RUN_DIR=$(mktemp -d /tmp/ocprobe-test-run-XXXXXX)
+	export OCPROBE_LOG_LEVEL=error
+	export OCPROBE_LOG_FILE="$OCPROBE_RUN_DIR/audit.log"
+	export OCPROBE_RESULTS_FILE="$OCPROBE_RUN_DIR/results.tsv"
+	export OCPROBE_LOCK_DIR="$OCPROBE_STATE_DIR/.lock"
+	mkdir -p "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR"
+
+	init_logging
+
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_OPencode_CONFIG="$opencode_config"
+	load_config
+	load_policy
+	policy_write_never_remove_file
+	fetch_catalog
+	compute_diff
+
+	# Check that provider was skipped due to AUTH_ERROR threshold
+	# The provider should be skipped entirely due to 80% AUTH_ERROR > 40% threshold
+	# So new.txt should be empty (no models probed) and excluded.txt should be empty too
+	# because the provider was skipped entirely
+
+	# Check that provider was skipped (no blacklist proposed for it)
+# The proposed blacklist file should not exist or be empty since provider was skipped
+run test -f "$OCPROBE_RUN_DIR/test-provider.proposed_blacklist.txt"
+assert_failure
+
+# Check that excluded.txt is empty (provider skipped, no models excluded individually)
+	run wc -l <"$OCPROBE_RUN_DIR/excluded.txt"
+	assert_success
+	run bash -c 'wc -l <"$OCPROBE_RUN_DIR/excluded.txt" | tr -d " "'
+	assert_output "0"
+
+	# Cleanup
+	rm -rf "$mock_dir" "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR" "$policy_file" "$opencode_config"
+}

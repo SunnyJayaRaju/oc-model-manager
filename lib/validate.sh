@@ -19,6 +19,7 @@ set -euo pipefail
 : "${OCPROBE_VALIDATE_PROBE_PROMPT:=Reply with exactly: OK}"
 : "${OCPROBE_VALIDATE_TITLE_PREFIX:=ocprobe-validate}"
 : "${OCPROBE_VALIDATE_MAX_PARALLEL:=4}"
+: "${OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD_PCT:=40}"
 
 # ---- Modality Skip Patterns ---------------------------------------------------
 # Local glob matcher — semantics intentionally match policy_glob_match()
@@ -760,6 +761,21 @@ else:
 
 		local proposed_blacklist_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.proposed_blacklist.txt"
 		generate_blacklist_proposal "$provider_id" "$results_file" "$proposed_blacklist_file"
+
+		# AUTH_ERROR provider-wide abort threshold
+		local auth_error_count=0 total_probed=0
+		auth_error_count=$(awk -F'\t' '$2 == "AUTH_ERROR" {count++} END {print count+0}' "$results_file")
+		total_probed=$(awk -F'\t' '$2 != "SKIPPED_MODALITY" {count++} END {print count+0}' "$results_file")
+		if [[ $total_probed -gt 0 ]]; then
+			local auth_error_pct=$((auth_error_count * 100 / total_probed))
+			if [[ $auth_error_pct -ge ${OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD_PCT:-40} ]]; then
+				log_warn "Provider $provider_id: ${auth_error_pct}% AUTH_ERROR (threshold ${OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD_PCT:-40}%) — looks like a credentials/quota problem, not model breakage. Skipping blacklist changes for this provider. Check your API key/quota and re-run."
+				if [[ $json_output -eq 1 ]]; then
+					echo "{\"provider\":\"$provider_id\",\"auth_error_abort\":true,\"auth_error_pct\":$auth_error_pct,\"threshold_pct\":${OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD_PCT:-40}}"
+				fi
+				continue
+			fi
+		fi
 
 		# Count skipped modality and tentative models for reporting
 		local skipped_count=0 tentative_count=0
