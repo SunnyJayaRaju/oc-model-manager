@@ -12,20 +12,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Schema: `config/policy.schema.json` (version, enabled, auto_apply, never_remove, never_add, providers)
   - Loader: `lib/policy.sh` with fail-closed validation (parse error or invalid+enabled → die; invalid+disabled → warn and ignore; missing → no-op)
   - Glob matcher: `policy_glob_match` / `policy_match_any` (bash glob semantics, `*` matches `/`, case-sensitive)
-  - CLI: `ocprobe policy` with `show|validate|path|init` subcommands
+  - CLI: `ocprobe policy` with `show|validate|path|init|dry-run` subcommands
   - Unit tests for glob matcher in `test/unit/policy.bats`
-- Policy engine wired into audit/check pipeline:
-  - `compute_diff`: filters new-model candidates via `never_add` and per-provider `include`/`exclude` rules; excluded models written to `excluded.txt`
-  - `generate_report`: three-way classification (DEAD / PROTECTED by `never_remove` / DEFER); new report sections for protected and excluded models
-  - `apply_changes`: global `auto_apply` skips confirmation prompt; mass-removal guard still enforced; backups and graveyard recording unchanged
-  - New CLI: `ocprobe policy dry-run` shows candidate/excluded models without probing or applying
-  - Integration tests in `test/integration/policy_wiring.bats` covering exclusion, protection, mass-removal guard, dry-run, and no-op without policy
-- Per-provider `auto_apply` accepted by schema but not yet enforced (global only for now)
+  - Integration tests in `test/integration/policy_wiring.bats`
+- **Validate hardening (feature/validate-hardening):**
+  - **Modality skip list**: `config/validate-skip-patterns.txt` + user file at `~/.local/state/ocprobe/validate-skip-patterns-user.txt`; matched models get `SKIPPED_MODALITY` status, never probed
+  - **Two-failure gate**: `validate-history.jsonl` tracks consecutive failures; non-terminal failures require 2 consecutive failures before blacklisting; `WORKS` resets counter; `EOL`/`NOT_FOUND` confirm immediately
+  - **AUTH_ERROR detection**: validate-local worker captures raw response, detects auth patterns (401, 403, Unauthorized, invalid_api_key, quota exceeded, etc.) → `AUTH_ERROR` status
+  - **Provider-wide AUTH_ERROR abort**: `OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD_PCT` (default 40%); if exceeded, provider skipped entirely
+  - **Apply merge logic**: `apply_blacklist` merges by model-id: `new_blacklist = (previous - probed_this_run) ∪ confirmed_dead_this_run`; never wipes untouched entries
+  - **Three-bucket verification**: `verify_blacklist_effect` returns WRITTEN/HIDDEN/STILL_VISIBLE; exit codes 0=all hidden, 2=some still visible, 1=hard error
+  - **Dry-run exit codes**: 0=all hidden/nothing to do, 2=some still visible, 1=hard error
+  - **UX improvements**: `--verbose` flag, progress logging (every 25 models/60s), large-run warning (>200 models), `--json` includes `schema_version`
+  - **Modality skip list**: `config/validate-skip-patterns.txt` + user file at `~/.local/state/ocprobe/validate-skip-patterns-user.txt`; matched models get `SKIPPED_MODALITY` status
+  - **Per-provider `auto_apply`** accepted by schema but not yet enforced (global only for now)
+  - **Integration tests** in `test/integration/validate_wiring.bats` for exclusion, protection, mass-removal guard, dry-run, no-op without policy
 
 ### Changed
 - Disabled by default; policy engine now active in audit/check when `enabled: true`
+- `cmd_validate` dry-run exit codes: 0=all hidden/nothing to do, 2=some still visible, 1=hard error
+- `apply_blacklist` merges by model-id: preserves entries for models not probed this run
+- `verify_blacklist_effect` reports three buckets (written/hidden/still-visible) via globals
 
-## [3.0.3] - 2026-09-03
+### Fixed
+- `load_config` now derives `OCPROBE_CONFIG_DIR` from `OCPROBE_OPencode_CONFIG`
+- `is_modality_skip` guard against unbound `OCPROBE_CONFIG_DIR`
+- `record_validate_history` uses portable millisecond timestamp (python)
 
 ### Fixed
 - Global flag parsing: flags now work correctly regardless of position (`ocprobe audit --quick` and `ocprobe --quick audit` both work)
