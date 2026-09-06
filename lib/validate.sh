@@ -20,6 +20,9 @@ set -euo pipefail
 : "${OCPROBE_VALIDATE_TITLE_PREFIX:=ocprobe-validate}"
 : "${OCPROBE_VALIDATE_MAX_PARALLEL:=4}"
 : "${OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD_PCT:=40}"
+: "${OCPROBE_VALIDATE_VERBOSE:=0}"
+: "${OCPROBE_VALIDATE_PROGRESS_INTERVAL:=25}"
+: "${OCPROBE_VALIDATE_LARGE_RUN_THRESHOLD:=200}"
 
 # ---- Modality Skip Patterns ---------------------------------------------------
 # Local glob matcher — semantics intentionally match policy_glob_match()
@@ -468,6 +471,9 @@ probe_models_batch() {
 	log_info "Probing $count models for provider $provider_id..."
 
 	local skipped_count=0
+	local probed_count=0
+	local start_time
+	start_time=$(date +%s)
 	while IFS= read -r model; do
 		[[ -n "$model" ]] || continue
 		if is_modality_skip "$model"; then
@@ -478,6 +484,18 @@ probe_models_batch() {
 		fi
 		result=$(probe_model_classify "$model")
 		echo "$result" >>"$results_file"
+		probed_count=$((probed_count + 1))
+
+		# Progress logging
+		if [[ ${OCPROBE_VALIDATE_VERBOSE:-0} -eq 1 || ${verbose_mode:-0} -eq 1 ]]; then
+			local status
+			status=$(printf '%s' "$result" | awk -F'\t' '{print $2}')
+			log_info "  [$probed_count/$count] $model → $status"
+		elif [[ $((probed_count % ${OCPROBE_VALIDATE_PROGRESS_INTERVAL:-25})) -eq 0 ]]; then
+			local elapsed
+			elapsed=$(($(date +%s) - start_time))
+			log_info "  Probed $probed_count/$count models for $provider_id (${elapsed}s elapsed)..."
+		fi
 	done <"$models_file"
 
 	[[ $skipped_count -gt 0 ]] && log_info "Skipped $skipped_count modality-excluded models for provider $provider_id"
@@ -669,11 +687,13 @@ cmd_validate() {
 	local target_provider=""
 	local target_model=""
 	local json_output=0
+	local verbose_mode=0
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--apply) apply_mode=1 ;;
+		--verbose) verbose_mode=1 ;;
 		--provider)
 			target_provider="$2"
 			shift
@@ -691,22 +711,23 @@ cmd_validate() {
 ocprobe validate — Probe all models for configured providers and blacklist failures
 
 USAGE:
-  ocprobe validate [--provider <id>] [--model <id>] [--apply]
+  ocprobe validate [--provider <id>] [--model <id>] [--apply] [--verbose] [--json]
   ocprobe validate restore
 
 OPTIONS:
   --provider <id>   Only validate models for this provider
   --model <id>      Only validate this specific model (requires --provider)
   --apply           Apply blacklist changes to opencode.json (default: dry-run)
+  --verbose         Show per-model detail during probing
   --json            Output JSON (machine-readable)
   restore           Restore opencode.json from last validate backup
 
 BEHAVIOR:
   1. Finds providers with valid API keys in auth.json
-  2. For each provider, fetches ALL available models via `opencode models`
+  2. For each provider, fetches ALL available models via \`opencode models\`
   3. Probes each model with a minimal test prompt
   4. Classifies: WORKS / TIMEOUT / AUTH_ERROR / BILLING_ERROR / NOT_FOUND / ERROR
-  5. Proposed blacklist = all non-WORKS models
+  5. Proposed blacklist = all non-WORKS models (two-failure gate for non-terminal)
   6. Default (dry-run): Shows diff of what would change
   7. --apply: Backs up opencode.json, writes blacklist, verifies effect
   8. restore: Reverts to last validate backup, verifies restore
@@ -714,7 +735,9 @@ BEHAVIOR:
 NOTES:
   - Uses blacklist (additive) not whitelist (would hide unprobed models)
   - Every run re-probes fresh; no cached/stale blacklisting
-  - Verifies actual picker visibility after apply (OpenCode bug #32528)
+  - Creates backup on \`--apply\`; verifies actual picker visibility after apply
+  - Exit codes: 0 = success; 2 = partial (some STILL_VISIBLE); 1 = error
+
 EOF
 			return 0
 			;;
@@ -768,6 +791,26 @@ else:
 	log_info "=== ocprobe validate $(date) ==="
 	audit_log "=== validate run start apply=$apply_mode provider=${target_provider:-all} ==="
 	log_info "Validating providers: ${providers[*]}"
+
+	# Soft warning for large catalog runs
+	local total_models=0
+	for provider_id in "${providers[@]}"; do
+		local models_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.models.txt"
+		if [[ -n "$target_model" ]]; then
+			echo "$target_model" >"$models_file"
+		else
+			get_provider_models "$provider_id" >"$models_file"
+		fi
+		local model_count
+		model_count=$(wc -l <"$models_file" | tr -d ' ')
+		total_models=$((total_models + model_count))
+	done
+	if [[ $total_models -gt ${OCPROBE_VALIDATE_LARGE_RUN_THRESHOLD:-200} ]]; then
+		log_warn "Running full-catalog validate across ${#providers[@]} providers / $total_models models. Consider --provider for a smaller, safer run. Continuing in dry-run..."
+		if [[ $apply_mode -eq 1 ]]; then
+			log_warn "...with --apply..."
+		fi
+	fi
 
 	# Phase 2: Probe all models (NO lock held - avoids FD leakage to command substitutions)
 	local all_results_file="$OCPROBE_RUN_DIR/all_results.tsv"
@@ -858,6 +901,7 @@ additions = sorted(proposed_set - current_set)
 removals = sorted(current_set - proposed_set)
 
 print(json.dumps({
+    "schema_version": 1,
     "provider": provider_id,
     "total_probed": len(results),
     "works": len([r for r in results if r["status"] == "WORKS"]),
