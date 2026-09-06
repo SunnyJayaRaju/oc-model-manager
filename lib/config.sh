@@ -255,7 +255,8 @@ load_config() {
 	OCPROBE_LOCK_DIR="${OCPROBE_LOCK_DIR:-$OCPROBE_STATE_DIR/.lock}"
 
 	# Derive OCPROBE_CONFIG_DIR from OCPROBE_OPencode_CONFIG (directory containing opencode.json)
-	OCPROBE_CONFIG_DIR="$(dirname "$OCPROBE_OPencode_CONFIG")"
+	# Only set if not already explicitly provided (e.g., by tests)
+	[[ -z "${OCPROBE_CONFIG_DIR:-}" ]] && OCPROBE_CONFIG_DIR="$(dirname "$OCPROBE_OPencode_CONFIG")"
 
 	# Export for subprocesses
 	export OCPROBE_CONFIG_FILE OCPROBE_STATE_DIR OCPROBE_AUDIT_DIR OCPROBE_RUN_DIR OCPROBE_LOG_FILE
