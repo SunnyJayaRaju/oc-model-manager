@@ -384,38 +384,33 @@ probe_models_batch() {
 
 	log_info "Probing $count models for provider $provider_id..."
 
-	# Use xargs with a wrapper script to avoid bash 5.3 function loop bug
-	# The wrapper script sources all required libraries and calls probe_model_classify
-	# Export verbose_mode for the wrapper script
-	export verbose_mode
-	local wrapper_script
-	wrapper_script=$(mktemp "${OCPROBE_RUN_DIR}/probe_wrapper.XXXXXX")
-	cat >"$wrapper_script" <<'WRAPPER'
-#!/usr/bin/env bash
-set -uo pipefail
-source /Users/sunnyjayaraj345/oc-model-manager/lib/core.sh
-source /Users/sunnyjayaraj345/oc-model-manager/lib/logging.sh
-source /Users/sunnyjayaraj345/oc-model-manager/lib/locking.sh
-source /Users/sunnyjayaraj345/oc-model-manager/lib/db.sh
-source /Users/sunnyjayaraj345/oc-model-manager/lib/config.sh
-source /Users/sunnyjayaraj345/oc-model-manager/lib/policy.sh
-source /Users/sunnyjayaraj345/oc-model-manager/lib/models.sh
-source /Users/sunnyjayaraj345/oc-model-manager/lib/session.sh
-source /Users/sunnyjayaraj345/oc-model-manager/lib/scheduler.sh
-source /Users/sunnyjayaraj345/oc-model-manager/lib/doctor.sh
-source /Users/sunnyjayaraj345/oc-model-manager/lib/validate.sh
-probe_model_classify "$1"
-WRAPPER
-	chmod +x "$wrapper_script"
+	local skipped_count=0
+	local probed_count=0
+	local start_time
+	start_time=$(date +%s)
+	while IFS= read -r model; do
+		[[ -n "$model" ]] || continue
+		if is_modality_skip "$model"; then
+			echo -e "${model}\tSKIPPED_MODALITY\t0" >>"$results_file"
+			skipped_count=$((skipped_count + 1))
+			continue
+		fi
+		local result
+		result=$(probe_model_classify "$model")
+		echo "$result" >>"$results_file"
+		probed_count=$((probed_count + 1))
 
-	# Run probe_model_classify for each model via xargs
-	# -P1 for sequential, -I{} for replacement
-	xargs -r -P1 -I{} "$wrapper_script" {} <"$models_file" >>"$results_file"
-	rm -f "$wrapper_script"
+		if [[ ${OCPROBE_VALIDATE_VERBOSE:-0} -eq 1 || ${verbose_mode:-0} -eq 1 ]]; then
+			local status
+			status=$(printf '%s' "$result" | awk -F'\t' '{print $2}')
+			log_info "  [$probed_count/$count] $model → $status"
+		elif [[ $((probed_count % ${OCPROBE_VALIDATE_PROGRESS_INTERVAL:-25})) -eq 0 ]]; then
+			local elapsed
+			elapsed=$(($(date +%s) - start_time))
+			log_info "  Probed $probed_count/$count models for $provider_id (${elapsed}s elapsed)..."
+		fi
+	done <"$models_file"
 
-	# Count skipped models from results
-	local skipped_count
-	skipped_count=$(awk -F'\t' '$2 == "SKIPPED_MODALITY" {count++} END {print count+0}' "$results_file")
 	[[ $skipped_count -gt 0 ]] && log_info "Skipped $skipped_count modality-excluded models for provider $provider_id"
 }
 
