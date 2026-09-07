@@ -1,0 +1,54 @@
+# Curated default modality skip patterns for ocprobe validate
+# One pattern per line. Comments start with #.
+# Globs are case-sensitive; * matches any chars including /; ? = single char.
+# See lib/validate.sh:validate_glob_match() for matching semantics.
+
+# Embeddings / text encoders
+*embed*
+*embedding*
+
+# Reranking / cross-encoders
+*rerank*
+*reranker*
+*cross-encoder*
+
+# Text-to-speech / audio generation
+*tts*
+*speech*
+*audio*
+*voice*
+*whisper*
+
+# Image generation / vision
+*image*
+*vision*
+*dall-e*
+*midjourney*
+*stable-diffusion*
+*sdxl*
+
+# Video generation
+*video*
+*sora*
+*runway*
+*pika*
+*luma*
+
+# Moderation / safety classifiers
+*moderation*
+*safety*
+*classifier*
+*guard*
+*content-filter*
+
+# Reasoning / chain-of-thought (often internal, not directly callable)
+*reasoning*
+*thinking*
+*o1*
+*o3*
+
+# Specialized / non-chat
+*code-interpreter*
+*tools*
+*function-calling*
+*plugin*

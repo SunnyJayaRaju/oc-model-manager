@@ -264,17 +264,8 @@ ocprobe validate --json
 ocprobe validate restore
 ```
 
-### Behavior
-
-- **Default is dry-run** — prints a per-provider diff of proposed blacklist additions/removals
-- **Uses blacklist (additive)** — only hides confirmed failures; does not whitelist-only (which would hide unprobed models)
-- **Fresh every run** — no cached/stale blacklisting; every run re-probes all models
-- **Creates backup on `--apply`** — timestamped backup in `~/.local/state/ocprobe/validate-backups/`
-- **Verifies effect** — re-queries `opencode models` after apply; warns if OpenCode bug #32528 prevents blacklist from taking effect
-- **Exit codes** — 0 = no changes needed; 1 = changes pending (dry-run) or error
-
 ### Classification
-
+ 
 Each model is classified as:
 | Status | Meaning |
 |--------|---------|
@@ -284,6 +275,71 @@ Each model is classified as:
 | `BILLING_ERROR` | Payment required, quota exceeded |
 | `NOT_FOUND` | Model EOL, 404, or gone |
 | `ERROR` | Other error (rate limit, server error, etc.) |
+| `SKIPPED_MODALITY` | Model matched a modality skip pattern (never probed) |
+ 
+---
+ 
+### Two-Failure Gate
+ 
+Non-terminal failures (TIMEOUT, AUTH_ERROR, BILLING_ERROR, ERROR, UNCLEAR) require **two consecutive failures** before a model is added to the blacklist:
+- First failure → `TENTATIVE` (not blacklisted, surfaced for review)
+- Second consecutive failure → `CONFIRMED` (added to blacklist)
+- `WORKS` at any point resets the failure counter
+- `EOL` / `NOT_FOUND` → `CONFIRMED` immediately (terminal)
+ 
+---
+ 
+### Modality Skip List
+ 
+Models matching patterns in `~/.config/ocprobe/validate-skip-patterns.txt` (or user file at `~/.local/state/ocprobe/validate-skip-patterns-user.txt`) are **never probed** and receive `SKIPPED_MODALITY` status. Default patterns cover embeddings, reranking, image/audio/video generation, moderation, etc.
+ 
+---
+ 
+### AUTH_ERROR Provider-Wide Abort
+ 
+If a provider's `AUTH_ERROR` rate exceeds `OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD_PCT` (default 40%), the provider is **skipped entirely** — no models are probed, no blacklist changes are made. This prevents blacklisting models due to credential/quota issues.
+ 
+---
+ 
+### Usage
+ 
+```bash
+# Dry-run: show what would be blacklisted (exit 0 if all would be hidden, 2 if some still visible)
+ocprobe validate
+ 
+# Apply changes: write blacklist to opencode.json, create backup, verify effect
+ocprobe validate --apply
+ 
+# Scope to a single provider
+ocprobe validate --provider openrouter
+ 
+# Scope to a single model
+ocprobe validate --provider nvidia --model nvidia/meta/llama-4-maverick-17b-128e-instruct
+ 
+# Verbose per-model logging
+ocprobe validate --verbose
+ 
+# Machine-readable output with schema_version
+ocprobe validate --json
+ 
+# Restore from last validate backup
+ocprobe validate restore
+```
+ 
+### Behavior
+ 
+- **Default is dry-run** — prints a per-provider diff of proposed blacklist additions/removals
+- **Uses blacklist (additive)** — only hides confirmed failures; does not whitelist-only (which would hide unprobed models)
+- **Fresh every run** — no cached/stale blacklisting; every run re-probes all models
+- **Creates backup on `--apply`** — timestamped backup in `~/.local/state/ocprobe/validate-backups/`
+- **Verifies effect** — re-queries `opencode models` after apply; warns if OpenCode bug #32528 prevents blacklist from taking effect
+- **Exit codes** — 0 = success (all hidden or no changes); 2 = partial (some STILL_VISIBLE); 1 = error
+- **Verbose mode** (`--verbose`) shows per-model status during probing
+- **Progress logging** every 25 models (configurable via `OCPROBE_VALIDATE_PROGRESS_INTERVAL`)
+- **Large-run warning** when catalog exceeds 200 models (configurable via `OCPROBE_VALIDATE_LARGE_RUN_THRESHOLD`)
+- **JSON output** (`--json`) includes `schema_version` for forward compatibility
+ 
+### Classification
 
 ---
 

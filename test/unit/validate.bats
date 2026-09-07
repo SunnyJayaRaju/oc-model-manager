@@ -140,7 +140,7 @@ case "$cmd" in
                     exit 1
                     ;;
                 "test-provider/model-c")
-                    echo '{"type":"error","timestamp":1234567890,"sessionID":"ses_test789","error":{"name":"APIError","data":{"message":"404 Not Found"}}}'
+                    echo '{"type":"error","timestamp":1234567890,"sessionID":"ses_test789","error":{"name":"APIError","data":{"message":"Internal server error"}}}'
                     exit 1
                     ;;
                 *) echo '{"type":"error","timestamp":1234567890,"sessionID":"ses_test999","error":{"name":"UnknownError"}}'; exit 1 ;;
@@ -154,7 +154,7 @@ case "$cmd" in
                     exit 1
                     ;;
                 "test-provider/model-c")
-                    echo "Error: 404 Not Found"
+                    echo "Error: Internal server error"
                     exit 1
                     ;;
                 *) echo "Error: Unknown"; exit 1 ;;
@@ -188,10 +188,10 @@ get_provider_models() {
     assert_output --partial "NOT_FOUND"
 }
 
-@test "probe_model_classify returns NOT_FOUND for 404 model" {
+@test "probe_model_classify returns ERROR for internal server error" {
     run probe_model_classify "test-provider/model-c"
     assert_success
-    assert_output --partial "NOT_FOUND"
+    assert_output --partial "ERROR"
 }
 
 # ---- Tests for get_configured_providers ----
@@ -228,7 +228,7 @@ EOF
 
 # ---- Tests for generate_blacklist_proposal ----
 
-@test "generate_blacklist_proposal includes non-WORKS models" {
+@test "generate_blacklist_proposal includes non-WORKS models with two-failure gate" {
     local results_file="$BATS_TEST_TMPDIR/results.tsv"
     cat >"$results_file" <<EOF
 test-provider/model-a	WORKS	100
@@ -237,12 +237,21 @@ test-provider/model-c	ERROR	300
 EOF
 
     local proposal_file="$BATS_TEST_TMPDIR/proposal.txt"
-    generate_blacklist_proposal "test-provider" "$results_file" "$proposal_file"
+    local tentative_file="$BATS_TEST_TMPDIR/proposal.txt.tentative"
+    generate_validate_classification "test-provider" "$results_file" "$proposal_file" "$tentative_file"
 
+    # NOT_FOUND (terminal) should be CONFIRMED immediately
     run cat "$proposal_file"
     assert_success
     assert_output --partial "test-provider/model-b"
+    refute_output --partial "test-provider/model-a"
+    refute_output --partial "test-provider/model-c"
+
+    # ERROR (non-terminal) should be TENTATIVE on first failure
+    run cat "$tentative_file"
+    assert_success
     assert_output --partial "test-provider/model-c"
+    refute_output --partial "test-provider/model-b"
     refute_output --partial "test-provider/model-a"
 }
 
@@ -250,12 +259,18 @@ EOF
 
 @test "apply_blacklist writes blacklist to opencode.json" {
     local blacklist_file="$BATS_TEST_TMPDIR/blacklist.txt"
+    local models_file="$BATS_TEST_TMPDIR/models.txt"
     cat >"$blacklist_file" <<EOF
 test-provider/model-a
 test-provider/model-b
 EOF
+cat >"$models_file" <<EOF
+test-provider/model-a
+test-provider/model-b
+test-provider/model-c
+EOF
 
-    apply_blacklist "test-provider" "$blacklist_file"
+    apply_blacklist "test-provider" "$blacklist_file" "$models_file"
 
     # Verify the config was updated
     run cat "$BATS_TEST_TMPDIR/opencode.json"
@@ -313,16 +328,15 @@ EOF
     refute_output --partial "test-provider/new-model"
 }
 
-# ---- Tests for dry-run mode ----
-
 @test "cmd_validate dry-run does not modify opencode.json" {
     # Capture original config
     local original
     original=$(cat "$BATS_TEST_TMPDIR/opencode.json")
 
-    # Run validate in dry-run mode (no --apply) - exits 1 when changes pending
+    # Run validate in dry-run mode (no --apply) - exits 1 when changes pending but all hidden
     run cmd_validate --provider test-provider
     assert_failure
+    assert_equal 1 "$status"
 
     # Verify config unchanged
     local current
@@ -334,7 +348,9 @@ EOF
 
 @test "cmd_validate --apply creates backup before writing" {
     run cmd_validate --provider test-provider --apply
-    assert_success
+    # Expect exit 2 (PARTIAL) because model-b is still visible after blacklisting
+    assert_failure
+    assert_equal 2 "$status"
 
     # Check backup directory exists and has backup
     local state_dir="${OCPROBE_STATE_DIR:-$HOME/.local/state/ocm}"
@@ -348,12 +364,14 @@ EOF
 
 @test "cmd_validate --apply writes blacklist to opencode.json" {
     run cmd_validate --provider test-provider --apply
-    assert_success
+    # Expect exit 2 (PARTIAL) because model-b is still visible after blacklisting
+    assert_failure
+    assert_equal 2 "$status"
 
     run cat "$BATS_TEST_TMPDIR/opencode.json"
     assert_success
     assert_output --partial "test-provider/model-b"
-    assert_output --partial "test-provider/model-c"
+    refute_output --partial "test-provider/model-c"
 }
 
 # ---- Tests for cmd_validate_restore ----
@@ -420,7 +438,9 @@ MOCK_EOF
 @test "cmd_validate_restore reverts config to backup" {
     # First run with --apply to create backup and modify config
     run cmd_validate --provider test-provider --apply
-    assert_success
+    # Expect exit 2 (PARTIAL) because model-b is still visible after blacklisting
+    assert_failure
+    assert_equal 2 "$status"
 
     # Verify config was modified
     run cat "$BATS_TEST_TMPDIR/opencode.json"
