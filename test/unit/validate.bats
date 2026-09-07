@@ -348,7 +348,9 @@ EOF
 
 @test "cmd_validate --apply creates backup before writing" {
     run cmd_validate --provider test-provider --apply
-    assert_success
+    # Expect exit 2 (PARTIAL) because model-b is still visible after blacklisting
+    assert_failure
+    assert_equal 2 "$status"
 
     # Check backup directory exists and has backup
     local state_dir="${OCPROBE_STATE_DIR:-$HOME/.local/state/ocm}"
@@ -362,7 +364,9 @@ EOF
 
 @test "cmd_validate --apply writes blacklist to opencode.json" {
     run cmd_validate --provider test-provider --apply
-    assert_success
+    # Expect exit 2 (PARTIAL) because model-b is still visible after blacklisting
+    assert_failure
+    assert_equal 2 "$status"
 
     run cat "$BATS_TEST_TMPDIR/opencode.json"
     assert_success
@@ -434,7 +438,9 @@ MOCK_EOF
 @test "cmd_validate_restore reverts config to backup" {
     # First run with --apply to create backup and modify config
     run cmd_validate --provider test-provider --apply
-    assert_success
+    # Expect exit 2 (PARTIAL) because model-b is still visible after blacklisting
+    assert_failure
+    assert_equal 2 "$status"
 
     # Verify config was modified
     run cat "$BATS_TEST_TMPDIR/opencode.json"

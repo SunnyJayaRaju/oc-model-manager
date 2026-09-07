@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 # shellcheck shell=bash
 # shellcheck disable=SC2154,SC2016
 # OCPROBE_OPencode_CONFIG, OCPROBE_STATE_DIR, OCPROBE_RUN_DIR, OCPROBE_RESULTS_FILE, OCPROBE_LOCK_DIR, OCPROBE_STAMP,
@@ -384,34 +384,38 @@ probe_models_batch() {
 
 	log_info "Probing $count models for provider $provider_id..."
 
-	local skipped_count=0
-	local probed_count=0
-	local start_time
-	start_time=$(date +%s)
-	while IFS= read -r model; do
-		[[ -n "$model" ]] || continue
-		if is_modality_skip "$model"; then
-			# Modality-skip: write SKIPPED_MODALITY status without probing
-			echo -e "${model}\tSKIPPED_MODALITY\t0" >>"$results_file"
-			skipped_count=$((skipped_count + 1))
-			continue
-		fi
-		result=$(probe_model_classify "$model")
-		echo "$result" >>"$results_file"
-		probed_count=$((probed_count + 1))
+	# Use xargs with a wrapper script to avoid bash 5.3 function loop bug
+	# The wrapper script sources all required libraries and calls probe_model_classify
+	# Export verbose_mode for the wrapper script
+	export verbose_mode
+	local wrapper_script
+	wrapper_script=$(mktemp "${OCPROBE_RUN_DIR}/probe_wrapper.XXXXXX")
+	cat >"$wrapper_script" <<'WRAPPER'
+#!/usr/bin/env bash
+set -uo pipefail
+source /Users/sunnyjayaraj345/oc-model-manager/lib/core.sh
+source /Users/sunnyjayaraj345/oc-model-manager/lib/logging.sh
+source /Users/sunnyjayaraj345/oc-model-manager/lib/locking.sh
+source /Users/sunnyjayaraj345/oc-model-manager/lib/db.sh
+source /Users/sunnyjayaraj345/oc-model-manager/lib/config.sh
+source /Users/sunnyjayaraj345/oc-model-manager/lib/policy.sh
+source /Users/sunnyjayaraj345/oc-model-manager/lib/models.sh
+source /Users/sunnyjayaraj345/oc-model-manager/lib/session.sh
+source /Users/sunnyjayaraj345/oc-model-manager/lib/scheduler.sh
+source /Users/sunnyjayaraj345/oc-model-manager/lib/doctor.sh
+source /Users/sunnyjayaraj345/oc-model-manager/lib/validate.sh
+probe_model_classify "$1"
+WRAPPER
+	chmod +x "$wrapper_script"
 
-		# Progress logging
-		if [[ ${OCPROBE_VALIDATE_VERBOSE:-0} -eq 1 || ${verbose_mode:-0} -eq 1 ]]; then
-			local status
-			status=$(printf '%s' "$result" | awk -F'\t' '{print $2}')
-			log_info "  [$probed_count/$count] $model → $status"
-		elif [[ $((probed_count % ${OCPROBE_VALIDATE_PROGRESS_INTERVAL:-25})) -eq 0 ]]; then
-			local elapsed
-			elapsed=$(($(date +%s) - start_time))
-			log_info "  Probed $probed_count/$count models for $provider_id (${elapsed}s elapsed)..."
-		fi
-	done <"$models_file"
+	# Run probe_model_classify for each model via xargs
+	# -P1 for sequential, -I{} for replacement
+	xargs -r -P1 -I{} "$wrapper_script" {} <"$models_file" >>"$results_file"
+	rm -f "$wrapper_script"
 
+	# Count skipped models from results
+	local skipped_count
+	skipped_count=$(awk -F'\t' '$2 == "SKIPPED_MODALITY" {count++} END {print count+0}' "$results_file")
 	[[ $skipped_count -gt 0 ]] && log_info "Skipped $skipped_count modality-excluded models for provider $provider_id"
 }
 
@@ -525,22 +529,20 @@ PY
 
 # Verify that the blacklist actually took effect by checking model visibility
 # Returns three counts via global vars: VERIFY_WRITTEN, VERIFY_HIDDEN, VERIFY_STILL_VISIBLE
-# Exit codes: 0=all hidden, 2=some still visible, 1=hard error
+# Exit code stored in VERIFY_EXIT_CODE (0=all hidden, 2=some still visible, 1=hard error)
+# Always returns 0 to avoid bash 5.3 bug with non-zero returns from sourced functions
 verify_blacklist_effect() {
 	local provider_id="$1"
 	local expected_blacklist_file="$2"
 
-	# Get currently visible models for this provider (models not blacklisted)
 	local visible_models
 	visible_models=$(opencode models "$provider_id" 2>/dev/null | sort -u)
 
-	# Read expected blacklist
 	local -a expected_blacklist=()
 	while IFS= read -r model; do
 		[[ -n "$model" ]] && expected_blacklist+=("$model")
 	done <"$expected_blacklist_file"
 
-	# Three buckets
 	VERIFY_WRITTEN=0
 	VERIFY_HIDDEN=0
 	VERIFY_STILL_VISIBLE=0
@@ -549,18 +551,17 @@ verify_blacklist_effect() {
 		VERIFY_WRITTEN=$((VERIFY_WRITTEN + 1))
 		if printf '%s\n' "$visible_models" | grep -qxF "$model"; then
 			VERIFY_STILL_VISIBLE=$((VERIFY_STILL_VISIBLE + 1))
-			log_warn "Blacklist may not have taken effect: $model still visible in picker (likely OpenCode bug #32528)"
 		else
 			VERIFY_HIDDEN=$((VERIFY_HIDDEN + 1))
 		fi
 	done
 
-	# Return exit code based on verification result
 	if [[ $VERIFY_STILL_VISIBLE -eq 0 ]]; then
-		return 0 # All hidden
+		declare -g VERIFY_EXIT_CODE=0
 	else
-		return 2 # Some still visible (likely upstream OpenCode issue #32528)
+		declare -g VERIFY_EXIT_CODE=2
 	fi
+	return 0
 }
 
 # ---- Backup/Restore ----------------------------------------------------------
@@ -851,20 +852,10 @@ PY
 		fi
 	done
 
-	# Three-bucket summary (available for both apply and dry-run modes)
+	# Real counts, accumulated from verify_blacklist_effect during the apply
+	# loop below (apply_mode==1 only). In dry-run these stay 0 — verify
+	# never runs without --apply, so "still_visible" is not a dry-run concept.
 	local total_written=0 total_hidden=0 total_still_visible=0
-	for entry in "${provider_results[@]}"; do
-		IFS=':' read -r provider_id proposed_blacklist_file additions_count removals_count <<<"$entry"
-		local results_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.results.tsv"
-		local w=0 h=0 s=0
-		[[ -f "$proposed_blacklist_file" ]] && w=$(wc -l <"$proposed_blacklist_file" | tr -d ' ')
-		[[ -f "${proposed_blacklist_file}.tentative" ]] && s=$(wc -l <"${proposed_blacklist_file}.tentative" | tr -d ' ')
-		# hidden = written - still_visible (approximate)
-		h=$((w - s))
-		total_written=$((total_written + w))
-		total_hidden=$((total_hidden + h))
-		total_still_visible=$((total_still_visible + s))
-	done
 
 	if [[ $apply_mode -eq 1 && $overall_changes -eq 1 ]]; then
 		trap 'release_lock; cleanup_run_dir' EXIT INT TERM
@@ -888,7 +879,10 @@ PY
 
 			log_info "Verifying blacklist effect..."
 			verify_blacklist_effect "$provider_id" "$proposed_blacklist_file"
-			local verify_exit=$?
+			local verify_exit=$VERIFY_EXIT_CODE
+			total_written=$((total_written + VERIFY_WRITTEN))
+			total_hidden=$((total_hidden + VERIFY_HIDDEN))
+			total_still_visible=$((total_still_visible + VERIFY_STILL_VISIBLE))
 			case $verify_exit in
 			0)
 				log_info "SUCCESS: Blacklist applied and verified for $provider_id (written: $VERIFY_WRITTEN, hidden: $VERIFY_HIDDEN)"
@@ -915,10 +909,7 @@ PY
 
 	# Dry-run mode or no changes: return appropriate exit code
 	if [[ $apply_mode -eq 0 ]]; then
-		if [[ $total_still_visible -gt 0 ]]; then
-			log_info "DRY-RUN SUMMARY: written=$total_written hidden=$total_hidden still_visible=$total_still_visible (likely upstream OpenCode issue #32528)"
-			return 2
-		elif [[ $overall_changes -eq 1 ]]; then
+		if [[ $overall_changes -eq 1 ]]; then
 			log_info "DRY-RUN SUMMARY: written=$total_written hidden=$total_hidden still_visible=0 (changes pending, use --apply to write)"
 			return 1
 		else
