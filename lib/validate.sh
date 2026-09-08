@@ -24,11 +24,6 @@ set -uo pipefail
 : "${OCPROBE_VALIDATE_PROGRESS_INTERVAL:=25}"
 : "${OCPROBE_VALIDATE_LARGE_RUN_THRESHOLD:=200}"
 
-# Validate-local config directory (derived from OCPROBE_OPencode_CONFIG, not from lib/config.sh's OCPROBE_CONFIG_DIR)
-# shellcheck disable=SC2034
-OCPROBE_VALIDATE_CONFIG_DIR="$(dirname "${OCPROBE_OPencode_CONFIG:-~/.config/opencode/opencode.json}")"
-: "${OCPROBE_VALIDATE_CONFIG_DIR:=$(dirname "${OCPROBE_OPencode_CONFIG:-~/.config/opencode/opencode.json}")}"
-
 # ---- Modality Skip Patterns ---------------------------------------------------
 # Local glob matcher — semantics intentionally match policy_glob_match()
 # in lib/policy.sh (case-sensitive, * matches /, ? = one char) but this
@@ -41,18 +36,26 @@ validate_glob_match() {
 }
 
 # is_modality_skip(model_id) — returns 0 if model matches any skip pattern
-# Checks curated defaults at $OCPROBE_VALIDATE_CONFIG_DIR/validate-skip-patterns.txt
+# Checks curated defaults at $OCPROBE_CONFIG_DIR/validate-skip-patterns.txt
 # and optional user file at $OCPROBE_STATE_DIR/validate-skip-patterns-user.txt
 # shellcheck disable=SC2329
 is_modality_skip() {
 	local model_id="$1"
-	local skip_file="$OCPROBE_VALIDATE_CONFIG_DIR/validate-skip-patterns.txt"
+	local skip_file="${OCPROBE_CONFIG_DIR:-}/validate-skip-patterns.txt"
 	local user_skip_file="$OCPROBE_STATE_DIR/validate-skip-patterns-user.txt"
 	local patterns_file
 
+	# Warn once if defaults file is missing (fail-open: skip modality matching for defaults)
+	if [[ ! -f "$skip_file" ]]; then
+		if [[ -z "${OCPROBE_VALIDATE_SKIP_WARNED:-}" ]]; then
+			log_warn "Modality skip defaults not found at $skip_file — SKIPPED_MODALITY will not trigger for default patterns this run (user extension file, if any, still applies)"
+			declare -g OCPROBE_VALIDATE_SKIP_WARNED=1
+		fi
+	fi
+
 	# Build combined patterns file (defaults + user extensions)
 	patterns_file=$(mktemp)
-	cat "$skip_file" >"$patterns_file"
+	[[ -f "$skip_file" ]] && cat "$skip_file" >"$patterns_file"
 	[[ -f "$user_skip_file" ]] && cat "$user_skip_file" >>"$patterns_file"
 
 	# Read patterns into array first to avoid SC2094
@@ -73,7 +76,7 @@ is_modality_skip() {
 }
 
 # Path to skip patterns files (exported for external reference, only when dirs are set)
-[[ -n "${OCPROBE_VALIDATE_CONFIG_DIR:-}" ]] && export OCPROBE_VALIDATE_SKIP_PATTERNS_FILE="${OCPROBE_VALIDATE_CONFIG_DIR}/validate-skip-patterns.txt"
+[[ -n "${OCPROBE_CONFIG_DIR:-}" ]] && export OCPROBE_VALIDATE_SKIP_PATTERNS_FILE="${OCPROBE_CONFIG_DIR}/validate-skip-patterns.txt"
 [[ -n "${OCPROBE_STATE_DIR:-}" ]] && export OCPROBE_VALIDATE_USER_SKIP_PATTERNS_FILE="${OCPROBE_STATE_DIR}/validate-skip-patterns-user.txt"
 
 # Path to opencode auth file (credentials)
