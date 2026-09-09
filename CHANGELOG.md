@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-09-10
+
 ### Added
 - Experimental policy engine scaffold:
   - Schema: `config/policy.schema.json` (version, enabled, auto_apply, never_remove, never_add, providers)
@@ -34,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `verify_blacklist_effect` reports three buckets (written/hidden/still-visible) via globals
 
 ### Fixed
-- `is_modality_skip` guard against unbound `OCPROBE_CONFIG_DIR`
+- Modality skip pattern defaults now correctly resolve via `OCPROBE_CONFIG_DIR` (previously derived from `opencode.json`'s location, which meant default skip patterns silently never loaded on real Homebrew/installed-mode setups); missing defaults file now warns once instead of failing silently
 - `record_validate_history` uses portable millisecond timestamp (python)
 
 ## [3.0.3] - 2026-09-03
