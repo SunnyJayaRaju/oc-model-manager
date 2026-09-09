@@ -242,28 +242,6 @@ See `ocprobe config schema` for full schema.
 
 `ocprobe validate` probes every model offered by each provider that has valid API credentials in `~/.local/share/opencode/auth.json`. Models that respond successfully (`WORKS`) stay visible in OpenCode's model picker; models that fail (timeout, auth error, billing error, not found, or other error) are added to the provider's `blacklist` in `opencode.json`.
 
-### Usage
-
-```bash
-# Dry-run: show what would be blacklisted (exit 0 if no changes, 1 if changes pending)
-ocprobe validate
-
-# Apply changes: write blacklist to opencode.json, create backup, verify effect
-ocprobe validate --apply
-
-# Scope to a single provider
-ocprobe validate --provider openrouter
-
-# Scope to a single model
-ocprobe validate --provider nvidia --model nvidia/meta/llama-4-maverick-17b-128e-instruct
-
-# Machine-readable output
-ocprobe validate --json
-
-# Restore from last validate backup
-ocprobe validate restore
-```
-
 ---
  
 ### Two-Failure Gate
