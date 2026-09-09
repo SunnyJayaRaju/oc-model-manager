@@ -325,7 +325,22 @@ ocprobe validate restore
 - **Progress logging** every 25 models (configurable via `OCPROBE_VALIDATE_PROGRESS_INTERVAL`)
 - **Large-run warning** when catalog exceeds 200 models (configurable via `OCPROBE_VALIDATE_LARGE_RUN_THRESHOLD`)
 - **JSON output** (`--json`) includes `schema_version` for forward compatibility
- 
+
+---
+
+### Classification
+
+Each model is classified as:
+| Status | Meaning |
+|--------|---------|
+| `WORKS` | Model responded with expected output |
+| `TIMEOUT` | Probe exceeded timeout |
+| `AUTH_ERROR` | Invalid/missing API key |
+| `BILLING_ERROR` | Payment required, quota exceeded |
+| `NOT_FOUND` | Model EOL, 404, or gone |
+| `ERROR` | Other error (rate limit, server error, etc.) |
+| `SKIPPED_MODALITY` | Model matched a modality skip pattern (never probed) |
+
 ---
 
 ## Policy (experimental)
