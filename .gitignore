@@ -17,3 +17,4 @@ Thumbs.db
 # ocm validate backups (defensive - default location outside repo)
 validate-backups/
 .opencode.json.backup-*
+.serena/
