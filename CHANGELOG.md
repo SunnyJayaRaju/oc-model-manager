@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-09-10
+
 ### Added
 - Experimental policy engine scaffold:
   - Schema: `config/policy.schema.json` (version, enabled, auto_apply, never_remove, never_add, providers)
@@ -34,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `verify_blacklist_effect` reports three buckets (written/hidden/still-visible) via globals
 
 ### Fixed
-- `is_modality_skip` guard against unbound `OCPROBE_CONFIG_DIR`
+- Modality skip pattern defaults now correctly resolve via `OCPROBE_CONFIG_DIR` (previously derived from `opencode.json`'s location, which meant default skip patterns silently never loaded on real Homebrew/installed-mode setups); missing defaults file now warns once instead of failing silently
 - `record_validate_history` uses portable millisecond timestamp (python)
 
 ## [3.0.3] - 2026-09-03
@@ -102,10 +104,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.4] - 2026-08-29
 
 ### Fixed
-- Homebrew formula update job now properly skips all steps when HOMEBREW_TAP_TOKEN not set
+- Homebrew job token check using step output instead of invalid job-level env context
 
 ### Changed
-- CI: Homebrew job uses step-level conditional outputs for graceful skip
+- CI: Fixed workflow YAML parse error caused by `env.HOMEBREW_TAP_TOKEN` in job-level `if`
+
+## [2.0.1] - 2026-08-28
+
+### Fixed
+- Homebrew release workflow now fails gracefully when tap token/repo not configured
+
+### Changed
+- CI: Homebrew job skips entirely (green) when HOMEBREW_TAP_TOKEN not set
+- Updated `softprops/action-gh-release` from v1 to v2
 
 ## [2.0.1] - 2026-08-28
 
@@ -147,7 +158,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Architecture documentation (ADRs, runbooks)
 
 ### Changed
-- **BREAKING**: Replaced `oc-model-manager` and `oc-model-audit.sh` with unified `ocm` CLI
+- **BREAKING**: Replaced `ocm` CLI with subcommands (audit, check, status, alerts, probe, watch, scheduler, session, config, doctor)
 - **BREAKING**: Config moved from env vars to YAML file
 - **BREAKING**: State directory changed to `~/.local/state/ocm/`
 - Probe engine now uses constants for prompt/title (single source of truth)
