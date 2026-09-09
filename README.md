@@ -242,41 +242,6 @@ See `ocprobe config schema` for full schema.
 
 `ocprobe validate` probes every model offered by each provider that has valid API credentials in `~/.local/share/opencode/auth.json`. Models that respond successfully (`WORKS`) stay visible in OpenCode's model picker; models that fail (timeout, auth error, billing error, not found, or other error) are added to the provider's `blacklist` in `opencode.json`.
 
-### Usage
-
-```bash
-# Dry-run: show what would be blacklisted (exit 0 if no changes, 1 if changes pending)
-ocprobe validate
-
-# Apply changes: write blacklist to opencode.json, create backup, verify effect
-ocprobe validate --apply
-
-# Scope to a single provider
-ocprobe validate --provider openrouter
-
-# Scope to a single model
-ocprobe validate --provider nvidia --model nvidia/meta/llama-4-maverick-17b-128e-instruct
-
-# Machine-readable output
-ocprobe validate --json
-
-# Restore from last validate backup
-ocprobe validate restore
-```
-
-### Classification
- 
-Each model is classified as:
-| Status | Meaning |
-|--------|---------|
-| `WORKS` | Model responded with expected output |
-| `TIMEOUT` | Probe exceeded timeout |
-| `AUTH_ERROR` | Invalid/missing API key |
-| `BILLING_ERROR` | Payment required, quota exceeded |
-| `NOT_FOUND` | Model EOL, 404, or gone |
-| `ERROR` | Other error (rate limit, server error, etc.) |
-| `SKIPPED_MODALITY` | Model matched a modality skip pattern (never probed) |
- 
 ---
  
 ### Two-Failure Gate
@@ -304,7 +269,7 @@ If a provider's `AUTH_ERROR` rate exceeds `OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD
 ### Usage
  
 ```bash
-# Dry-run: show what would be blacklisted (exit 0 if all would be hidden, 2 if some still visible)
+# Dry-run: show what would be blacklisted (exit 0 if no changes, 1 if changes pending)
 ocprobe validate
  
 # Apply changes: write blacklist to opencode.json, create backup, verify effect
@@ -333,13 +298,26 @@ ocprobe validate restore
 - **Fresh every run** — no cached/stale blacklisting; every run re-probes all models
 - **Creates backup on `--apply`** — timestamped backup in `~/.local/state/ocprobe/validate-backups/`
 - **Verifies effect** — re-queries `opencode models` after apply; warns if OpenCode bug #32528 prevents blacklist from taking effect
-- **Exit codes** — 0 = success (all hidden or no changes); 2 = partial (some STILL_VISIBLE); 1 = error
+- **Exit codes** — 0 = success (all hidden or no changes); 2 = partial (some STILL_VISIBLE); 1 = error or dry-run with pending changes
 - **Verbose mode** (`--verbose`) shows per-model status during probing
 - **Progress logging** every 25 models (configurable via `OCPROBE_VALIDATE_PROGRESS_INTERVAL`)
 - **Large-run warning** when catalog exceeds 200 models (configurable via `OCPROBE_VALIDATE_LARGE_RUN_THRESHOLD`)
 - **JSON output** (`--json`) includes `schema_version` for forward compatibility
- 
+
+---
+
 ### Classification
+
+Each model is classified as:
+| Status | Meaning |
+|--------|---------|
+| `WORKS` | Model responded with expected output |
+| `TIMEOUT` | Probe exceeded timeout |
+| `AUTH_ERROR` | Invalid/missing API key |
+| `BILLING_ERROR` | Payment required, quota exceeded |
+| `NOT_FOUND` | Model EOL, 404, or gone |
+| `ERROR` | Other error (rate limit, server error, etc.) |
+| `SKIPPED_MODALITY` | Model matched a modality skip pattern (never probed) |
 
 ---
 

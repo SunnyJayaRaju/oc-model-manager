@@ -1,3 +1,8 @@
+# STALE — NOT THE LIVE FORMULA. The real formula ocprobe uses is at
+# https://github.com/SunnyJayaRaju/homebrew-ocprobe/blob/main/Formula/ocprobe.rb
+# This file is out of date (still references v2.0.0) and must not
+# be used or synced automatically.
+
 class Ocprobe < Formula
   desc "OpenCode Model Probe - Enterprise-grade model catalog lifecycle management"
   homepage "https://github.com/SunnyJayaRaju/oc-model-manager"

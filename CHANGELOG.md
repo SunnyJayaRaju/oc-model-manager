@@ -24,9 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Three-bucket verification**: `verify_blacklist_effect` returns WRITTEN/HIDDEN/STILL_VISIBLE; exit codes 0=all hidden, 2=some still visible, 1=hard error
   - **Dry-run exit codes**: 0=all hidden/nothing to do, 2=some still visible, 1=hard error
   - **UX improvements**: `--verbose` flag, progress logging (every 25 models/60s), large-run warning (>200 models), `--json` includes `schema_version`
-  - **Modality skip list**: `config/validate-skip-patterns.txt` + user file at `~/.local/state/ocprobe/validate-skip-patterns-user.txt`; matched models get `SKIPPED_MODALITY` status
   - **Per-provider `auto_apply`** accepted by schema but not yet enforced (global only for now)
-  - **Integration tests** in `test/integration/validate_wiring.bats` for exclusion, protection, mass-removal guard, dry-run, no-op without policy
+  - **Integration tests** in `test/integration/validate_wiring.bats` for apply-merge-by-model-id and cmd_validate --apply exit-code-2 (STILL_VISIBLE)
 
 ### Changed
 - Disabled by default; policy engine now active in audit/check when `enabled: true`
@@ -35,9 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `verify_blacklist_effect` reports three buckets (written/hidden/still-visible) via globals
 
 ### Fixed
-- `load_config` now derives `OCPROBE_CONFIG_DIR` from `OCPROBE_OPencode_CONFIG`
 - `is_modality_skip` guard against unbound `OCPROBE_CONFIG_DIR`
 - `record_validate_history` uses portable millisecond timestamp (python)
+
+## [3.0.3] - 2026-09-03
 
 ### Fixed
 - Global flag parsing: flags now work correctly regardless of position (`ocprobe audit --quick` and `ocprobe --quick audit` both work)
