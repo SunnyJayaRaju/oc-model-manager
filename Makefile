@@ -49,6 +49,9 @@ $(PACKAGE): $(DIST_DIR)
 	@echo "Package: $(PACKAGE)"
 
 $(DIST_DIR):
+	@if [ ! -f docs/ocprobe.1 ]; then \
+		echo "WARNING: docs/ocprobe.1 (man page) not found — run 'make man' first (requires pandoc) if you need it in this build. Packaging will continue without it." >&2; \
+	fi
 	@mkdir -p $(DIST_DIR)
 	@cp -r bin lib config VERSION CHANGELOG.md LICENSE README.md CONTRIBUTING.md docs $(DIST_DIR)/
 	# Normalize timestamps for reproducible builds
