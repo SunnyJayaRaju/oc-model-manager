@@ -51,7 +51,7 @@ try:
         schema = json.load(f)
 except (json.JSONDecodeError, OSError) as e:
     print(f"SCHEMA_ERROR: {e}", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(3)
 
 try:
     jsonschema.validate(instance=cfg, schema=schema)
@@ -115,7 +115,7 @@ try:
         schema = json.load(f)
 except (json.JSONDecodeError, OSError) as e:
     print(f"SCHEMA_ERROR: {e}", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(3)
 
 try:
     jsonschema.validate(instance=cfg, schema=schema)

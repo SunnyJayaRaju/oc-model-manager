@@ -93,7 +93,7 @@ PY
 # Fetch full catalog (with caching)
 fetch_catalog() {
 	local cache_file="$OCPROBE_STATE_DIR/catalog-cache.json"
-	local cache_age=$(($(now_s) - $(stat -f %m "$cache_file" 2>/dev/null || echo 0)))
+	local cache_age=$(($(now_s) - $(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)))
 
 	if [[ $OCPROBE_FORCE_REFRESH -eq 1 || ! -s "$cache_file" || $cache_age -ge $((OCPROBE_CACHE_TTL_HOURS * 3600)) ]]; then
 		log_info "[1/7] Fetching full catalog..."
@@ -211,7 +211,7 @@ probe_batch() {
 	count=$(wc -l <"$file" | tr -d ' ')
 	[[ $count -eq 0 ]] && return 0
 
-	log_info "[4/7] Probing $count $label models (timeout ${secs}s, parallel $OCPROBE_MAX_PARALLEL)..."
+	log_info "[4/7] Probing $count $label models (timeout ${secs}s, sequential)..."
 
 	# Use retry logic for each model
 	local failed=0

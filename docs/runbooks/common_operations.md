@@ -74,6 +74,89 @@ ocprobe scheduler install
 ```
 Installs systemd user timer.
 
+## Validate (Blacklist Management)
+
+### Dry-Run (Show Proposed Changes)
+```bash
+ocprobe validate
+```
+- Probes all models for configured providers
+- Shows per-provider diff of proposed blacklist additions/removals
+- Exit codes: 0 = no changes, 1 = changes pending, 2 = error
+- Does NOT modify opencode.json
+
+### Apply (Write Blacklist, Verify Effect)
+```bash
+ocprobe validate --apply
+```
+- Same probing as dry-run
+- Creates timestamped backup of opencode.json
+- Writes blacklist to opencode.json (merge-by-model-id, preserves unprobed entries)
+- Verifies effect by re-querying opencode models picker
+- Exit codes: 0 = all hidden, 2 = some STILL_VISIBLE (likely upstream OpenCode issue #32528), 1 = error
+
+### Scope to Single Provider/Model
+```bash
+ocprobe validate --provider openrouter
+ocprobe validate --provider nvidia --model nvidia/meta/llama-4-maverick-17b-128e-instruct
+```
+
+### Verbose / JSON Output
+```bash
+ocprobe validate --verbose
+ocprobe validate --json
+```
+
+### Restore from Backup
+```bash
+ocprobe validate restore
+```
+- Reverts opencode.json to last validate backup
+- Verifies restored config matches backup
+
+### Exit Codes Summary
+| Code | Meaning |
+|------|---------|
+| 0 | Success: all hidden or no changes |
+| 1 | Error, or dry-run with pending changes |
+| 2 | Partial: some STILL_VISIBLE (blacklist written but picker shows model) |
+
+### Modality Skip List
+Models matching patterns in `share/ocprobe/validate-skip-patterns.txt` (installed) or `~/.local/state/ocprobe/validate-skip-patterns-user.txt` (user override) are never probed, receive `SKIPPED_MODALITY` status.
+
+### AUTH_ERROR Provider-Wide Abort
+If a provider's AUTH_ERROR rate exceeds 40% (configurable via `OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD_PCT`), the provider is skipped entirely — no models probed, no blacklist changes.
+
+## Policy (Experimental, Disabled by Default)
+
+### Show Current Policy
+```bash
+ocprobe policy show
+```
+
+### Validate Policy File
+```bash
+ocprobe policy validate
+```
+
+### Print Policy Path
+```bash
+ocprobe policy path
+```
+
+### Initialize Scaffold
+```bash
+ocprobe policy init
+```
+
+### Dry-Run (Show Candidates & Exclusions)
+```bash
+ocprobe policy dry-run
+```
+Shows candidates & exclusions without probing or applying. Policy never applies to validate command.
+
+---
+
 ## Session Management
 
 ### List Sessions

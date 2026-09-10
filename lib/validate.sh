@@ -86,23 +86,50 @@ OCPROBE_OPencode_AUTH="${OCPROBE_OPencode_AUTH:-$HOME/.local/share/opencode/auth
 # SEPARATE from probe-history.jsonl (audit/check's file). Never read or write
 # probe-history.jsonl from validate.sh.
 
-# load_validate_history() — populates VALIDATE_FAIL_COUNT
+# load_validate_history() — populates VALIDATE_FAIL_COUNT from validate-history.jsonl
+# For each model, reconstructs consecutive non-WORKS streak from end of its history:
+# - WORKS → streak = 0 (resets)
+# - EOL / NOT_FOUND → streak = 2 (confirmed immediately)
+# - Other non-WORKS → streak += 1 (capped at 2)
 # Uses safe_key pattern (model with / replaced by _) same as lib/models.sh
 load_validate_history() {
 	local -n fail_count=$1
 
 	[[ -f "$OCPROBE_STATE_DIR/validate-history.jsonl" ]] || return 0
 
-	local line
+	# Process history in order to build per-model streak
+	# We use a temporary associative array to track per-model state
+	declare -A local_counts=()
+
+	local line model status
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
-		local model status
 		model=$(printf '%s' "$line" | awk '{print $1}')
 		status=$(printf '%s' "$line" | awk '{print $2}')
 		[[ -n "$model" && -n "$status" ]] || continue
+
 		local safe_key="${model//\//_}"
-		VALIDATE_FAIL_COUNT["$safe_key"]="${fail_count[$safe_key]:-0}"
+		case "$status" in
+		WORKS)
+			# Success resets the streak
+			local_counts["$safe_key"]=0
+			;;
+		EOL | NOT_FOUND)
+			# Terminal failures = confirmed (streak 2)
+			local_counts["$safe_key"]=2
+			;;
+		*)
+			# Other non-WORKS failures: increment streak, capped at 2
+			local current="${local_counts[$safe_key]:-0}"
+			local_counts["$safe_key"]=$(( current < 2 ? current + 1 : 2 ))
+			;;
+		esac
 	done <"$OCPROBE_STATE_DIR/validate-history.jsonl"
+
+	# Copy to the passed nameref array
+	for k in "${!local_counts[@]}"; do
+		fail_count["$k"]="${local_counts[$k]}"
+	done
 }
 
 # record_validate_history(model, status) — append one line, then prune_jsonl
@@ -120,12 +147,13 @@ record_validate_history() {
 
 # ---- Validate Classification ---------------------------------------------------
 # generate_validate_classification() — two-consecutive-failure state machine
-# For each non-WORKS, non-SKIPPED_MODALITY model in results_file:
-#   - EOL or NOT_FOUND (validate's mapping) → CONFIRMED immediately
+# For each model in results_file (including WORKS and SKIPPED_MODALITY):
+#   - WORKS → reset count to 0, record history if count was > 0
+#   - SKIPPED_MODALITY → no-op for gate
+#   - EOL / NOT_FOUND → CONFIRMED immediately
 #   - Other non-WORKS → check VALIDATE_FAIL_COUNT:
 #       0 (first time) → TENTATIVE, record failure, do NOT add to blacklist
 #       >=1 (second consecutive) → CONFIRMED, add to blacklist
-#   - WORKS → if VALIDATE_FAIL_COUNT > 0, record WORKS to reset count
 # Output: proposal file (CONFIRMED only), tentative_file (TENTATIVE only)
 generate_validate_classification() {
 	local provider_id="$1"
@@ -139,6 +167,7 @@ generate_validate_classification() {
 	[[ -s "$results_file" ]] || return 0
 
 	# Load history for this run
+	# shellcheck disable=SC2034  # VALIDATE_FAIL_COUNT is a global associative array used by caller
 	declare -gA VALIDATE_FAIL_COUNT=()
 	load_validate_history VALIDATE_FAIL_COUNT
 
@@ -166,7 +195,9 @@ generate_validate_classification() {
 			;;
 		*)
 			# Other failures: TIMEOUT, AUTH_ERROR, BILLING_ERROR, ERROR, UNCLEAR
+			# shellcheck disable=SC2178,SC2128
 			local fail_count="${VALIDATE_FAIL_COUNT[$safe_key]:-0}"
+			# shellcheck disable=SC2128
 			if [[ $fail_count -eq 0 ]]; then
 				# First failure → TENTATIVE
 				VALIDATE_FAIL_COUNT["$safe_key"]=1
@@ -180,7 +211,7 @@ generate_validate_classification() {
 			fi
 			;;
 		esac
-	done < <(awk -F'\t' '$2 != "WORKS" && $2 != "SKIPPED_MODALITY" {print $1 "\t" $2}' "$results_file")
+	done <"$results_file"
 }
 
 # Path to opencode auth file (credentials)
@@ -366,8 +397,9 @@ probe_model_classify() {
 	fi
 
 	# Auth detection on raw response (if status not already AUTH_ERROR)
+	# Only treat explicit auth failures as AUTH_ERROR; rate limits / quota = BILLING_ERROR
 	if [[ "$status" != "AUTH_ERROR" ]]; then
-		if printf '%s' "$raw_response" | grep -Eqi '401|403|Unauthorized|invalid_api_key|invalid api key|authentication failed|auth failed|quota exceeded|rate limit'; then
+		if printf '%s' "$raw_response" | grep -Eqi '401|403|Unauthorized|invalid_api_key|invalid api key|authentication failed|auth failed'; then
 			status="AUTH_ERROR"
 		fi
 	fi

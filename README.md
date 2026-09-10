@@ -56,7 +56,15 @@ $ ocprobe check --quick
 # Continuous monitoring
 $ ocprobe watch              # Runs check + alerts every 6h, never auto-applies
 $ ocprobe scheduler install  # Install as launchd (macOS) or systemd (Linux) service
+
+# Validate (provider/model blacklist management)
+$ ocprobe validate                # Dry-run: show proposed blacklist changes (exit 1 if pending)
+$ ocprobe validate --apply        # Apply: write blacklist, create backup, verify effect
+
+# Policy (experimental, disabled by default)
+$ ocprobe policy show             # Show current policy (or note if missing)
 ```
+
 
 
 ---
