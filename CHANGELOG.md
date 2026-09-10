@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- Default modality skip patterns tightened: removed over-broad matchers (*function-calling*, *plugin*, *tool-use*) that incorrectly skipped chat models with tool-use capabilities
+
+### Changed
+- README / man page structure and command surface parity: policy subcommands documented, validate --verbose added, modality skip path wording corrected (defaults from install config dir, user override at ~/.local/state/ocprobe/validate-skip-patterns-user.txt)
 
 ## [3.1.0] - 2026-09-10
 

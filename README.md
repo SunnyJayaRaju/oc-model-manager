@@ -56,14 +56,8 @@ $ ocprobe check --quick
 # Continuous monitoring
 $ ocprobe watch              # Runs check + alerts every 6h, never auto-applies
 $ ocprobe scheduler install  # Install as launchd (macOS) or systemd (Linux) service
-
-# Validate (provider/model blacklist management)
-$ ocprobe validate                # Dry-run: show proposed blacklist changes (exit 1 if pending)
-$ ocprobe validate --apply        # Apply: write blacklist, create backup, verify effect
-
-# Policy (experimental, disabled by default)
-$ ocprobe policy show             # Show current policy (or note if missing)
 ```
+
 
 ---
 
@@ -118,15 +112,13 @@ cp "ocprobe-${VERSION}/VERSION" ~/.local/share/ocprobe/
 
 ```bash
 # One-time setup
-ocprobe config show          # View current configuration
-ocprobe doctor               # Verify installation (config, DB, auth, disk)
+$ ocprobe config show          # View current configuration
+$ ocprobe doctor               # Verify installation (config, DB, auth, disk)
 
 # Daily workflow
-ocprobe audit                # Full cycle: diff → probe → confirm → apply
-ocprobe check                # Dry-run only (exit 1 if changes pending)
-ocprobe status               # Show whitelisted models + recent probe results
-
-# Continuous monitoring
+$ ocprobe audit                # Full cycle: diff → probe → confirm → apply
+$ ocprobe check                # Dry-run only (exit 1 if changes pending)
+$ ocprobe status               # Show whitelisted models + recent probe results
 
 # Validate (provider/model blacklist management)
 $ ocprobe validate                # Dry-run: show proposed blacklist changes (exit 1 if pending)
@@ -134,13 +126,15 @@ $ ocprobe validate --apply        # Apply: write blacklist, create backup, verif
 
 # Policy (experimental, disabled by default)
 $ ocprobe policy show             # Show current policy (or note if missing)
-ocprobe watch                # Check + alert on interval (never auto-applies)
-ocprobe scheduler install    # Install as background service (launchd/systemd)
+
+# Continuous monitoring
+$ ocprobe watch                # Check + alert on interval (never auto-applies)
+$ ocprobe scheduler install    # Install as background service (launchd/systemd)
 
 # Ad-hoc
-ocprobe probe openai/gpt-4   # Test a single model now
-ocprobe alerts               # View alert history
-ocprobe session backup ses_abc  # Backup session to SQL dump
+$ ocprobe probe openai/gpt-4   # Test a single model now
+$ ocprobe alerts               # View alert history
+$ ocprobe session backup ses_abc  # Backup session to SQL dump
 ```
 
 ---
@@ -155,7 +149,8 @@ ocprobe session backup ses_abc  # Backup session to SQL dump
 | `alerts [--clear]` | Show/clear recorded alerts |
 | `probe <model>` | Test one model now |
 | `watch` | Run check+alert on interval (never auto-applies) |
-| `validate [--provider <id>] [--model <id>] [--apply] [--json]` | Probe all models for configured providers, blacklist failures |
+| `validate [--provider <id>] [--model <id>] [--apply] [--verbose] [--json]` | Probe all models for configured providers, blacklist failures |
+| `policy [show|validate|path|init|dry-run]` | Experimental, off by default; audit/check only (never validate) |
 | `validate restore` | Revert opencode.json from last validate backup |
 | `scheduler [install\|uninstall\|status]` | Manage background scheduler |
 | `session [list\|backup\|restore\|cleanup]` | Session management |
@@ -249,6 +244,8 @@ See `ocprobe config schema` for full schema.
 - **Health Checks** — `doctor` command validates entire stack (config, DB, auth, disk)
 - **Observability** — Structured JSON logging (`--json`), structured output for observability
 - **Configuration** — YAML config with JSON Schema validation (`ocprobe config validate`)
+- **Validate / Blacklist Management** — Two-failure gate, modality skip list, AUTH_ERROR provider-wide abort, three-bucket verify (WRITTEN/HIDDEN/STILL_VISIBLE)
+- **Experimental Policy Engine** — Declarative rules for audit/check; off by default
 
 ---
 
@@ -270,7 +267,7 @@ Non-terminal failures (TIMEOUT, AUTH_ERROR, BILLING_ERROR, ERROR, UNCLEAR) requi
  
 ### Modality Skip List
  
-Models matching patterns in `~/.config/ocprobe/validate-skip-patterns.txt` (or user file at `~/.local/state/ocprobe/validate-skip-patterns-user.txt`) are **never probed** and receive `SKIPPED_MODALITY` status. Default patterns cover embeddings, reranking, image/audio/video generation, moderation, etc.
+Models matching patterns in the default patterns file (installed at `share/ocprobe/validate-skip-patterns.txt` under the install prefix, resolved via `OCPROBE_CONFIG_DIR`) or the optional user override at `~/.local/state/ocprobe/validate-skip-patterns-user.txt` are **never probed** and receive `SKIPPED_MODALITY` status. Default patterns cover embeddings, reranking, image/audio/video generation, moderation, etc.
  
 ---
  

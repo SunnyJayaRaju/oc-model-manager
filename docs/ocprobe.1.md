@@ -198,7 +198,7 @@ Non-terminal failures (TIMEOUT, AUTH_ERROR, BILLING_ERROR, ERROR, UNCLEAR) requi
 
 ### Modality Skip List
 
-Models matching patterns in `~/.config/ocprobe/validate-skip-patterns.txt` (or user file at `~/.local/state/ocprobe/validate-skip-patterns-user.txt`) are **never probed** and receive SKIPPED_MODALITY status. Default patterns cover embeddings, reranking, image/audio/video generation, moderation, etc.
+Models matching patterns in the default patterns file (installed at `share/ocprobe/validate-skip-patterns.txt` under the install prefix, resolved via `OCPROBE_CONFIG_DIR`) or the optional user override at `~/local/state/ocprobe/validate-skip-patterns-user.txt` are **never probed** and receive SKIPPED_MODALITY status. Default patterns cover embeddings, reranking, image/audio/video generation, moderation, etc.
 
 ### AUTH_ERROR Provider-Wide Abort
 

@@ -41,6 +41,3 @@
 
 # Specialized / non-chat
 *code-interpreter*
-*tool-use*
-*function-calling*
-*plugin*
