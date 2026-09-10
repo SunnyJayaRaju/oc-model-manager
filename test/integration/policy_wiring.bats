@@ -67,18 +67,64 @@ EOF
 	export OCPROBE_STATE_DIR=$(mktemp -d /tmp/ocprobe-test-state-XXXXXX)
 	export OCPROBE_RUN_DIR=$(mktemp -d /tmp/ocprobe-test-run-XXXXXX)
 	export OCPROBE_LOG_LEVEL=error
-	export OCPROBE_LOG_FILE="$OCPROBE_RUN_DIR/audit.log"
-	export OCPROBE_RESULTS_FILE="$OCPROBE_RUN_DIR/results.tsv"
-	export OCPROBE_LOCK_DIR="$OCPROBE_STATE_DIR/.lock"
-	mkdir -p "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR"
+	# Mock opencode to return a catalog with the never_add model as NEW
+	local mock_dir
+	mock_dir=$(mktemp -d /tmp/ocprobe-mock-XXXXXX)
+	cat >"$mock_dir/opencode" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  models)
+    cat <<'MODELS'
+openai/gpt-4
+openai/gpt-3.5-turbo
+anthropic/claude-3
+google/gemini-pro
+MODELS
+    ;;
+  --version)
+    echo "opencode 0.1.0-test"
+    ;;
+esac
+EOF
+	chmod +x "$mock_dir/opencode"
 
-	# Create a minimal config.yaml for ocprobe
+	# Mock timeout
+	cat >"$mock_dir/timeout" <<'EOF'
+#!/usr/bin/env bash
+if [[ $# -lt 2 ]]; then
+  echo "Usage: timeout SECONDS COMMAND [ARGS...]" >&2
+  exit 1
+fi
+shift
+exec "$@"
+EOF
+	chmod +x "$mock_dir/timeout"
+
+	# Create a valid opencode.json with whitelist
+	local opencode_json
+	opencode_json=$(mktemp /tmp/ocprobe-test-opencode-XXXXXX.json)
+	cat >"$opencode_json" <<'EOF'
+{
+  "provider": {
+    "test-provider": {
+      "whitelist": [
+        "openai/gpt-4",
+        "openai/gpt-3.5-turbo",
+        "anthropic/claude-3",
+        "google/gemini-pro"
+      ]
+    }
+  }
+}
+EOF
+
+	# Create a minimal config.yaml for ocprobe with the dynamic opencode_json path
 	local config_yaml
 	config_yaml=$(mktemp /tmp/ocprobe-test-config-XXXXXX.yaml)
-	cat >"$config_yaml" <<'EOF'
+	cat >"$config_yaml" <<EOF
 version: 1
 opencode:
-  config_path: "/tmp/test_opencode.json"
+  config_path: "$opencode_json"
   db_path: "/tmp/test_state/opencode.db"
 probe:
   timeout_new: 45
@@ -114,24 +160,6 @@ logging:
   level: error
   format: text
   file_enabled: false
-EOF
-
-	# Create a valid opencode.json with whitelist
-	local opencode_json
-	opencode_json=$(mktemp /tmp/ocprobe-test-opencode-XXXXXX.json)
-	cat >"$opencode_json" <<'EOF'
-{
-  "provider": {
-    "test-provider": {
-      "whitelist": [
-        "openai/gpt-4",
-        "openai/gpt-3.5-turbo",
-        "anthropic/claude-3",
-        "google/gemini-pro"
-      ]
-    }
-  }
-}
 EOF
 
 	# Run compute_diff with the mock
