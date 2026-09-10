@@ -180,6 +180,7 @@ EOF
 
 	# Run the functions
 	load_config
+	export OCPROBE_OPencode_CONFIG
 	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
 	load_policy
 	policy_write_never_remove_file
