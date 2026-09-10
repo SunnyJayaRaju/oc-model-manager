@@ -19,6 +19,7 @@ By participating in this project, you agree to abide by our Code of Conduct:
 - jq
 - sqlite3
 - bats (for testing)
+- pandoc (optional, for generating man page with `make man`)
 
 ### Development Setup
 
@@ -31,7 +32,17 @@ make dev-install
 This will:
 1. Build the package
 2. Install to `~/.local/bin/ocprobe`
-3. Run tests to verify everything works
+
+To verify the installation works correctly, run the test suite separately:
+```bash
+make test
+```
+
+For a complete release-equivalent local build including the man page:
+```bash
+make man    # requires pandoc
+make build  # packages with man page if present
+```
 
 ### Running Tests
 
@@ -114,13 +125,9 @@ Types:
 4. Push tag: `git push origin v2.0.1`
 5. GitHub Actions will build and release automatically
 
-## Architecture
-
-See [ARCHITECTURE.md](docs/architecture.md) for detailed architecture documentation.
-
 ## Security
 
-- Report security vulnerabilities privately to security@oc-model-manager.org
+- Report security vulnerabilities via [SECURITY.md](SECURITY.md)
 - Do not commit secrets or credentials
 - Follow secure coding practices
 
