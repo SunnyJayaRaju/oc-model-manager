@@ -121,8 +121,8 @@ Types:
 
 1. Update VERSION file
 2. Update CHANGELOG.md
-3. Create git tag: `git tag v2.0.1`
-4. Push tag: `git push origin v2.0.1`
+3. Create git tag: `git tag vX.Y.Z`
+4. Push tag: `git push origin vX.Y.Z`
 5. GitHub Actions will build and release automatically
 
 ## Security

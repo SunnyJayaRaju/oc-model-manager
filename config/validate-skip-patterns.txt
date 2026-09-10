@@ -15,17 +15,15 @@
 # Text-to-speech / audio generation
 *tts*
 *speech*
-*audio*
 *voice*
 *whisper*
 
 # Image generation / vision
-*image*
-*vision*
 *dall-e*
 *midjourney*
 *stable-diffusion*
 *sdxl*
+*image-gen*
 
 # Video generation
 *video*
@@ -41,14 +39,8 @@
 *guard*
 *content-filter*
 
-# Reasoning / chain-of-thought (often internal, not directly callable)
-*reasoning*
-*thinking*
-*o1*
-*o3*
-
 # Specialized / non-chat
 *code-interpreter*
-*tools*
+*tool-use*
 *function-calling*
 *plugin*

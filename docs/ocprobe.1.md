@@ -1,6 +1,6 @@
 % OCPROBE(1) General Commands Manual
 % Sunny Jayaraj
-% August 2026
+% September 2026
 
 # NAME
 
@@ -141,11 +141,32 @@ Manage configuration.
 **path**
 : Show config file path.
 
+## policy
+
+Declarative rule engine for the audit/check pipeline. **Experimental, disabled by default** — a missing file or `enabled: false` is a true no-op. Policy never applies to the validate command.
+
+    ocprobe policy [show|validate|path|init|dry-run]
+
+**show**
+: Display current policy file (or note if missing).
+
+**validate**
+: Validate policy file against JSON schema.
+
+**path**
+: Print resolved policy file path.
+
+**init**
+: Create a scaffold policy file (disabled) at default location.
+
+**dry-run**
+: Show candidates & exclusions without probing or applying.
+
 ## validate
 
 Probe all models for providers with valid credentials and manage provider blacklists.
 
-    ocprobe validate [--provider <id>] [--model <id>] [--apply] [--json]
+    ocprobe validate [--provider <id>] [--model <id>] [--apply] [--verbose] [--json]
     ocprobe validate restore
 
 **--provider** <id>
@@ -157,13 +178,48 @@ Probe all models for providers with valid credentials and manage provider blackl
 **--apply**
 : Apply blacklist changes to opencode.json (default: dry-run).
 
+**--verbose**
+: Show per-model detail during probing.
+
 **--json**
-: Output JSON (machine-readable).
+: Output JSON (machine-readable), includes schema_version.
 
 **restore**
 : Restore opencode.json from last validate backup.
 
-Exits 0 on success, 1 if changes pending (dry-run) or error, 2 on validation error.
+### Two-Failure Gate
+
+Non-terminal failures (TIMEOUT, AUTH_ERROR, BILLING_ERROR, ERROR, UNCLEAR) require **two consecutive failures** before a model is added to the blacklist:
+
+- First failure → TENTATIVE (not blacklisted, surfaced for review)
+- Second consecutive failure → CONFIRMED (added to blacklist)
+- WORKS at any point resets the failure counter
+- EOL / NOT_FOUND → CONFIRMED immediately (terminal)
+
+### Modality Skip List
+
+Models matching patterns in `~/.config/ocprobe/validate-skip-patterns.txt` (or user file at `~/.local/state/ocprobe/validate-skip-patterns-user.txt`) are **never probed** and receive SKIPPED_MODALITY status. Default patterns cover embeddings, reranking, image/audio/video generation, moderation, etc.
+
+### AUTH_ERROR Provider-Wide Abort
+
+If a provider's AUTH_ERROR rate exceeds OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD_PCT (default 40%), the provider is **skipped entirely** — no models are probed, no blacklist changes are made. This prevents blacklisting models due to credential/quota issues.
+
+### Merge-by-ID Blacklist Apply
+
+Blacklist changes merge by model id; they never wipe unprobed/untouched entries.
+
+### Three-Bucket Verify
+
+On --apply, after writing the blacklist, ocprobe re-queries the OpenCode picker and reports per-provider:
+- WRITTEN: models successfully added to blacklist
+- HIDDEN: blacklisted models no longer visible in picker
+- STILL_VISIBLE: blacklisted models still visible (likely upstream OpenCode issue #32528)
+
+### Exit Codes
+
+- 0 = success (all hidden or no changes)
+- 1 = error, or dry-run with pending changes
+- 2 = partial (some STILL_VISIBLE)
 
 ## doctor
 
@@ -256,16 +312,25 @@ Backup session:
 Health check:
     ocprobe doctor
 
+Validate dry-run (show proposed blacklist changes):
+    ocprobe validate
+
+Validate apply (write blacklist, create backup, verify effect):
+    ocprobe validate --apply
+
+Policy dry-run (show candidates & exclusions, experimental):
+    ocprobe policy dry-run
+
 # EXIT STATUS
 
 0
 : Success.
 
 1
-: Error, user abort, or changes pending (check command).
+: Error, user abort, or changes pending (check command, validate dry-run).
 
 2
-: Configuration or validation error.
+: Configuration or validation error, or validate partial (STILL_VISIBLE).
 
 # SEE ALSO
 
