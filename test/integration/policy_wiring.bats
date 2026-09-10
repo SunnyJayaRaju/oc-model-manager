@@ -72,6 +72,81 @@ EOF
 	export OCPROBE_LOCK_DIR="$OCPROBE_STATE_DIR/.lock"
 	mkdir -p "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR"
 
+	# Create a minimal config.yaml for ocprobe
+	local config_yaml
+	config_yaml=$(mktemp /tmp/ocprobe-test-config-XXXXXX.yaml)
+	cat >"$config_yaml" <<'EOF'
+version: 1
+opencode:
+  config_path: "/tmp/test_opencode.json"
+  db_path: "/tmp/test_state/opencode.db"
+probe:
+  timeout_new: 45
+  timeout_whitelist: 30
+  max_parallel: 4
+  prompt: "Reply with exactly: OK"
+  title_prefix: "ocprobe-validate"
+catalog:
+  cache_ttl_hours: 24
+  force_refresh: false
+scheduler:
+  enabled: false
+  interval_seconds: 21600
+  run_at_load: false
+alerts:
+  webhook_url: ""
+  desktop_notifications: true
+  batch_mode: false
+session:
+  age_guard_hours: 24
+  fresh_guard_hours: 1
+  max_msg_count: 4
+  backup_dir: "~/.local/share/opencode/session-backups"
+retention:
+  history_limit: 5000
+  alert_limit: 1000
+  backup_keep_days: 30
+  graveyard_cooldown_hours: 24
+safety:
+  mass_removal_threshold_pct: 50
+  allow_mass_remove_env: "OCPROBE_ALLOW_MASS_REMOVE"
+logging:
+  level: error
+  format: text
+  file_enabled: false
+EOF
+
+	# Create a valid opencode.json with whitelist
+	local opencode_json
+	opencode_json=$(mktemp /tmp/ocprobe-test-opencode-XXXXXX.json)
+	cat >"$opencode_json" <<'EOF'
+{
+  "provider": {
+    "test-provider": {
+      "whitelist": [
+        "openai/gpt-4",
+        "openai/gpt-3.5-turbo",
+        "anthropic/claude-3",
+        "google/gemini-pro"
+      ]
+    }
+  }
+}
+EOF
+
+	# Run compute_diff with the mock
+	export PATH="$mock_dir:$PATH"
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_OVERRIDE="$config_yaml"
+	export OCPROBE_OPencode_CONFIG="$opencode_json"
+	export OCPROBE_STATE_DIR=$(mktemp -d /tmp/ocprobe-test-state-XXXXXX)
+	export OCPROBE_RUN_DIR=$(mktemp -d /tmp/ocprobe-test-run-XXXXXX)
+	export OCPROBE_LOG_LEVEL=error
+	export OCPROBE_LOG_FILE="$OCPROBE_RUN_DIR/audit.log"
+	export OCPROBE_RESULTS_FILE="$OCPROBE_RUN_DIR/results.tsv"
+	export OCPROBE_LOCK_DIR="$OCPROBE_STATE_DIR/.lock"
+	mkdir -p "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR"
+
 	# Initialize logging
 	init_logging
 
@@ -96,7 +171,7 @@ EOF
 	assert_success
 
 	# Cleanup
-	rm -rf "$mock_dir" "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR" "$policy_file"
+	rm -rf "$mock_dir" "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR" "$policy_file" "$config_yaml" "$opencode_json"
 }
 
 # ---- Test 2: generate_report protects never_remove models from dead.txt ----
