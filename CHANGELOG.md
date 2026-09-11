@@ -9,11 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Default modality skip patterns tightened: removed over-broad matchers (*function-calling*, *plugin*, *tool-use*) that incorrectly skipped chat models with tool-use capabilities
 - **Validate two-failure gate**: load_validate_history now correctly restores consecutive failure counts from validate-history.jsonl (previously a no-op); WORKS now properly resets failure count in generate_validate_classification (previously filtered out); auth detection no longer treats rate limits / quota as AUTH_ERROR
+- **lib/policy.sh**: load_policy now has explicit case for SCHEMA_ERROR (exit 3) with clear die message about missing/unreadable policy.schema.json
 
 ### Changed
 - README / man page structure and command surface parity: policy subcommands documented, validate --verbose added, modality skip path wording corrected (defaults from install config dir, user override at ~/.local/state/ocprobe/validate-skip-patterns-user.txt)
 - **lib/models.sh**: probe_batch log line now says "sequential" (honest about execution model); fetch_catalog uses portable stat (GNU stat -c %Y / BSD stat -f %m)
-- **lib/policy.sh**: missing/unreadable policy.schema.json now causes hard failure (die) instead of soft-ignoring as invalid-disabled
+- **lib/policy.sh**: missing/unreadable policy.schema.json now causes hard failure (die) instead of soft-ignoring as invalid-disabled; added explicit case 3 for SCHEMA_ERROR
+- **README.md**: Architecture tree now lists policy.sh under lib/
+- **CHANGELOG.md**: [Unreleased] documents gate regression tests, policy SCHEMA_ERROR die message, Architecture listing
 - **.gitignore**: added secrets/credentials patterns (.env*, *.pem, *.key, id_rsa*, credentials*, auth.json, **/secrets.*, .ocprobe/, *.sqlite, *.db)
 - **SECURITY.md**: reporting section now prefers GitHub Security Advisories + maintainer profile for sensitive reports; public issues for non-sensitive only
 - **CI workflow**: removed non-existent 'develop' branch from push/PR triggers

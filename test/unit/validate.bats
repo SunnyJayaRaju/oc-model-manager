@@ -226,7 +226,7 @@ EOF
     assert_output --partial "test-provider/old-model"
 }
 
-# ---- Tests for generate_blacklist_proposal ----
+# ---- Tests for generate_blacklist_proposal / two-failure gate ----
 
 @test "generate_blacklist_proposal includes non-WORKS models with two-failure gate" {
     local results_file="$BATS_TEST_TMPDIR/results.tsv"
@@ -253,6 +253,106 @@ EOF
     assert_output --partial "test-provider/model-c"
     refute_output --partial "test-provider/model-b"
     refute_output --partial "test-provider/model-a"
+}
+
+# ---- Tests for load_validate_history / gate state restoration ----
+
+@test "load_validate_history restores consecutive failure count from history" {
+    # Seed history with one non-WORKS failure for model X
+    local history_file="$OCPROBE_STATE_DIR/validate-history.jsonl"
+    mkdir -p "$OCPROBE_STATE_DIR"
+    cat >"$history_file" <<EOF
+test-provider/model-x	TIMEOUT	1000
+EOF
+
+    declare -gA VALIDATE_FAIL_COUNT=()
+    load_validate_history VALIDATE_FAIL_COUNT
+
+    # Model x should have failure count 1 (one TIMEOUT)
+    local safe_key="test-provider_model-x"
+    assert_equal "${VALIDATE_FAIL_COUNT[$safe_key]:-0}" 1
+}
+
+@test "generate_validate_classification: second consecutive failure via history -> CONFIRMED" {
+    # Seed history with one TIMEOUT for model-x (simulating prior run)
+    local history_file="$OCPROBE_STATE_DIR/validate-history.jsonl"
+    mkdir -p "$OCPROBE_STATE_DIR"
+    cat >"$history_file" <<EOF
+test-provider/model-x	TIMEOUT	1000
+EOF
+
+    # Results file: model-x fails again with TIMEOUT
+    local results_file="$BATS_TEST_TMPDIR/results.tsv"
+    cat >"$results_file" <<EOF
+test-provider/model-x	TIMEOUT	200
+EOF
+
+    local proposal_file="$BATS_TEST_TMPDIR/proposal.txt"
+    local tentative_file="$BATS_TEST_TMPDIR/tentative.txt"
+    generate_validate_classification "test-provider" "$results_file" "$proposal_file" "$tentative_file"
+
+    # Second consecutive TIMEOUT -> CONFIRMED (in proposal)
+    run cat "$proposal_file"
+    assert_success
+    assert_output --partial "test-provider/model-x"
+
+    # Not in tentative
+    run cat "$tentative_file"
+    assert_success
+    refute_output --partial "test-provider/model-x"
+}
+
+@test "generate_validate_classification: WORKS resets then new failure is TENTATIVE" {
+    # Seed history: TIMEOUT then WORKS for model-y
+    local history_file="$OCPROBE_STATE_DIR/validate-history.jsonl"
+    mkdir -p "$OCPROBE_STATE_DIR"
+    cat >"$history_file" <<EOF
+test-provider/model-y	TIMEOUT	1000
+test-provider/model-y	WORKS	2000
+EOF
+
+    # Results: model-y fails again with TIMEOUT
+    local results_file="$BATS_TEST_TMPDIR/results.tsv"
+    cat >"$results_file" <<EOF
+test-provider/model-y	TIMEOUT	200
+EOF
+
+    local proposal_file="$BATS_TEST_TMPDIR/proposal.txt"
+    local tentative_file="$BATS_TEST_TMPDIR/tentative.txt"
+    generate_validate_classification "test-provider" "$results_file" "$proposal_file" "$tentative_file"
+
+    # After WORKS reset, new failure -> TENTATIVE (not CONFIRMED)
+    run cat "$proposal_file"
+    assert_success
+    refute_output --partial "test-provider/model-y"
+
+    run cat "$tentative_file"
+    assert_success
+    assert_output --partial "test-provider/model-y"
+}
+
+@test "generate_validate_classification: EOL and NOT_FOUND are CONFIRMED on first occurrence" {
+    local results_file="$BATS_TEST_TMPDIR/results.tsv"
+    cat >"$results_file" <<EOF
+test-provider/model-eol	EOL	100
+test-provider/model-notfound	NOT_FOUND	200
+EOF
+
+    local proposal_file="$BATS_TEST_TMPDIR/proposal.txt"
+    local tentative_file="$BATS_TEST_TMPDIR/tentative.txt"
+    generate_validate_classification "test-provider" "$results_file" "$proposal_file" "$tentative_file"
+
+    # Both should be CONFIRMED immediately
+    run cat "$proposal_file"
+    assert_success
+    assert_output --partial "test-provider/model-eol"
+    assert_output --partial "test-provider/model-notfound"
+
+    # Neither in tentative
+    run cat "$tentative_file"
+    assert_success
+    refute_output --partial "test-provider/model-eol"
+    refute_output --partial "test-provider/model-notfound"
 }
 
 # ---- Tests for apply_blacklist ----

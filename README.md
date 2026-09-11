@@ -420,6 +420,7 @@ ocprobe (entry point)
 │   ├── scheduler.sh   # launchd/systemd management
 │   ├── doctor.sh      # Health checks
 │   ├── validate.sh    # Provider/model validation & blacklist management
+│   ├── policy.sh      # Experimental policy engine (audit/check only)
 │   └── shim_helpers.sh # Shared shim utilities
 ├── config/
 │   └── schema.json    # JSON Schema for config validation

@@ -151,6 +151,9 @@ PY
 	2) # PARSE_ERROR
 		die "Policy file could not be parsed as YAML — refusing to proceed safely: $policy_file (run 'ocprobe policy validate' for details)"
 		;;
+	3) # SCHEMA_ERROR - missing or unreadable schema
+		die "Policy schema file missing or unreadable — refusing to proceed: $OCPROBE_CONFIG_DIR/policy.schema.json (run 'ocprobe policy validate' for details)"
+		;;
 	*) # Should not happen
 		die "Unknown policy validation exit code: $ec"
 		;;
