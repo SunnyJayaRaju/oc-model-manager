@@ -389,9 +389,15 @@ Each model is classified as:
 
 **Wired into audit/check** — new-model candidates are filtered by `never_add` and provider `include`/`exclude` rules before probing; whitelisted models matching `never_remove` are protected from removal regardless of probe failures. The `auto_apply` setting (global only) skips the confirmation prompt but **never bypasses** the mass-removal guard, backups, or graveyard recording.
 
-**Per-provider `auto_apply` is accepted by the schema but NOT YET ENFORCED** — only the global `auto_apply` currently has an effect. This is a known limitation and will be addressed in a future release.
+**Per-provider `auto_apply` is enforced** — effective auto_apply for a provider/model is determined by:
+- If `providers.<provider>.auto_apply` is explicitly set in the policy file → use it
+- Otherwise → use global `auto_apply`
+
+At confirmation time, the prompt is skipped only if policy is enabled AND every involved provider (from pending ADDS/DEAD) has effective `auto_apply = true`, OR global `auto_apply` covers all. If any provider has effective `auto_apply = false`, the prompt is kept (unless `--yes` / `OCPROBE_ASSUME_YES=1`).
 
 ---
+
+
 
 ## Safety Guarantees
 
@@ -453,6 +459,9 @@ make install
 
 # Check version consistency
 make version-check
+
+# Drift detection (version, tags, installed binary, PATH)
+make drift-check
 ```
 
 ---

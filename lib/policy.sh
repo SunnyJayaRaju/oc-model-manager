@@ -188,6 +188,77 @@ policy_match_any() {
 	return 1
 }
 
+# policy_effective_auto_apply(provider_id) — returns 0 (true) if auto_apply
+# is effective for the given provider, 1 (false) otherwise.
+# Effective auto_apply logic:
+#   - If policy is not enabled → 1 (false)
+#   - If per-provider auto_apply is explicitly set (boolean) → use it
+#   - Else → use global OCPROBE_POLICY_AUTO_APPLY
+# Requires load_config and load_policy to have been called first.
+policy_effective_auto_apply() {
+	local provider_id="$1"
+	[[ "${OCPROBE_POLICY_ENABLED:-0}" -eq 1 ]] || return 1
+	[[ -n "${OCPROBE_POLICY_FILE:-}" ]] || return 1
+
+	python3 - "$OCPROBE_POLICY_FILE" "$provider_id" <<'PY'
+import sys, yaml
+policy_file, provider_id = sys.argv[1], sys.argv[2]
+with open(policy_file) as f:
+    cfg = yaml.safe_load(f) or {}
+
+# Global auto_apply (default False)
+global_auto = cfg.get('auto_apply', False)
+
+# Per-provider auto_apply
+providers = cfg.get('providers') or {}
+prov = providers.get(provider_id)
+if prov is None:
+    # Provider not in policy → use global
+    print(1 if global_auto else 0)
+    sys.exit(0 if global_auto else 1)
+
+if 'auto_apply' in prov:
+    # Explicit per-provider setting → use it
+    print(1 if prov['auto_apply'] else 0)
+    sys.exit(0 if prov['auto_apply'] else 1)
+
+# Provider exists but no auto_apply → use global
+print(1 if global_auto else 0)
+sys.exit(0 if global_auto else 1)
+PY
+}
+
+# policy_all_pending_auto_applyable(list_of_model_ids_file) — returns 0 (true)
+
+# policy_all_pending_auto_applyable(list_of_model_ids_file) — returns 0 (true)
+# if ALL models in the pending changes (adds + removals) have effective auto_apply = true.
+# Used by apply_changes to decide whether to skip confirmation prompt.
+# Expects a file with one model_id per line (provider/model).
+policy_all_pending_auto_applyable() {
+	local models_file="$1"
+	[[ -f "$models_file" ]] || return 1
+	[[ "${OCPROBE_POLICY_ENABLED:-0}" -eq 1 ]] || return 1
+	[[ -n "${OCPROBE_POLICY_FILE:-}" ]] || return 1
+
+	# Extract unique provider IDs from the models file
+	local -a providers=()
+	local model
+	while IFS= read -r model; do
+		[[ -n "$model" ]] || continue
+		local pid="${model%%/*}"
+		providers+=("$pid")
+	done <"$models_file"
+
+	# Check each unique provider
+	local pid
+	for pid in "${providers[@]}"; do
+		if ! policy_effective_auto_apply "$pid"; then
+			return 1
+		fi
+	done
+	return 0
+}
+
 # ---- Policy File Writers -----------------------------------------------------
 
 # policy_write_never_remove_file() — materializes the flat never_remove

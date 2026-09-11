@@ -427,16 +427,45 @@ apply_changes() {
 		return 0
 	fi
 
-	local policy_auto_apply=0
-	if [[ "${OCPROBE_POLICY_ENABLED:-0}" -eq 1 && "${OCPROBE_POLICY_AUTO_APPLY:-0}" -eq 1 ]]; then
-		policy_auto_apply=1
+	# Determine if we can skip confirmation based on auto_apply
+	local skip_confirm=0
+
+	# --yes flag overrides everything
+	if [[ $OCPROBE_ASSUME_YES -eq 1 ]]; then
+		skip_confirm=1
 	fi
 
-	if [[ $OCPROBE_ASSUME_YES -eq 0 && $policy_auto_apply -eq 1 ]]; then
-		log_info "policy auto_apply: skipping confirmation prompt"
+	# Check policy-based auto_apply (per-provider)
+	if [[ $skip_confirm -eq 0 ]]; then
+		# Build a temporary file with all pending models (adds + removals)
+		local pending_models_file="$OCPROBE_RUN_DIR/pending_models.txt"
+		: >"$pending_models_file"
+		[[ -n "${REPORT_ADDS[*]:-}" ]] && printf '%s
+' "${REPORT_ADDS[@]}" >>"$pending_models_file"
+		[[ -s "$OCPROBE_RUN_DIR/dead.txt" ]] && cat "$OCPROBE_RUN_DIR/dead.txt" >>"$pending_models_file"
+
+		# Check if all pending models have effective auto_apply = true
+		if policy_all_pending_auto_applyable "$pending_models_file"; then
+			skip_confirm=1
+			# Log which providers auto_apply
+			local -a providers=()
+			while IFS= read -r model; do
+				[[ -n "$model" ]] || continue
+				providers+=("${model%%/*}")
+			done <"$pending_models_file"
+			# Deduplicate providers
+			local -A seen=()
+			local -a unique_providers=()
+			for p in "${providers[@]}"; do
+				[[ -n "${seen[$p]:-}" ]] && continue
+				seen["$p"]=1
+				unique_providers+=("$p")
+			done
+			log_info "policy auto_apply: skipping confirmation prompt (providers: ${unique_providers[*]})"
+		fi
 	fi
 
-	if [[ $OCPROBE_ASSUME_YES -eq 0 && $policy_auto_apply -eq 0 ]]; then
+	if [[ $skip_confirm -eq 0 ]]; then
 		printf 'Apply changes to %s? [y/N] ' "$OCPROBE_OPencode_CONFIG" >&2
 		read -r ans || ans=""
 		[[ "${ans:-n}" =~ ^[Yy]$ ]] || {

@@ -363,3 +363,281 @@ EOF
 
 	rm -f "$new_file" "$excluded_file" "$policy_file"
 }
+
+
+# ---- policy_effective_auto_apply tests ----
+
+@test "policy_effective_auto_apply: global true, provider not in policy -> true" {
+	local policy_file
+	policy_file=$(mktemp)
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: true
+auto_apply: true
+never_remove: []
+never_add: []
+providers:
+  openai:
+    enabled: true
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=1
+	OCPROBE_POLICY_FILE="$policy_file"
+
+	run policy_effective_auto_apply "google"
+	assert_success
+	assert_output "1"
+	rm -f "$policy_file"
+}
+
+@test "policy_effective_auto_apply: global false, provider explicit true -> true" {
+	local policy_file
+	policy_file=$(mktemp)
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: true
+auto_apply: false
+never_remove: []
+never_add: []
+providers:
+  openai:
+    enabled: true
+    auto_apply: true
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=1
+	OCPROBE_POLICY_FILE="$policy_file"
+
+	run policy_effective_auto_apply "openai"
+	assert_success
+	assert_output "1"
+	rm -f "$policy_file"
+}
+
+@test "policy_effective_auto_apply: global false, provider explicit false -> false" {
+	local policy_file
+	policy_file=$(mktemp)
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: true
+auto_apply: false
+never_remove: []
+never_add: []
+providers:
+  openai:
+    enabled: true
+    auto_apply: false
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=1
+	OCPROBE_POLICY_FILE="$policy_file"
+
+	run policy_effective_auto_apply "openai"
+	assert_failure
+	rm -f "$policy_file"
+}
+
+@test "policy_effective_auto_apply: disabled policy -> false" {
+	local policy_file
+	policy_file=$(mktemp)
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: false
+auto_apply: true
+never_remove: []
+never_add: []
+providers: {}
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=0
+
+	run policy_effective_auto_apply "openai"
+	assert_failure
+	rm -f "$policy_file"
+}
+
+@test "policy_effective_auto_apply: policy not loaded -> false" {
+	run policy_effective_auto_apply "openai"
+	assert_failure
+}
+
+# ---- policy_all_pending_auto_applyable tests ----
+
+@test "policy_all_pending_auto_applyable: all providers auto_apply true -> true" {
+	local policy_file models_file
+	policy_file=$(mktemp)
+	models_file=$(mktemp)
+
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: true
+auto_apply: false
+never_remove: []
+never_add: []
+providers:
+  openai:
+    enabled: true
+    auto_apply: true
+  anthropic:
+    enabled: true
+    auto_apply: true
+EOF
+
+	cat >"$models_file" <<'EOF'
+openai/gpt-4
+anthropic/claude-3
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=1
+	OCPROBE_POLICY_FILE="$policy_file"
+
+	run policy_all_pending_auto_applyable "$models_file"
+	assert_success
+
+	rm -f "$policy_file" "$models_file"
+}
+
+@test "policy_all_pending_auto_applyable: one provider false -> false" {
+	local policy_file models_file
+	policy_file=$(mktemp)
+	models_file=$(mktemp)
+
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: true
+auto_apply: false
+never_remove: []
+never_add: []
+providers:
+  openai:
+    enabled: true
+    auto_apply: true
+  anthropic:
+    enabled: true
+    auto_apply: false
+EOF
+
+	cat >"$models_file" <<'EOF'
+openai/gpt-4
+anthropic/claude-3
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=1
+	OCPROBE_POLICY_FILE="$policy_file"
+
+	run policy_all_pending_auto_applyable "$models_file"
+	assert_failure
+
+	rm -f "$policy_file" "$models_file"
+}
+
+@test "policy_all_pending_auto_applyable: provider not in policy uses global" {
+	local policy_file models_file
+	policy_file=$(mktemp)
+	models_file=$(mktemp)
+
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: true
+auto_apply: true
+never_remove: []
+never_add: []
+providers:
+  openai:
+    enabled: true
+EOF
+
+	cat >"$models_file" <<'EOF'
+openai/gpt-4
+google/gemini-pro
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=1
+	OCPROBE_POLICY_FILE="$policy_file"
+
+	# Global auto_apply=true, google not in policy -> should use global=true
+	run policy_all_pending_auto_applyable "$models_file"
+	assert_success
+
+	rm -f "$policy_file" "$models_file"
+}
+
+@test "policy_all_pending_auto_applyable: disabled policy -> false" {
+	local policy_file models_file
+	policy_file=$(mktemp)
+	models_file=$(mktemp)
+
+	cat >"$policy_file" <<'EOF'
+version: 1
+enabled: false
+auto_apply: true
+never_remove: []
+never_add: []
+providers:
+  openai:
+    enabled: true
+    auto_apply: true
+EOF
+
+	cat >"$models_file" <<'EOF'
+openai/gpt-4
+EOF
+
+	export OCPROBE_POLICY_OVERRIDE="$policy_file"
+	export OCPROBE_CONFIG_DIR="$BATS_TEST_DIRNAME/../../config"
+	load_config
+	load_policy
+	OCPROBE_POLICY_ENABLED=0
+
+	run policy_all_pending_auto_applyable "$models_file"
+	assert_failure
+	rm -f "$policy_file" "$models_file"
+}
+
+@test "policy_all_pending_auto_applyable: no policy file -> false" {
+	local models_file
+	models_file=$(mktemp)
+	cat >"$models_file" <<'EOF'
+openai/gpt-4
+EOF
+	run policy_all_pending_auto_applyable "$models_file"
+	assert_failure
+	rm -f "$models_file"
+}
+
+@test "policy_all_pending_auto_applyable: empty models file -> false" {
+	local models_file
+	models_file=$(mktemp)
+	: >"$models_file"
+	run policy_all_pending_auto_applyable "$models_file"
+	assert_failure
+	rm -f "$models_file"
+}

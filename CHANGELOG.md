@@ -6,8 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Per-provider `auto_apply` enforcement in policy engine (audit/check only)
+- Drift detection: `make drift-check` target and `ocprobe doctor` version/PATH reporting
+- `lib/policy.sh`: `policy_effective_auto_apply()` and `policy_all_pending_auto_applyable()` helpers
 
-## [3.1.1] - 2026-09-12
+### Changed
+- Per-provider `auto_apply` now enforced in audit/check (previously schema-only)
+- `README.md`: removed "NOT YET ENFORCED" notice; documented effective auto_apply rule
+- `lib/doctor.sh`: added version/PATH drift reporting
+
+## [3.1.1] - 2026-09-12 - 2026-09-12
 ### Fixed
 - Default modality skip patterns tightened: removed over-broad matchers (*function-calling*, *plugin*, *tool-use*) that incorrectly skipped chat models with tool-use capabilities
 - **Validate two-failure gate**: load_validate_history now correctly restores consecutive failure counts from validate-history.jsonl (previously a no-op); WORKS now properly resets failure count in generate_validate_classification (previously filtered out); auth detection no longer treats rate limits / quota as AUTH_ERROR
