@@ -388,7 +388,7 @@ EOF
     "
     assert_success
     # JSON output should be valid (version is simple text, but --json shouldn't break it)
-assert_output "ocprobe 3.1.0"
+assert_output "ocprobe 3.1.1"
 }
  
 @test "global flag --json works after subcommand (version --json)" {
@@ -401,7 +401,7 @@ assert_output "ocprobe 3.1.0"
         '$test_bin_dir/ocprobe' version --json 2>&1
     "
     assert_success
-    assert_output "ocprobe 3.1.0"
+    assert_output "ocprobe 3.1.1"
 }
 
 @test "global flags work in any order (--json --quick audit)" {
