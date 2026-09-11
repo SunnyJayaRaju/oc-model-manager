@@ -27,8 +27,10 @@ set -uo pipefail
 # ---- Modality Skip Patterns ---------------------------------------------------
 # Local glob matcher — semantics intentionally match policy_glob_match()
 # in lib/policy.sh (case-sensitive, * matches /, ? = one char) but this
-# is a deliberately separate, non-shared copy for this track. See
-# feature/validate-hardening design notes: do not merge with policy.sh.
+# is a deliberately separate, non-shared copy for this track.
+# This decouples validate's modality skip from the experimental policy engine
+# so that modality skips remain stable even if policy engine changes.
+# See feature/validate-hardening design notes: do not merge with policy.sh.
 # shellcheck disable=SC2053
 validate_glob_match() {
 	local pattern="$1" value="$2"

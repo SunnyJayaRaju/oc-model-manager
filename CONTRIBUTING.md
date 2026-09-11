@@ -29,6 +29,8 @@ cd oc-model-manager
 make dev-install
 ```
 
+> **Note:** Legacy shims `oc-model-audit.sh`, `oc-model-manager`, and `oc-session-backup` are deprecated in favor of `ocprobe` subcommands. They will be removed in a future major release.
+
 This will:
 1. Build the package
 2. Install to `~/.local/bin/ocprobe`

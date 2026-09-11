@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Validate hardening (feature/validate-hardening):**
   - **Modality skip list**: `config/validate-skip-patterns.txt` + user file at `~/.local/state/ocprobe/validate-skip-patterns-user.txt`; matched models get `SKIPPED_MODALITY` status, never probed
   - **Two-failure gate**: `validate-history.jsonl` tracks consecutive failures; non-terminal failures require 2 consecutive failures before blacklisting; `WORKS` resets counter; `EOL`/`NOT_FOUND` confirm immediately
-  - **AUTH_ERROR detection**: validate-local worker captures raw response, detects auth patterns (401, 403, Unauthorized, invalid_api_key, quota exceeded, etc.) → `AUTH_ERROR` status
+  - **AUTH_ERROR detection**: validate-local worker captures raw response, detects auth patterns (401, 403, Unauthorized, invalid_api_key, authentication failed) → `AUTH_ERROR` status; quota exceeded / rate limit handled as BILLING_ERROR (post-3.1.0 tightening now in Unreleased)
   - **Provider-wide AUTH_ERROR abort**: `OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD_PCT` (default 40%); if exceeded, provider skipped entirely
   - **Apply merge logic**: `apply_blacklist` merges by model-id: `new_blacklist = (previous - probed_this_run) ∪ confirmed_dead_this_run`; never wipes untouched entries
   - **Three-bucket verification**: `verify_blacklist_effect` returns WRITTEN/HIDDEN/STILL_VISIBLE; exit codes 0=all hidden, 2=some still visible, 1=hard error

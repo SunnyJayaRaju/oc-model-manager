@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Backward compatibility shim for oc-model-audit.sh v1
+# Backward compatibility shim for oc-model-audit.sh v1 — DEPRECATED: use `ocprobe` directly
 # Maps old flags to new ocprobe commands
 
 set -euo pipefail
+
+# Deprecation warning
+echo "WARNING: oc-model-audit.sh is deprecated; use 'ocprobe audit' or 'ocprobe check' instead" >&2
 
 # Source shared shim helpers
 # shellcheck source=../lib/shim_helpers.sh

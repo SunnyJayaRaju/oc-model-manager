@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Backward compatibility shim for oc-model-manager v1
+# Backward compatibility shim for oc-model-manager v1 — DEPRECATED: use `ocprobe` directly
 # Maps old flags to new ocprobe commands
 
 set -euo pipefail
+
+# Deprecation warning
+echo "WARNING: oc-model-manager is deprecated; use 'ocprobe' instead" >&2
 
 # Source shared shim helpers
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/shim_helpers.sh"

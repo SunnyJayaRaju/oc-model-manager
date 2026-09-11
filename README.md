@@ -87,6 +87,8 @@ $ ocprobe policy show             # Show current policy (or note if missing)
 ## Installation
 
 ### Homebrew (macOS / Linux)
+
+> **Note:** Legacy shims `oc-model-audit.sh`, `oc-model-manager`, and `oc-session-backup` are deprecated. Use `ocprobe` subcommands directly (`ocprobe audit`, `ocprobe check`, `ocprobe session`, etc.). They will be removed in a future major release.
 ```bash
 brew tap SunnyJayaRaju/ocprobe
 brew install ocprobe
@@ -423,11 +425,13 @@ ocprobe (entry point)
 │   ├── policy.sh      # Experimental policy engine (audit/check only)
 │   └── shim_helpers.sh # Shared shim utilities
 ├── config/
-│   └── schema.json    # JSON Schema for config validation
+│   ├── schema.json            # JSON Schema for config validation
+│   ├── policy.schema.json     # JSON Schema for policy validation
+│   └── validate-skip-patterns.txt # Modality skip defaults
 ├── test/
 │   ├── unit/          # bats unit tests
 │   └── integration/   # End-to-end tests
-└── packaging/         # Homebrew, deb, rpm
+└── packaging/         # Homebrew pointer only (live formula: homebrew-ocprobe)
 ```
 
 ---

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Backward compatibility shim for oc-session-backup
+# Backward compatibility shim for oc-session-backup — DEPRECATED: use `ocprobe session` directly
 
 set -euo pipefail
+
+# Deprecation warning
+echo "WARNING: oc-session-backup is deprecated; use 'ocprobe session' instead" >&2
 
 # Source shared shim helpers
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/shim_helpers.sh"
