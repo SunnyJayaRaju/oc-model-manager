@@ -34,3 +34,9 @@ auth.json
 .ocprobe/
 *.sqlite
 *.db
+
+# Additional security patterns
+.env.local
+*.p12
+*.pfx
+opencode.json.ocprobe-backup-*

@@ -16,3 +16,7 @@ There is no bug bounty program at this time. We'll acknowledge reports and work 
 ## Supported Versions
 
 Only the latest released version (currently tracked via the VERSION file and GitHub Releases) receives fixes. There is no formal LTS policy.
+
+## Scope
+
+ocprobe does not store provider API keys; credentials remain in the user's OpenCode configuration. Report credential exposure in that tooling separately. Secrets must never be committed to this repository.
