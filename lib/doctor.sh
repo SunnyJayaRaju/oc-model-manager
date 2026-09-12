@@ -145,7 +145,7 @@ cmd_doctor() {
 		echo "  Local tag v$(cat VERSION 2>/dev/null): FOUND"
 	else
 		echo "  Local tag v$(cat VERSION 2>/dev/null): MISSING"
-	fi
+	fi || true
 	# PATH shadowing check
 	local path_count
 	path_count=$(type -a ocprobe 2>/dev/null | wc -l | tr -d ' ')
