@@ -122,40 +122,49 @@ cmd_doctor() {
 	[[ -f "$OCPROBE_STATE_DIR/graveyard.jsonl" ]] && echo "graveyard: $(wc -l <"$OCPROBE_STATE_DIR/graveyard.jsonl") entries" || echo "graveyard: none"
 	[[ -f "$OCPROBE_STATE_DIR/catalog-cache.json" ]] && echo "catalog-cache: $(jq '.models|length' "$OCPROBE_STATE_DIR/catalog-cache.json" 2>/dev/null || echo "corrupt") models" || echo "catalog-cache: none"
 
-	# 13. Drift detection (version, tags, PATH)
+	# 13. Drift detection (version, tags, PATH) - fully soft, never fails
 	echo
 	echo "--- Drift Detection ---"
-	# VERSION vs installed binary
-	local version_file_version
-	version_file_version="$(cat VERSION 2>/dev/null || echo 'unknown')"
-	echo "  VERSION file: $version_file_version"
-	# Installed binary version
-	if command -v ocprobe >/dev/null 2>&1; then
-		local bin_version
-		bin_version=$(ocprobe version 2>/dev/null | awk '{print $NF}')
-		echo "  Installed ocprobe: $bin_version"
-		if [[ "$bin_version" != "$(cat VERSION 2>/dev/null)" ]]; then
-			log_warn "VERSION mismatch: file=$(cat VERSION 2>/dev/null) binary=$bin_version"
+	# Run in a subshell that always succeeds
+	(
+		# VERSION vs installed binary
+		local version_file_version
+		version_file_version="$(cat VERSION 2>/dev/null || echo 'unknown')"
+		echo "  VERSION file: $version_file_version"
+		# Installed binary version
+		if command -v ocprobe >/dev/null 2>&1; then
+			local bin_version
+			bin_version=$(ocprobe version 2>/dev/null | awk '{print $NF}')
+			echo "  Installed ocprobe: $bin_version"
+			if [[ "$bin_version" != "$(cat VERSION 2>/dev/null)" ]]; then
+				log_warn "VERSION mismatch: file=$(cat VERSION 2>/dev/null) binary=$bin_version"
+			fi
+		else
+			echo "  Installed ocprobe: NOT IN PATH"
 		fi
-	else
-		echo "  Installed ocprobe: NOT IN PATH"
-	fi
-	# Local tag check
-	# Use subshell to prevent set -e from exiting on git failure in shallow clones
-	if (git tag -l "v$(cat VERSION 2>/dev/null)" 2>/dev/null || true) | grep -q "v$(cat VERSION 2>/dev/null)"; then
-		echo "  Local tag v$(cat VERSION 2>/dev/null): FOUND"
-	else
-		echo "  Local tag v$(cat VERSION 2>/dev/null): MISSING"
-	fi
-	# PATH shadowing check
-	local path_count
-	path_count=$(type -a ocprobe 2>/dev/null | wc -l | tr -d ' ')
-	if [[ $path_count -gt 1 ]]; then
-		log_warn "Multiple ocprobe in PATH (shadowing risk): $(type -a ocprobe 2>/dev/null | tr '
+		# Local tag check - skip in shallow clones or non-git dirs
+		if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+			ver="$(cat VERSION 2>/dev/null || echo 'unknown')"
+			if (git tag -l "v${ver}" 2>/dev/null || true) | grep -qx "v${ver}"; then
+				echo "  Local tag v${ver}: FOUND"
+			else
+				echo "  Local tag v${ver}: MISSING"
+			fi
+		else
+			echo "  Local tag: skipped (no git repo or shallow)"
+		fi
+		# PATH shadowing check
+		local path_count
+		path_count=$(type -a ocprobe 2>/dev/null | wc -l | tr -d ' ')
+		if [[ $path_count -gt 1 ]]; then
+			log_warn "Multiple ocprobe in PATH (shadowing risk): $(type -a ocprobe 2>/dev/null | tr '
 ' '; ')"
-	else
-		echo "  PATH: single ocprobe (OK)"
-	fi
+		else
+			echo "  PATH: single ocprobe (OK)"
+		fi
+	) || true
+	# Ensure drift detection never fails the script
+	true
 
 	echo
 	if [[ $all_ok -eq 1 ]]; then
