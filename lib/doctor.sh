@@ -141,13 +141,12 @@ cmd_doctor() {
 		echo "  Installed ocprobe: NOT IN PATH"
 	fi
 	# Local tag check
-	if git tag -l "v$(cat VERSION 2>/dev/null)" 2>/dev/null | grep -q "v$(cat VERSION 2>/dev/null)"; then
+	# Use subshell to prevent set -e from exiting on git failure in shallow clones
+	if (git tag -l "v$(cat VERSION 2>/dev/null)" 2>/dev/null || true) | grep -q "v$(cat VERSION 2>/dev/null)"; then
 		echo "  Local tag v$(cat VERSION 2>/dev/null): FOUND"
 	else
 		echo "  Local tag v$(cat VERSION 2>/dev/null): MISSING"
-	fi || true
-	# Ensure git commands don't fail the script in shallow clones
-	true
+	fi
 	# PATH shadowing check
 	local path_count
 	path_count=$(type -a ocprobe 2>/dev/null | wc -l | tr -d ' ')
