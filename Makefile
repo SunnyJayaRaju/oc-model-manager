@@ -6,7 +6,7 @@ VERSION := $(shell cat VERSION)
 DIST_DIR := dist/ocprobe-$(VERSION)
 PACKAGE := dist/ocprobe-$(VERSION).tar.gz
 
-.PHONY: all lint test test-unit test-integration build package install uninstall clean help man
+.PHONY: all lint test test-unit test-integration build package install uninstall clean help man drift-check
 
 all: lint test build
 
@@ -22,6 +22,7 @@ help:
 	@echo "  make clean          - Clean build artifacts"
 	@echo "  make man            - Generate man page from Markdown"
 	@echo "  make release        - Create GitHub release (requires tag)"
+	@echo "  make drift-check    - Check version/tag/binary/PATH drift"
 
 lint:
 	@echo "Running shellcheck..."
@@ -105,3 +106,25 @@ version-check:
 		echo "README badge version ($$BADGE_VERSION) != VERSION ($(VERSION))"; exit 1; \
 	fi; \
 	echo "README badge version ($$BADGE_VERSION) matches VERSION ($(VERSION))"
+
+drift-check: version-check
+	@echo "=== drift-check ==="
+	@echo "VERSION: $(VERSION)"
+	@if git rev-parse --git-dir >/dev/null 2>&1; then \
+	  if git tag -l "v$(VERSION)" | grep -q "v$(VERSION)"; then echo "Local tag v$(VERSION): FOUND"; \
+	  else echo "Local tag v$(VERSION): MISSING (ok if not released from this clone)"; fi; \
+	else echo "Not a git checkout — skip tag check"; fi
+	@if command -v ocprobe >/dev/null 2>&1; then \
+	  echo "Installed: $$(ocprobe version 2>/dev/null || true)"; \
+	  cnt=$$(type -a ocprobe 2>/dev/null | wc -l | tr -d ' '); \
+	  if [ "$$cnt" -gt 1 ]; then echo "WARN: multiple ocprobe on PATH (shadow risk)"; type -a ocprobe; \
+	  else echo "PATH: single ocprobe"; fi; \
+	else echo "ocprobe not on PATH"; fi
+	@echo "drift-check done"
+
+# Development helpers
+dev-install: build install
+
+dev-test: lint test
+
+# Release helper (run after tagging)

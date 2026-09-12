@@ -387,7 +387,7 @@ Each model is classified as:
 
 ### Current status
 
-**Wired into audit/check** — new-model candidates are filtered by `never_add` and provider `include`/`exclude` rules before probing; whitelisted models matching `never_remove` are protected from removal regardless of probe failures. The `auto_apply` setting (global only) skips the confirmation prompt but **never bypasses** the mass-removal guard, backups, or graveyard recording.
+**Wired into audit/check** — new-model candidates are filtered by `never_add` and provider `include`/`exclude` rules before probing; whitelisted models matching `never_remove` are protected from removal regardless of probe failures. The effective `auto_apply` (per-provider override or global) skips the confirmation prompt but **never bypasses** the mass-removal guard, backups, or graveyard recording.
 
 **Per-provider `auto_apply` is enforced** — effective auto_apply for a provider/model is determined by:
 - If `providers.<provider>.auto_apply` is explicitly set in the policy file → use it
