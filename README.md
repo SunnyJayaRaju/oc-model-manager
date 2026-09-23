@@ -13,7 +13,7 @@
 
 ## Why ocprobe?
 
-Managing model catalogs in OpenCode is manual, error-prone, and unsafe. You diff catalogs by hand, probe models one by one, and risk wiping your whitelist with a bad apply. **ocprobe automates the full lifecycle**: catalog diffing → live probing → safety-gated apply → continuous monitoring — all with built-in guards so you never lose a working model or apply a broken one.
+Managing model catalogs in OpenCode is manual, error prone, and unsafe. You diff catalogs by hand, probe models one by one, and risk wiping your whitelist with a bad apply. **ocprobe automates the full lifecycle**: catalog diffing → live probing → safety-gated apply → continuous monitoring — all with built-in guards so you never lose a working model or apply a broken one.
 
 ---
 
