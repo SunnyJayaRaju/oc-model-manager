@@ -123,7 +123,7 @@ load_validate_history() {
 		*)
 			# Other non-WORKS failures: increment streak, capped at 2
 			local current="${local_counts[$safe_key]:-0}"
-			local_counts["$safe_key"]=$(( current < 2 ? current + 1 : 2 ))
+			local_counts["$safe_key"]=$((current < 2 ? current + 1 : 2))
 			;;
 		esac
 	done <"$OCPROBE_STATE_DIR/validate-history.jsonl"
@@ -194,6 +194,16 @@ generate_validate_classification() {
 			;;
 		SKIPPED_MODALITY)
 			# Already filtered out by generate_blacklist_proposal, but handle gracefully
+			;;
+		BILLING_ERROR)
+			# The ACCOUNT cannot afford this model's default output size — the model
+			# itself is fine and works as soon as credits exist. Blacklisting it would
+			# permanently hide working models from a free / credit-limited key, which
+			# is the opposite of what the user asked for. Report, never blacklist, and
+			# do not let it count toward the two-strike gate.
+			VALIDATE_FAIL_COUNT["$safe_key"]=0
+			record_validate_history "$model" "$status"
+			printf '%s\tBILLING_ERROR\n' "$model" >>"${tentative_file}.billing"
 			;;
 		*)
 			# Other failures: TIMEOUT, AUTH_ERROR, BILLING_ERROR, ERROR, UNCLEAR
@@ -304,12 +314,10 @@ else
 fi
 t1=$(python3 -c 'import time; print(int(time.time() * 1000))')
 
-# Output RAW response to stderr for auth detection, classified status to stdout
-printf '%s\n' "$res" >&2
-
 # Parse JSON events from opencode --format json output
 # Each line is a JSON event; look for status event or error event
 st=UNCLEAR
+err_msg=""
 while IFS= read -r line; do
   [[ -n "$line" ]] || continue
   # Try to extract status from status events
@@ -319,7 +327,14 @@ while IFS= read -r line; do
   # Try to extract error type from error events
   elif printf '%s' "$line" | grep -q '"type":"error"'; then
     err_type=$(printf '%s' "$line" | python3 -c 'import sys,json; d=json.load(sys.stdin); err=d.get("error",{}); print(err.get("data",{}).get("message",""))' 2>/dev/null)
-    if printf '%s' "$err_type" | grep -qi 'No payment method'; then st=PAYWALLED; break
+    err_msg="$err_type"
+    # Credit/quota limits are an ACCOUNT condition, not model death. opencode sends
+    # the model's default max output tokens (e.g. 16384, hardcoded from model
+    # metadata — no config knob lowers it), so on a free or credit-limited key every
+    # paid model returns 402 "requires more credits ... can only afford 102" even
+    # though the model works. Must map to BILLING_ERROR, never to ERROR/NOT_FOUND,
+    # or a free-tier key would blacklist every paid model it cannot afford.
+    if printf '%s' "$err_type" | grep -Eqi 'no payment method|requires more credits|insufficient credits|not enough credit|not enough balance|can only afford|payment required|billing|quota (exceeded|insufficient)|402'; then st=PAYWALLED; break
     elif printf '%s' "$err_type" | grep -qi 'end of life\|^Gone'; then st=EOL; break
     elif printf '%s' "$err_type" | grep -q '404'; then st=NOTFOUND; break
     elif printf '%s' "$err_type" | grep -qi 'Error'; then st=BROKEN; break
@@ -330,7 +345,7 @@ done <<<"$res"
 
 # If no status from JSON events, fall back to string matching on full output
 if [[ "$st" == "UNCLEAR" ]]; then
-  if   printf '%s' "$res" | grep -qi 'No payment method'; then st=PAYWALLED
+  if   printf '%s' "$res" | grep -Eqi 'no payment method|requires more credits|insufficient credits|not enough credit|not enough balance|can only afford|payment required|billing|quota (exceeded|insufficient)|402'; then st=PAYWALLED
   elif printf '%s' "$res" | grep -qi 'end of life\|^Gone'; then st=EOL
   elif printf '%s' "$res" | grep -q '404';                 then st=NOTFOUND
   elif printf '%s' "$res" | grep -qi 'Error:';              then st=BROKEN
@@ -339,77 +354,85 @@ if [[ "$st" == "UNCLEAR" ]]; then
   elif [[ $rc -ne 0 ]];                                     then st=TIMEOUT
   else st=UNCLEAR; fi
 fi
-printf '%s\t%s\t%s\t%s\n' "$src" "$m" "$st" "$((t1-t0))"
+
+# Map to the validate status vocabulary here, inside the worker, so the worker is
+# fully self-contained. Previously auth detection happened in the parent via a
+# SHARED temp file (.validate_raw_response) — that made concurrent probing unsafe.
+case "$st" in
+  WORKS) v=WORKS ;;
+  PAYWALLED) v=BILLING_ERROR ;;
+  EOL|NOTFOUND) v=NOT_FOUND ;;
+  BROKEN|ERROR) v=ERROR ;;
+  TIMEOUT) v=TIMEOUT ;;
+  *) v=UNCLEAR ;;
+esac
+
+# Auth detection.
+# Scan ONLY the error message, never the whole event stream: opencode emits JSON
+# containing timestamps and ids, so a bare `401|403` substring match hits random
+# digits (e.g. "timestamp":1790364416**401**) and mislabels healthy models as
+# AUTH_ERROR — which then trips the provider-wide abort and hides real results.
+# Bare status codes are matched only in an explicit status context.
+if [[ "$v" != "AUTH_ERROR" ]]; then
+  if printf '%s' "$err_msg" | grep -Eqi 'invalid_api_key|invalid api key|unauthorized|forbidden|authentication failed|auth failed|api key.*(invalid|missing|expired)|(status|"code"|http)[^0-9a-z]{0,4}(401|403)\b'; then
+    v=AUTH_ERROR
+  elif [[ -z "$err_msg" ]] && printf '%s' "$res" | grep -Eqi 'invalid_api_key|invalid api key|authentication failed|auth failed'; then
+    v=AUTH_ERROR
+  fi
+fi
+
+printf '%s\t%s\t%s\t%s\n' "$src" "$m" "$v" "$((t1-t0))"
 WORKER
 	chmod +x "$worker_file"
 }
 
-# Probe a single model using validate-local worker with auth detection
+# Probe a single model using the validate worker.
+# The worker is self-contained: it classifies, maps to the validate vocabulary and
+# performs auth detection internally, so no shared temp file is involved and this
+# function is safe to call from concurrent workers.
 # shellcheck disable=SC2329
 probe_model_classify() {
 	local model="$1"
 	local timeout_secs="${2:-$OCPROBE_VALIDATE_PROBE_TIMEOUT}"
 	local prompt="${3:-$OCPROBE_VALIDATE_PROBE_PROMPT}"
+	local worker_file="${4:-}"
 
-	local worker_file
-	worker_file=$(mktemp "${OCPROBE_RUN_DIR}/validate_worker.XXXXXX")
-	write_validate_worker "$worker_file"
+	if [[ -z "$worker_file" ]]; then
+		worker_file=$(mktemp "${OCPROBE_RUN_DIR}/validate_worker.XXXXXX")
+		write_validate_worker "$worker_file"
+		local own_worker=1
+	fi
 
 	local start_ms end_ms
 	start_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
 
-	# Run worker and capture stdout (status) and stderr (raw response for auth detection)
-	local output
-	output=$("$worker_file" "$model" "VALIDATE" "$timeout_secs" "$prompt" 2>"${OCPROBE_RUN_DIR}/.validate_raw_response")
-	local ec=$?
+	local output ec
+	output=$("$worker_file" "$model" "VALIDATE" "$timeout_secs" "$prompt" 2>/dev/null)
+	ec=$?
 
 	end_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
-
 	local latency=$((end_ms - start_ms))
 
-	rm -f "$worker_file"
+	if [[ -n "${own_worker:-}" ]]; then rm -f "$worker_file"; fi
 
-	# Read raw response for auth detection
-	local raw_response
-	raw_response=$(cat "${OCPROBE_RUN_DIR}/.validate_raw_response" 2>/dev/null || true)
-	rm -f "${OCPROBE_RUN_DIR}/.validate_raw_response"
-
-	# Parse worker output (TSV: src\tmodel\tstatus\tlatency)
 	local status
 	if [[ $ec -eq 0 && -n "$output" ]]; then
-		# Worker succeeded, parse its classification
+		# Worker already emits a validate-vocabulary status in field 3
 		status=$(printf '%s' "$output" | awk -F'\t' '{print $3}')
-		# Map worker statuses to validate statuses
-		case "$status" in
-		WORKS) status="WORKS" ;;
-		PAYWALLED) status="BILLING_ERROR" ;;
-		EOL) status="NOT_FOUND" ;;
-		NOTFOUND) status="NOT_FOUND" ;;
-		BROKEN) status="ERROR" ;;
-		ERROR) status="ERROR" ;;
-		TIMEOUT) status="TIMEOUT" ;;
-		AUTH_ERROR) status="AUTH_ERROR" ;;
-		*) status="UNCLEAR" ;;
-		esac
-	elif [[ $ec -eq 124 ]] || [[ $ec -eq 137 ]] || [[ $ec -eq 142 ]]; then
+		[[ -n "$status" ]] || status="UNCLEAR"
+	elif [[ $ec -eq 124 || $ec -eq 137 || $ec -eq 142 ]]; then
 		status="TIMEOUT"
 	else
-		# Worker failed to run or produced no output
 		status="ERROR"
-	fi
-
-	# Auth detection on raw response (if status not already AUTH_ERROR)
-	# Only treat explicit auth failures as AUTH_ERROR; rate limits / quota = BILLING_ERROR
-	if [[ "$status" != "AUTH_ERROR" ]]; then
-		if printf '%s' "$raw_response" | grep -Eqi '401|403|Unauthorized|invalid_api_key|invalid api key|authentication failed|auth failed'; then
-			status="AUTH_ERROR"
-		fi
 	fi
 
 	printf '%s\t%s\t%d\n' "$model" "$status" "$latency"
 }
 
-# Probe models sequentially (reliable, simpler)
+# Probe models for one provider.
+# Parallel: a 900+ model catalog is infeasible sequentially (hours). The worker is
+# written once and reused; each worker is fully independent, so xargs -P is safe.
+# Results are appended as single TSV lines (atomic for short lines in append mode).
 probe_models_batch() {
 	local provider_id="$1"
 	local models_file="$2"
@@ -419,36 +442,56 @@ probe_models_batch() {
 	count=$(wc -l <"$models_file" | tr -d ' ')
 	[[ $count -eq 0 ]] && return 0
 
-	log_info "Probing $count models for provider $provider_id..."
+	local parallel="${OCPROBE_VALIDATE_MAX_PARALLEL:-4}"
+	[[ "$parallel" =~ ^[0-9]+$ && "$parallel" -gt 0 ]] || parallel=4
 
+	log_info "Probing $count models for provider $provider_id (parallel $parallel)..."
+
+	# Modality exclusions (image/video/embedding models can't answer a text probe)
+	local candidates="$OCPROBE_RUN_DIR/.validate_candidates.$provider_id"
 	local skipped_count=0
-	local probed_count=0
-	local start_time
-	start_time=$(date +%s)
+	: >"$candidates"
+	local model
 	while IFS= read -r model; do
 		[[ -n "$model" ]] || continue
 		if is_modality_skip "$model"; then
-			echo -e "${model}\tSKIPPED_MODALITY\t0" >>"$results_file"
+			printf '%s\tSKIPPED_MODALITY\t0\n' "$model" >>"$results_file"
 			skipped_count=$((skipped_count + 1))
 			continue
 		fi
-		local result
-		result=$(probe_model_classify "$model")
-		echo "$result" >>"$results_file"
-		probed_count=$((probed_count + 1))
-
-		if [[ ${OCPROBE_VALIDATE_VERBOSE:-0} -eq 1 || ${verbose_mode:-0} -eq 1 ]]; then
-			local status
-			status=$(printf '%s' "$result" | awk -F'\t' '{print $2}')
-			log_info "  [$probed_count/$count] $model → $status"
-		elif [[ $((probed_count % ${OCPROBE_VALIDATE_PROGRESS_INTERVAL:-25})) -eq 0 ]]; then
-			local elapsed
-			elapsed=$(($(date +%s) - start_time))
-			log_info "  Probed $probed_count/$count models for $provider_id (${elapsed}s elapsed)..."
-		fi
+		printf '%s\n' "$model" >>"$candidates"
 	done <"$models_file"
-
 	[[ $skipped_count -gt 0 ]] && log_info "Skipped $skipped_count modality-excluded models for provider $provider_id"
+
+	local cand_count
+	cand_count=$(wc -l <"$candidates" | tr -d ' ')
+	[[ $cand_count -eq 0 ]] && return 0
+
+	local worker_file="$OCPROBE_RUN_DIR/.validate_worker-$provider_id"
+	write_validate_worker "$worker_file"
+
+	local start_time
+	start_time=$(date +%s)
+
+	# Each worker writes one TSV line; -P runs up to $parallel at a time.
+	# shellcheck disable=SC2016
+	xargs -P "$parallel" -I{} bash -c '
+		worker="$1"; m="$2"; secs="$3"; prompt="$4"; out="$5"; verbose="$6"
+		line=$("$worker" "$m" "VALIDATE" "$secs" "$prompt" 2>/dev/null)
+		if [[ -n "$line" ]]; then
+			status=$(printf "%s" "$line" | awk -F"\t" "{print \$3}")
+			printf "%s\t%s\t0\n" "$m" "$status" >>"$out"
+		else
+			status="ERROR"
+			printf "%s\t%s\t0\n" "$m" "$status" >>"$out"
+		fi
+		if [[ "$verbose" == "1" ]]; then printf "  → %s → %s\n" "$m" "$status" >&2; fi
+	' _ "$worker_file" {} "$OCPROBE_VALIDATE_PROBE_TIMEOUT" "$OCPROBE_VALIDATE_PROBE_PROMPT" "$results_file" "${OCPROBE_VALIDATE_VERBOSE:-${verbose_mode:-0}}" <"$candidates"
+
+	local elapsed=$(($(date +%s) - start_time))
+	log_info "  Probed $cand_count models for $provider_id in ${elapsed}s"
+
+	rm -f "$worker_file" "$candidates"
 }
 
 # ---- Blacklist Management ----------------------------------------------------
@@ -467,40 +510,47 @@ generate_blacklist_proposal() {
 show_blacklist_diff() {
 	local provider_id="$1"
 	local current_file="$2"
-	local proposed_file="$3"
+	local effective_file="$3"
 
-	local current_proposed
-	current_proposed=$(mktemp "${OCPROBE_RUN_DIR}/cp.XXXXXX")
-	sort -u "$current_file" "$proposed_file" | sort | uniq -c | while read -r count model; do
-		if [[ $count -eq 1 ]]; then
-			# Only in one of the files
-			if grep -qxF "$model" "$current_file"; then
-				echo "- $model (would be removed from blacklist)"
-			else
-				echo "+ $model (would be added to blacklist)"
-			fi
-		fi
-	done >"$current_proposed"
+	# NOTE: the previous implementation used `sort -u f1 f2 | sort | uniq -c` and
+	# treated count==1 as "present in one file only". That is wrong: `sort -u`
+	# de-duplicates ACROSS both files, so when current == effective every model
+	# appears once and all of them were reported as "would be removed". Use comm
+	# set arithmetic, which is what the change counters already used — hence the
+	# contradiction between "N changes" and a full removal list.
+	local removed added
+	removed=$(comm -23 <(sort -u "$current_file") <(sort -u "$effective_file"))
+	added=$(comm -13 <(sort -u "$current_file") <(sort -u "$effective_file"))
 
-	if [[ -s "$current_proposed" ]]; then
-		echo "Provider: $provider_id"
-		cat "$current_proposed"
-		echo
-	else
+	if [[ -z "$removed" && -z "$added" ]]; then
 		log_info "Provider $provider_id: No changes to blacklist"
+		return 0
 	fi
 
-	rm -f "$current_proposed"
+	echo "Provider: $provider_id"
+	if [[ -n "$removed" ]]; then
+		while IFS= read -r model; do
+			[[ -n "$model" ]] && echo "- $model (would be removed from blacklist)"
+		done <<<"$removed"
+	fi
+	if [[ -n "$added" ]]; then
+		while IFS= read -r model; do
+			[[ -n "$model" ]] && echo "+ $model (would be added to blacklist)"
+		done <<<"$added"
+	fi
+	echo
 }
 
 # Apply blacklist to opencode.json (merge by model-id, not wholesale replace)
 # Reads probed_models_file to know which models were in scope this run.
-# new_blacklist = (previous - probed_this_run) ∪ confirmed_dead_this_run
-# This preserves prior blacklist entries for models NOT probed this run.
+# new_blacklist = (previous - worked_this_run) ∪ confirmed_dead_this_run
+# Entries are sticky: dropped only when the model now probes WORKS. Preserves
+# entries for models not probed this run.
 apply_blacklist() {
 	local provider_id="$1"
 	local confirmed_file="$2"
 	local probed_models_file="$3"
+	local working_file="${4:-}"
 
 	# Read previous blacklist
 	local -a prev_blacklist=()
@@ -526,11 +576,16 @@ PY
 	local -a confirmed=()
 	[[ -f "$confirmed_file" ]] && mapfile -t confirmed <"$confirmed_file"
 
-	# Merge: (previous - probed) ∪ confirmed
+	# Read models that probed WORKS this run (blacklist entries drop only for these)
+	local -a working=()
+	[[ -n "$working_file" && -f "$working_file" ]] && mapfile -t working <"$working_file"
+
+	# Merge: (previous - working) ∪ confirmed
 	python3 - "$OCPROBE_OPencode_CONFIG" "$provider_id" \
-		"$(printf '%s\n' "${probed[@]}")" \
-		"$(printf '%s\n' "${confirmed[@]}")" \
-		"$(printf '%s\n' "${prev_blacklist[@]}")" <<'PY'
+		"$(printf '%s\n' "${probed[@]:+${probed[@]}}")" \
+		"$(printf '%s\n' "${confirmed[@]:+${confirmed[@]}}")" \
+		"$(printf '%s\n' "${prev_blacklist[@]:+${prev_blacklist[@]}}")" \
+		"$(printf '%s\n' "${working[@]:+${working[@]}}")" <<'PY'
 import json, sys, os
 
 config_path = os.path.expanduser(sys.argv[1])
@@ -538,6 +593,7 @@ provider_id = sys.argv[2]
 probed = set(sys.argv[3].splitlines()) if sys.argv[3] else set()
 confirmed = set(sys.argv[4].splitlines()) if sys.argv[4] else set()
 previous = set(sys.argv[5].splitlines()) if sys.argv[5] else set()
+working = set(sys.argv[6].splitlines()) if len(sys.argv) > 6 and sys.argv[6] else set()
 
 with open(config_path) as f:
     cfg = json.load(f)
@@ -545,8 +601,12 @@ with open(config_path) as f:
 providers = cfg.setdefault("provider", {})
 provider = providers.setdefault(provider_id, {})
 
-# Keep previous entries NOT probed this run, add confirmed dead this run
-new_blacklist = (previous - probed) | confirmed
+# Blacklist entries are STICKY: a previously blacklisted model is dropped only when
+# it now probes WORKS. Any other outcome (billing/credit limit, timeout, auth error,
+# unclear) leaves it blacklisted — un-blacklisting on a non-answer would resurface
+# models we have no evidence work, and would flip entries off on every scoped run.
+# Entries not probed this run are always preserved.
+new_blacklist = (previous - working) | confirmed
 provider["blacklist"] = sorted(new_blacklist)
 
 # Write atomically
@@ -632,8 +692,11 @@ cmd_validate() {
 	local restore_mode=0
 	local target_provider=""
 	local target_model=""
-	local json_output=0
-	local verbose_mode=0
+	# Seed from the global flags so both `ocprobe --json validate` and
+	# `ocprobe validate --json` work. The global parser consumes these before the
+	# subcommand, so without seeding they were silently ignored.
+	local json_output="${OCPROBE_JSON_OUTPUT:-0}"
+	local verbose_mode="${OCPROBE_VERBOSE:-0}"
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
@@ -762,6 +825,15 @@ else:
 	local all_results_file="$OCPROBE_RUN_DIR/all_results.tsv"
 	: >"$all_results_file"
 
+	# Snapshot sessions BEFORE probing so cleanup_probe_sessions can delete exactly
+	# the sessions this run creates — and nothing that existed beforehand.
+	SES_BEFORE=()
+	# Baseline from the DB, not `opencode session list` (paginated at 100 rows,
+	# so it silently omitted pre-existing sessions on busy histories).
+	SES_BEFORE=()
+	mapfile -t SES_BEFORE < <(list_all_session_ids)
+	log_debug "Baseline sessions: ${#SES_BEFORE[@]}"
+
 	for provider_id in "${providers[@]}"; do
 		log_info "Processing provider: $provider_id"
 
@@ -783,6 +855,14 @@ else:
 		cat "$results_file" >>"$all_results_file"
 	done
 
+	# Remove ONLY the sessions this run created. Without this, every validate run
+	# leaves one session per probed model in the user's history (observed: 33
+	# leaked sessions from a single 38-model run). Reuses the audit-path cleanup,
+	# which only ever deletes sessions created after the baseline snapshot.
+	if [[ ${#SES_BEFORE[@]} -gt 0 ]] || declare -p SES_BEFORE >/dev/null 2>&1; then
+		cleanup_probe_sessions
+	fi
+
 	# Phase 3: Generate proposals & diffs (still no lock needed)
 	local -a provider_results=()
 	local overall_changes=0
@@ -794,6 +874,23 @@ else:
 
 		local proposed_blacklist_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.proposed_blacklist.txt"
 		generate_blacklist_proposal "$provider_id" "$results_file" "$proposed_blacklist_file"
+
+		# Effective blacklist = what --apply would actually write.
+		# apply_blacklist merges: new = (previous - probed_this_run) ∪ confirmed_dead.
+		# Diffing the raw proposal against the previous blacklist reported every
+		# out-of-scope entry as "would be removed", which is wrong and alarming when
+		# a run is scoped (--provider/--model). Diff against the merged result.
+		local effective_blacklist_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.effective_blacklist.txt"
+		# Drop previously-blacklisted entries ONLY for models that now probe WORKS
+		# (sticky blacklist), then union in this run's confirmed-dead set.
+		awk -F'\t' 'NR==FNR {if ($2 == "WORKS") seen[$1]=1; next} ($1 in seen) {next} {print $1}' \
+			"$results_file" "$current_blacklist_file" >"$effective_blacklist_file"
+		cat "$proposed_blacklist_file" >>"$effective_blacklist_file"
+		sort -u "$effective_blacklist_file" -o "$effective_blacklist_file"
+
+		if [[ "${OCPROBE_VALIDATE_VERBOSE:-${verbose_mode:-0}}" == "1" ]]; then
+			log_info "  counts: probed=$(wc -l <"$results_file" | tr -d ' ') current=$(wc -l <"$current_blacklist_file" | tr -d ' ') proposed=$(wc -l <"$proposed_blacklist_file" | tr -d ' ') effective=$(wc -l <"$effective_blacklist_file" | tr -d ' ')"
+		fi
 
 		# AUTH_ERROR provider-wide abort threshold
 		local auth_error_count=0 total_probed=0
@@ -810,16 +907,42 @@ else:
 			fi
 		fi
 
+		# TIMEOUT provider-wide abort threshold.
+		# A timeout is evidence about OUR machine, not about the model: every probe
+		# is a full `opencode run` agent contending for CPU and the SQLite DB, so
+		# raising parallelism inflates latency (measured: ~2x at -P 8) and pushes
+		# healthy models past the timeout. Observed: 941/979 TIMEOUT on a -P 8 run
+		# where single probes answered in <2s. Blacklisting on that basis would
+		# retire a whole catalog, so treat a high timeout rate as infrastructure
+		# failure and skip the provider.
+		local timeout_count=0
+		timeout_count=$(awk -F'\t' '$2 == "TIMEOUT" {count++} END {print count+0}' "$results_file")
+		if [[ $total_probed -gt 0 ]]; then
+			local timeout_pct=$((timeout_count * 100 / total_probed))
+			if [[ $timeout_pct -ge ${OCPROBE_VALIDATE_TIMEOUT_THRESHOLD_PCT:-60} ]]; then
+				log_warn "Provider $provider_id: ${timeout_pct}% TIMEOUT (threshold ${OCPROBE_VALIDATE_TIMEOUT_THRESHOLD_PCT:-60}%) — this measures our probe throughput, not model health. Skipping blacklist changes. Re-run with OCPROBE_VALIDATE_MAX_PARALLEL=2-4 and a higher OCPROBE_VALIDATE_PROBE_TIMEOUT."
+				if [[ $json_output -eq 1 ]]; then
+					echo "{\"provider\":\"$provider_id\",\"timeout_abort\":true,\"timeout_pct\":$timeout_pct,\"threshold_pct\":${OCPROBE_VALIDATE_TIMEOUT_THRESHOLD_PCT:-60}}"
+				fi
+				continue
+			fi
+		fi
+
 		# Count skipped modality and tentative models for reporting
-		local skipped_count=0 tentative_count=0
+		local skipped_count=0 tentative_count=0 billing_count=0
 		skipped_count=$(awk -F'\t' '$2 == "SKIPPED_MODALITY" {count++} END {print count+0}' "$results_file")
 		local tentative_file="${proposed_blacklist_file}.tentative"
 		[[ -f "$tentative_file" ]] && tentative_count=$(wc -l <"$tentative_file" | tr -d ' ')
+		# Models blocked purely by account credits — visible in the report, but
+		# deliberately NOT blacklisted (see BILLING_ERROR case in the classifier).
+		# The classifier writes "<tentative_file>.billing", hence the derived path.
+		local billing_file="${tentative_file}.billing"
+		[[ -f "$billing_file" ]] && billing_count=$(wc -l <"$billing_file" | tr -d ' ')
 		# Clean up tentative file after reading count
-		rm -f "$tentative_file"
+		rm -f "$tentative_file" "$billing_file"
 
 		if [[ $json_output -eq 1 ]]; then
-			python3 - "$provider_id" "$results_file" "$current_blacklist_file" "$proposed_blacklist_file" "$skipped_count" "$tentative_count" <<'PY'
+			python3 - "$provider_id" "$results_file" "$current_blacklist_file" "$effective_blacklist_file" "$skipped_count" "$tentative_count" <<'PY'
 import json, sys, os
 
 provider_id = sys.argv[1]
@@ -861,20 +984,21 @@ print(json.dumps({
         for s in ["WORKS", "TIMEOUT", "AUTH_ERROR", "BILLING_ERROR", "NOT_FOUND", "ERROR", "UNCLEAR", "SKIPPED_MODALITY"]
     },
     "current_blacklist_count": len(current),
-    "proposed_blacklist_count": len(proposed),
+    "effective_blacklist_count": len(proposed),
     "additions": additions,
     "removals": removals
 }, indent=2))
 PY
 		else
-			show_blacklist_diff "$provider_id" "$current_blacklist_file" "$proposed_blacklist_file"
+			show_blacklist_diff "$provider_id" "$current_blacklist_file" "$effective_blacklist_file"
 			[[ $skipped_count -gt 0 ]] && echo "    Skipped (modality): $skipped_count"
 			[[ $tentative_count -gt 0 ]] && echo "    Tentative (watching): $tentative_count"
+			[[ $billing_count -gt 0 ]] && echo "    Blocked by account credits (not blacklisted, works once you have credits): $billing_count"
 		fi
 
 		local additions_count removals_count
-		additions_count=$(comm -13 <(sort "$current_blacklist_file") <(sort "$proposed_blacklist_file") | wc -l | tr -d ' ')
-		removals_count=$(comm -23 <(sort "$current_blacklist_file") <(sort "$proposed_blacklist_file") | wc -l | tr -d ' ')
+		additions_count=$(comm -13 <(sort "$current_blacklist_file") <(sort "$effective_blacklist_file") | wc -l | tr -d ' ')
+		removals_count=$(comm -23 <(sort "$current_blacklist_file") <(sort "$effective_blacklist_file") | wc -l | tr -d ' ')
 
 		if [[ $additions_count -gt 0 ]] || [[ $removals_count -gt 0 ]]; then
 			overall_changes=1
@@ -907,7 +1031,11 @@ PY
 			backup_file=$(backup_opencode_config)
 			log_info "Backup created: $backup_file"
 
-			apply_blacklist "$provider_id" "$proposed_blacklist_file" "$models_file"
+			# 4th arg: models that probed WORKS this run. Blacklist entries are sticky
+			# and are dropped only for these, never merely because they were probed.
+			local working_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.working.txt"
+			awk -F'\t' '$2 == "WORKS" {print $1}' "$results_file" >"$working_file"
+			apply_blacklist "$provider_id" "$proposed_blacklist_file" "$models_file" "$working_file"
 
 			log_info "Verifying blacklist effect..."
 			verify_blacklist_effect "$provider_id" "$proposed_blacklist_file"

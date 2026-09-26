@@ -14,7 +14,7 @@ probe:
   title_prefix: "ocprobe-probe"
 
 catalog:
-  cache_ttl_hours: 24
+  cache_ttl_hours: 1
   force_refresh: false
 
 scheduler:

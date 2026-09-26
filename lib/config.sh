@@ -254,6 +254,12 @@ load_config() {
 	OCPROBE_RESULTS_FILE="${OCPROBE_RESULTS_FILE:-$OCPROBE_RUN_DIR/results.tsv}"
 	OCPROBE_LOCK_DIR="${OCPROBE_LOCK_DIR:-$OCPROBE_STATE_DIR/.lock}"
 
+	# Run start (epoch ms). Session cleanup deletes ONLY sessions created at/after
+	# this instant, so a long run cannot leak its own probe sessions (a fixed
+	# "fresh < 1h" window leaked everything older than an hour on a 65-min run).
+	OCPROBE_RUN_START_MS="${OCPROBE_RUN_START_MS:-$(python3 -c 'import time; print(int(time.time() * 1000))')}"
+	export OCPROBE_RUN_START_MS
+
 	# Export for subprocesses
 	export OCPROBE_CONFIG_FILE OCPROBE_STATE_DIR OCPROBE_AUDIT_DIR OCPROBE_RUN_DIR OCPROBE_LOG_FILE
 }

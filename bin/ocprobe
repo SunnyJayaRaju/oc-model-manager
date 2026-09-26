@@ -11,18 +11,24 @@ set -euo pipefail
 # Development: binary at <repo>/bin/ocprobe, lib/ at <repo>/lib/, VERSION at <repo>/VERSION
 # Installed:   binary at ~/.local/bin/ocprobe, lib/ at ~/.local/lib/ocprobe/, VERSION at ~/.local/share/ocprobe/VERSION
 OCPROBE_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Check for VERSION file alongside binary's parent (dev mode: repo/bin/ -> repo/VERSION)
-if [[ -f "${OCPROBE_BIN_DIR}/../VERSION" ]]; then
+# Detect the layout by probing for the library that actually exists.
+# A stray VERSION file (e.g. a stale ~/.local/VERSION) must NOT select dev mode,
+# otherwise installed mode silently sources the wrong lib dir and dies.
+if [[ -f "${OCPROBE_BIN_DIR}/../lib/ocprobe/core.sh" ]]; then
+    # Installed: binary at ~/.local/bin/ocprobe, lib/ at ~/.local/lib/ocprobe/, VERSION at ~/.local/share/ocprobe/VERSION
+    OCPROBE_ROOT="${OCPROBE_BIN_DIR}/.."
+    OCPROBE_LIB_DIR="${OCPROBE_ROOT}/lib/ocprobe"
+    OCPROBE_CONFIG_DIR="${OCPROBE_ROOT}/share/ocprobe"
+    OCPROBE_VERSION_FILE="${OCPROBE_ROOT}/share/ocprobe/VERSION"
+elif [[ -f "${OCPROBE_BIN_DIR}/../lib/core.sh" ]]; then
+    # Development: binary at <repo>/bin/ocprobe, lib/ at <repo>/lib/, VERSION at <repo>/VERSION
     OCPROBE_ROOT="$(cd "${OCPROBE_BIN_DIR}/.." && pwd)"
     OCPROBE_LIB_DIR="${OCPROBE_ROOT}/lib"
     OCPROBE_CONFIG_DIR="${OCPROBE_ROOT}/config"
     OCPROBE_VERSION_FILE="${OCPROBE_ROOT}/VERSION"
 else
-    # Installed mode: binary at ~/.local/bin/ocprobe, lib/ at ~/.local/lib/ocprobe/, VERSION at ~/.local/share/ocprobe/VERSION
-    OCPROBE_ROOT="${OCPROBE_BIN_DIR}/.."
-    OCPROBE_LIB_DIR="${OCPROBE_ROOT}/lib/ocprobe"
-    OCPROBE_CONFIG_DIR="${OCPROBE_ROOT}/share/ocprobe"
-    OCPROBE_VERSION_FILE="${OCPROBE_ROOT}/share/ocprobe/VERSION"
+    echo "ocprobe: cannot locate library directory (looked for ../lib/ocprobe/core.sh and ../lib/core.sh)" >&2
+    exit 1
 fi
 export OCPROBE_ROOT OCPROBE_LIB_DIR OCPROBE_CONFIG_DIR
 
@@ -126,7 +132,12 @@ parse_global_flags() {
   OCPROBE_DRY_RUN=0
   : "${OCPROBE_CONFIG_OVERRIDE:=}"
   OCPROBE_REMAINING_ARGS=()
-  
+
+  # Once a subcommand has been seen, unknown flags belong to that subcommand
+  # (e.g. `validate --provider`, `alerts --clear`) and must be passed through
+  # instead of being rejected as unknown global flags.
+  local seen_cmd=0
+
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --quick) OCPROBE_QUICK=1 ;;
@@ -141,8 +152,22 @@ parse_global_flags() {
       --policy=*) OCPROBE_POLICY_OVERRIDE="${1#*=}" ;;
       --help|-h) usage; exit 0 ;;
       --) shift; OCPROBE_REMAINING_ARGS+=("$@"); break ;;
-      -*) log_error "Unknown global flag: $1"; exit 1 ;;
-      *) OCPROBE_REMAINING_ARGS+=("$1") ;;
+      -*)
+        if [[ $seen_cmd -eq 1 ]]; then
+          OCPROBE_REMAINING_ARGS+=("$1")
+        else
+          log_error "Unknown global flag: $1"
+          exit 1
+        fi
+        ;;
+      *)
+        OCPROBE_REMAINING_ARGS+=("$1")
+        case "$1" in
+          audit|check|status|alerts|probe|watch|validate|scheduler|session|config|policy|doctor|version|help)
+            seen_cmd=1
+            ;;
+        esac
+        ;;
     esac
     shift
   done

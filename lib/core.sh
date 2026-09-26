@@ -59,6 +59,22 @@ validate_model_name() {
 ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 now_s() { date +%s; }
 
+# ---- Portable timeout -------------------------------------------------------
+# GNU `timeout` is NOT present on stock macOS. Callers previously invoked
+# `timeout` unguarded, so on a Mac without coreutils the command failed with
+# 127 and the result was misread as a probe failure. Use this everywhere.
+# run_with_timeout <seconds> <cmd> [args...]
+# Returns the command's exit code; 124 when the timeout fired.
+run_with_timeout() {
+	local secs="$1"
+	shift
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "$secs" "$@"
+	else
+		perl -e 'alarm $ARGV[0]; exec @ARGV[1..$#ARGV] or exit 127' "$secs" "$@"
+	fi
+}
+
 # ---- SQL escaping -----------------------------------------------------------
 # Validates and escapes a string for safe use in SQLite SQL queries.
 # Returns 0 on success, 1 on validation failure.

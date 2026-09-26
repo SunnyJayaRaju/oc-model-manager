@@ -66,12 +66,14 @@ docs/ocprobe.1: docs/ocprobe.1.md
 
 install: $(PACKAGE)
 	@echo "Installing to ~/.local..."
-	@mkdir -p ~/.local/bin ~/.local/lib ~/.local/share/ocprobe
+	@mkdir -p ~/.local/bin ~/.local/lib/ocprobe ~/.local/share/ocprobe
 	@tar -xzf $(PACKAGE) -C /tmp/
 	@cp /tmp/ocprobe-$(VERSION)/bin/ocprobe ~/.local/bin/ocprobe
 	@chmod +x ~/.local/bin/ocprobe
-	@cp -r /tmp/ocprobe-$(VERSION)/lib ~/.local/lib/ocprobe
-	@cp -r /tmp/ocprobe-$(VERSION)/config ~/.local/share/ocprobe
+	@# Copy CONTENTS, not the directory: `cp -r lib DIR` nests as DIR/lib on
+	@# re-install (when DIR already exists), silently breaking every upgrade.
+	@rm -rf ~/.local/lib/ocprobe && cp -r /tmp/ocprobe-$(VERSION)/lib ~/.local/lib/ocprobe
+	@rm -rf ~/.local/share/ocprobe/config && cp -r /tmp/ocprobe-$(VERSION)/config ~/.local/share/ocprobe
 	@cp /tmp/ocprobe-$(VERSION)/VERSION ~/.local/share/ocprobe/VERSION
 	@echo "Installed. Ensure ~/.local/bin is in PATH"
 

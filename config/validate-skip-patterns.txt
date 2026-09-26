@@ -24,6 +24,9 @@
 *stable-diffusion*
 *sdxl*
 *image-gen*
+*lyria*
+*imagen*
+*flux*
 
 # Video generation
 *video*
@@ -31,6 +34,22 @@
 *runway*
 *pika*
 *luma*
+*veo*
+
+# Multimodal / omni / live / realtime session models
+# These accept text but do not complete a one-shot text turn reliably, so a
+# text probe produces false failures (observed: *-omni-*, *-live-*).
+*-omni-*
+*omni-*
+*-live-*
+*-live$
+*-realtime-*
+
+# Audio / transcription / translation (non text-output)
+*transcribe*
+*translation*
+*translate*
+*-audio-*
 
 # Moderation / safety classifiers
 *moderation*

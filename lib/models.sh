@@ -97,7 +97,7 @@ fetch_catalog() {
 
 	if [[ $OCPROBE_FORCE_REFRESH -eq 1 || ! -s "$cache_file" || $cache_age -ge $((OCPROBE_CACHE_TTL_HOURS * 3600)) ]]; then
 		log_info "[1/7] Fetching full catalog..."
-		if ! timeout "${OCPROBE_PROBE_TIMEOUT_NEW:-45}" opencode models 2>/dev/null | sort >"$OCPROBE_RUN_DIR/catalog.raw"; then
+		if ! run_with_timeout "${OCPROBE_PROBE_TIMEOUT_NEW:-45}" opencode models 2>/dev/null | sort >"$OCPROBE_RUN_DIR/catalog.raw"; then
 			log_error "opencode models command timed out or failed"
 			return 1
 		fi
@@ -165,7 +165,10 @@ compute_diff() {
 	fi
 
 	# Snapshot sessions before probing
-	mapfile -t SES_BEFORE < <(opencode session list 2>/dev/null | awk '/^ses_/{print $1}')
+	# Baseline from the DB, not `opencode session list` (paginated at 100 rows,
+	# so it silently omitted pre-existing sessions on busy histories).
+	SES_BEFORE=()
+	mapfile -t SES_BEFORE < <(list_all_session_ids)
 	log_debug "Baseline sessions: ${#SES_BEFORE[@]}"
 }
 
@@ -278,53 +281,50 @@ process_alerts() {
 cleanup_probe_sessions() {
 	log_info "[5/7] Cleaning probe sessions..."
 
-	# Get new sessions since baseline
-	local titles_file="$OCPROBE_RUN_DIR/titles.tsv"
-	list_sessions_with_titles >"$titles_file"
+	# Candidate sessions come from the DB (complete), bounded by this run's start
+	# time — NOT from `opencode session list`, which paginates at 100 rows and hid
+	# 842 of 942 probe sessions on a full-catalog run. Age and message-count guards
+	# are already applied in SQL by list_probe_sessions_since.
+	local since_ms="${OCPROBE_RUN_START_MS:-0}"
+	[[ "$since_ms" =~ ^[0-9]+$ ]] || since_ms=0
 
-	local new_sessions=()
+	local candidates_file="$OCPROBE_RUN_DIR/probe_candidates.tsv"
+	list_probe_sessions_since "$since_ms" >"$candidates_file"
+
+	local candidate_count
+	candidate_count=$(wc -l <"$candidates_file" | tr -d ' ')
+	if [[ $candidate_count -eq 0 ]]; then
+		log_info "[5/7] Sessions: no probe sessions created by this run — nothing to clean"
+		return 0
+	fi
+	log_debug "  $candidate_count probe session(s) created by this run are cleanup candidates"
+
+	local deleted=0 preserved=0
+	local sid title
 	while IFS=$'\t' read -r sid title; do
 		[[ -n "$sid" ]] || continue
-		[[ " ${SES_BEFORE[*]+${SES_BEFORE[*]}} " != *" $sid "* ]] || continue
-		new_sessions+=("$sid")
-	done <"$titles_file"
+		title="${title#"${title%%[![:space:]]*}"}" # trim leading space from CLI-style titles
 
-	# Batch queries
-	local old_sessions=() fresh_probe_sessions=()
-	mapfile -t old_sessions < <(batch_get_old_sessions new_sessions)
-	mapfile -t fresh_probe_sessions < <(batch_get_fresh_probe_sessions new_sessions)
-
-	# Convert to lookup sets
-	declare -A is_old_session is_fresh_probe_session
-	for s in "${old_sessions[@]}"; do is_old_session["$s"]=1; done
-	for s in "${fresh_probe_sessions[@]}"; do is_fresh_probe_session["$s"]=1; done
-
-	local deleted=0
-	while IFS=$'\t' read -r sid title; do
-		[[ -n "$sid" ]] || continue
-		[[ " ${SES_BEFORE[*]+${SES_BEFORE[*]}} " != *" $sid "* ]] || continue
-
-		# Age guard
-		if [[ ${is_old_session["$sid"]:-0} -eq 1 ]]; then
-			log_debug "  age-guard: $sid is >${OCPROBE_AGE_GUARD_HOURS}h old — never touching it"
-			continue
+		# If it existed before this run started, it is not ours.
+		if [[ ${#SES_BEFORE[@]} -gt 0 ]]; then
+			case " ${SES_BEFORE[*]} " in
+			*" $sid "*)
+				log_debug "  pre-existing session $sid — never touching it"
+				preserved=$((preserved + 1))
+				continue
+				;;
+			esac
 		fi
 
-		log_debug "new session detected: $sid title='$title'"
-
-		# Probe session check - match both new and legacy prefixes
-		if { [[ "$title" == ${OCPROBE_PROBE_TITLE_PREFIX}* || "$title" == ${OCPROBE_PROBE_TITLE_PREFIX_LEGACY}* || "$title" == "New session - "* ]] && [[ ${is_fresh_probe_session["$sid"]:-0} -eq 1 ]]; } || is_probe_session "$sid"; then
-			delete_session "$sid" && {
-				deleted=$((deleted + 1))
-				log_debug "  deleted test session $sid"
-			}
+		if delete_session "$sid"; then
+			deleted=$((deleted + 1))
+			log_debug "  deleted probe session $sid"
 		else
-			log_debug "  PRESERVED non-test session $sid ('$title')"
-			log_warn "left new session $sid untouched (title='$title')"
+			preserved=$((preserved + 1))
 		fi
-	done <"$titles_file"
+	done <"$candidates_file"
 
-	log_info "[5/7] Sessions: ${#SES_BEFORE[@]} preserved, $deleted test session(s) deleted"
+	log_info "[5/7] Sessions: $deleted probe session(s) deleted, $preserved preserved, ${#SES_BEFORE[@]} pre-existing untouched"
 }
 
 # ---- Report Generation ------------------------------------------------------

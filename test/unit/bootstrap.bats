@@ -388,7 +388,8 @@ EOF
     "
     assert_success
     # JSON output should be valid (version is simple text, but --json shouldn't break it)
-assert_output "ocprobe 3.1.1"
+    # Derive the expected version from VERSION so a release bump does not break this test.
+    assert_output "ocprobe $(cat "$OCPROBE_ROOT/VERSION")"
 }
  
 @test "global flag --json works after subcommand (version --json)" {
@@ -401,7 +402,7 @@ assert_output "ocprobe 3.1.1"
         '$test_bin_dir/ocprobe' version --json 2>&1
     "
     assert_success
-    assert_output "ocprobe 3.1.1"
+    assert_output "ocprobe $(cat "$OCPROBE_ROOT/VERSION")"
 }
 
 @test "global flags work in any order (--json --quick audit)" {

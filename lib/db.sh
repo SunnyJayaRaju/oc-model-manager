@@ -108,6 +108,53 @@ list_sessions_with_titles() {
 	opencode session list 2>/dev/null | awk '/^ses_/{id=$1; $1=""; sub(/^ +/,""); print id"\t"$0}' || true
 }
 
+# All session ids currently in the DB (complete, unpaginated).
+# `opencode session list` caps at 100 rows, so it must not be used to build a
+# safety baseline: on a busy history it silently omits pre-existing sessions.
+list_all_session_ids() {
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 0
+	sqlite3 -readonly "$OCPROBE_OPencode_DB" "SELECT id FROM session;" 2>/dev/null || true
+}
+
+# Enumerate probe sessions created at/after <epoch_ms> that are safe to delete.
+#
+# `opencode session list` paginates (100 rows by default), so on a large run the
+# CLI view hides most of the sessions the run just created — cleanup then deleted
+# only what it could see and leaked the rest (observed: 842 leaked probe sessions
+# from a 942-model validate). Query the DB instead, bounded by the run start time.
+#
+# The age guard and the "probe sessions are tiny" guard are applied in SQL so no
+# giant IN (...) clause is needed (942 ids would be slow and near SQLite limits).
+#
+# Prints: <id>\t<title>
+list_probe_sessions_since() {
+	local since_ms="$1"
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 0
+	[[ "$since_ms" =~ ^[0-9]+$ ]] || return 0
+
+	local p1 p2 p3 age_hours max_msgs
+	p1=$(sql_escape "${OCPROBE_PROBE_TITLE_PREFIX:-ocprobe-probe}")
+	p2=$(sql_escape "${OCPROBE_PROBE_TITLE_PREFIX_LEGACY:-ocmm-probe}")
+	# The validate worker titles its sessions "ocprobe-validate", which matched
+	# neither prefix above — so validate runs deleted almost nothing and leaked a
+	# session per probed model (842 observed). Keep all three in sync here.
+	p3=$(sql_escape "${OCPROBE_VALIDATE_TITLE_PREFIX:-ocprobe-validate}")
+	age_hours="${OCPROBE_AGE_GUARD_HOURS:-24}"
+	max_msgs="${OCPROBE_MAX_MSG_COUNT:-4}"
+	[[ "$age_hours" =~ ^[0-9]+$ ]] || age_hours=24
+	[[ "$max_msgs" =~ ^[0-9]+$ ]] || max_msgs=4
+
+	sqlite3 -readonly "$OCPROBE_OPencode_DB" <<PY
+SELECT s.id || char(9) || COALESCE(s.title, '')
+FROM session s
+WHERE s.time_created >= ${since_ms}
+  AND s.time_created >  (strftime('%s','now') - ${age_hours}*3600) * 1000
+  AND (s.title LIKE '${p1}%' OR s.title LIKE '${p2}%' OR s.title LIKE '${p3}%')
+  AND (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) <= ${max_msgs}
+ORDER BY s.time_created;
+PY
+}
+
 # Probe History Queries ------------------------------------------------------
 
 # Load probe history into associative arrays
