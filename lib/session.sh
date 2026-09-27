@@ -13,6 +13,22 @@ cmd_session_list() {
 		"SELECT s.id, s.title, (SELECT COUNT(*) FROM message m WHERE m.session_id=s.id) AS msgs, datetime(s.time_updated/1000,'unixepoch','localtime') FROM session s ORDER BY s.time_updated DESC;"
 }
 
+# ---- In-place sed variant ----------------------------------------------------
+# `sed -i` takes a MANDATORY suffix argument on BSD/macOS (`sed -i ''`) and an
+# OPTIONAL, attached one on GNU (`sed -i`, or `sed -i.bak`). So the BSD form
+# `sed -i '' 'script' file` is parsed by GNU as: script='', then FILES
+# 'script' and 'file' — the real substitution never runs, and the command only
+# "works" because the bogus filename makes it exit non-zero and fall through to
+# the GNU form. That is fragile: correctness depends on the first invocation
+# FAILING, and if it ever returned 0 the edit would be silently skipped, leaving
+# a non-idempotent restore.
+# Detect the variant once and always invoke the correct form.
+if sed --version >/dev/null 2>&1; then
+	OCPROBE_SED_INPLACE=(sed -i) # GNU
+else
+	OCPROBE_SED_INPLACE=(sed -i '') # BSD / macOS
+fi
+
 # ---- Backup Session ---------------------------------------------------------
 cmd_session_backup() {
 	local sid="${1:-}"
@@ -51,7 +67,7 @@ SELECT * FROM todo WHERE session_id='$sql_sid';
 EOF
 
 	# Use INSERT OR REPLACE for idempotent restore
-	sed -i '' 's/^INSERT INTO /INSERT OR REPLACE INTO /' "$out" 2>/dev/null || sed -i 's/^INSERT INTO /INSERT OR REPLACE INTO /' "$out"
+	"${OCPROBE_SED_INPLACE[@]}" 's/^INSERT INTO /INSERT OR REPLACE INTO /' "$out"
 
 	local msgs parts
 	msgs=$(grep -c "INSERT OR REPLACE INTO message" "$out" || true)
