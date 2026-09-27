@@ -85,5 +85,11 @@ log_fatal() { _log "$LOG_LEVEL_FATAL" "FATAL" "$*"; }
 # ---- Audit log (always text, to file) --------------------------------------
 audit_log() {
 	local msg="$1"
-	[[ -n "$OCPROBE_LOG_FILE" ]] && printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$msg" >>"$OCPROBE_LOG_FILE"
+	# ${VAR:-} because load_config only sets this after config validation passes,
+	# so it can still be unset here; under `set -u` a bare "$OCPROBE_LOG_FILE"
+	# aborted the function with "unbound variable" instead of no-op'ing. The
+	# explicit `return 0` matches _log: a log call that writes nothing is a
+	# success, not a failure.
+	[[ -n "${OCPROBE_LOG_FILE:-}" ]] || return 0
+	printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$msg" >>"$OCPROBE_LOG_FILE"
 }
