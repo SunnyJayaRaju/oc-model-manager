@@ -1014,14 +1014,25 @@ PY
 	local total_written=0 total_hidden=0 total_still_visible=0
 
 	if [[ $apply_mode -eq 1 && $overall_changes -eq 1 ]]; then
+		# Re-acquire the lock for the apply. The lock was released after Phase 1
+		# discovery (intentionally — probing runs unlocked), so without this the
+		# whole apply ran with no mutual exclusion and the staleness check below
+		# was decorative: it could only detect a change made *before* it ran.
+		# Re-checking the hash AFTER acquiring makes the check meaningful — the
+		# config cannot change between the check and the write.
+		acquire_lock
 		trap 'release_lock; cleanup_run_dir' EXIT INT TERM
 
-		# Staleness guard: verify opencode.json hasn't changed since Phase 1
+		# Staleness guard: verify opencode.json hasn't changed since Phase 1.
+		# Runs *after* re-acquiring the lock, so the check and the write below are
+		# atomic with respect to any other ocprobe run.
 		local current_hash
 		current_hash=$(sha256sum "$OCPROBE_OPencode_CONFIG" | awk '{print $1}')
 		if [[ "$current_hash" != "$config_hash" ]]; then
 			release_lock
-			die "Config changed since discovery (hash mismatch). Re-run validate to get fresh results."
+			log_error "Config changed since discovery (hash mismatch): $OCPROBE_OPencode_CONFIG was modified during the unlocked probing window."
+			log_error "Refusing to apply — a stale apply would overwrite those changes. Re-run 'ocprobe validate' to get fresh results."
+			return 1
 		fi
 
 		for entry in "${provider_results[@]}"; do
