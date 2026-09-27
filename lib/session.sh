@@ -74,12 +74,65 @@ cmd_session_restore() {
 	}
 
 	load_config
+
+	# Content validation: only INSERT / BEGIN / COMMIT / PRAGMA may appear, and each
+	# statement must sit on a single line. This rejects DROP/DELETE/ALTER/UPDATE/
+	# ATTACH, sqlite3 dot-commands (.shell/.output/.read) and comments — anything
+	# that could alter the database beyond restoring rows. Dumps produced by
+	# `ocprobe session backup` always pass: sqlite3's insert mode escapes newlines
+	# as unistr('...\u000a...'), so every INSERT stays on one line.
+	local bad_line
+	bad_line=$(awk '
+		{
+			line = $0
+			gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+			if (line == "") next
+			if (tolower(line) ~ /^(insert|begin|commit|pragma)([[:space:]]|;|$)/) next
+			printf "line %d: %s", NR, $0
+			exit
+		}
+	' "$file") || true
+
+	if [[ -n "$bad_line" ]]; then
+		log_error "refusing restore: $file contains a disallowed statement"
+		log_error "  $bad_line"
+		log_error "  only INSERT / BEGIN / COMMIT / PRAGMA are allowed, one statement per line"
+		return 1
+	fi
+
+	# Back up the live database before writing to it. backup_opencode_config()
+	# backs up opencode.json (and cmd_session does not source validate.sh), so use
+	# SQLite's online backup for the session DB itself. .backup exits non-zero on
+	# failure, so an unbacked database aborts the restore.
+	local backup_dir="${OCPROBE_SESSION_BACKUP_DIR:-$HOME/.local/share/opencode/session-backups}"
+	backup_dir="${backup_dir/#\~/$HOME}"
+	mkdir -p "$backup_dir" || {
+		log_error "cannot create backup directory: $backup_dir"
+		return 1
+	}
+	local db_backup
+	db_backup="$backup_dir/opencode.db.pre-restore-$(date +%Y%m%d-%H%M%S)"
+	if ! sqlite3 "$OCPROBE_OPencode_DB" ".backup '$db_backup'"; then
+		log_error "could not back up database to $db_backup — refusing to restore"
+		return 1
+	fi
+	log_info "database backed up to $db_backup"
+
+	# -bail: stop at the first failing statement instead of continuing and
+	# COMMITting the successful ones (which would be a silent partial restore).
+	# On error the open transaction is rolled back when sqlite3 exits.
+	local rc=0
 	{
 		echo "PRAGMA busy_timeout=10000;"
 		echo "BEGIN IMMEDIATE;"
 		cat "$file"
 		echo "COMMIT;"
-	} | sqlite3 "$OCPROBE_OPencode_DB"
+	} | sqlite3 -bail "$OCPROBE_OPencode_DB" || rc=$?
+
+	if ((rc != 0)); then
+		log_error "restore failed (sqlite3 exit $rc) — nothing committed; backup kept at $db_backup"
+		return 1
+	fi
 
 	log_info "restored from $file"
 }
