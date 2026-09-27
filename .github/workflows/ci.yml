@@ -76,12 +76,36 @@ jobs:
         # g-prefixed binaries (gtimeout), not a bare `timeout`; the lib guards
         # every bare `timeout` call with `command -v timeout` and otherwise falls
         # back to a perl alarm, so its absence is not fatal on macOS.
+        #
+        # `bash` is the important one. macOS ships bash 3.2 as /bin/bash, and
+        # this codebase needs >= 4.3 (namerefs). bats re-execs through
+        # `#!/usr/bin/env bash`, so without a modern bash first on PATH the
+        # whole suite runs under 3.2 and dies on a parse error.
         if: runner.os == 'macOS'
         run: |
-          brew install jq sqlite3 coreutils
+          brew install jq sqlite3 coreutils bash
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --upgrade pip pyyaml jsonschema
           echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+          # GITHUB_PATH is PREPENDED, so this puts Homebrew's bash ahead of
+          # /usr/local/bin and /bin for every later step in this job.
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+      - name: Verify bash version
+        # Fail here, loudly, rather than letting the suite die later with
+        # "conditional binary operator expected". The step itself still runs
+        # under the runner's /bin/bash (GitHub hardcodes that as the `run:`
+        # shell), but `bash` resolved from PATH is what bats will use.
+        run: |
+          echo "bash on PATH: $(command -v bash)"
+          echo "system bash:  /bin/bash $(/bin/bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+          bash --version | head -1
+          ver=$(bash -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"')
+          echo "resolved bash version: $ver"
+          major=${ver%%.*}; minor=${ver##*.}
+          if [ "$major" -lt 4 ] || { [ "$major" -eq 4 ] && [ "$minor" -lt 3 ]; }; then
+            echo "::error::tests would run under bash $ver; need >= 4.3"
+            exit 1
+          fi
       - name: Install bats
         # Pinned to the same version on both platforms so the two suites cannot
         # drift apart through a runner's preinstalled bats.
@@ -108,13 +132,27 @@ jobs:
           sudo apt-get install -y jq python3 python3-yaml python3-jsonschema sqlite3 coreutils
       - name: Install dependencies (macOS)
         # See the note in test-unit: venv avoids PEP 668 and guarantees the
-        # interpreter the tests use has yaml + jsonschema.
+        # interpreter the tests use has yaml + jsonschema. `bash` is required
+        # because macOS /bin/bash is 3.2 and the lib needs >= 4.3.
         if: runner.os == 'macOS'
         run: |
-          brew install jq sqlite3 coreutils
+          brew install jq sqlite3 coreutils bash
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --upgrade pip pyyaml jsonschema
           echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+      - name: Verify bash version
+        run: |
+          echo "bash on PATH: $(command -v bash)"
+          echo "system bash:  /bin/bash $(/bin/bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+          bash --version | head -1
+          ver=$(bash -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"')
+          echo "resolved bash version: $ver"
+          major=${ver%%.*}; minor=${ver##*.}
+          if [ "$major" -lt 4 ] || { [ "$major" -eq 4 ] && [ "$minor" -lt 3 ]; }; then
+            echo "::error::tests would run under bash $ver; need >= 4.3"
+            exit 1
+          fi
       - name: Install bats
         run: |
           git clone --depth 1 --branch v1.14.0 https://github.com/bats-core/bats-core.git /tmp/bats
