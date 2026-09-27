@@ -142,18 +142,6 @@ if [[ $# -ge 3 ]]; then
       exit 0
     fi
     exit 0
-  # is_probe_session query - check session ID to return correct result
-  elif [[ "$query" == *"FROM message m"* && "$query" == *"WHERE m.session_id="* ]]; then
-    # is_probe_session query - extract session ID and return correct result
-    # ses_probe1 has probe prompt and is fresh -> return 1
-    # ses_probe2 is old (>24h) -> return nothing
-    # ses_real has no probe prompt -> return nothing
-    if [[ "$query" == *"ses_probe1"* ]]; then
-      echo "1"
-      exit 0
-    else
-      exit 0
-    fi
   # Fresh probe sessions query - MUST come before general "FROM message WHERE session_id=" pattern
   elif [[ "$query" == *"time_created > (strftime('%s','now')-"* && "$query" == *"EXISTS (SELECT 1 FROM message WHERE session_id=id)"* ]]; then
     # Fresh probe sessions query - return ses_probe1 (fresh with messages)
