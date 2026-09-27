@@ -129,13 +129,116 @@ load_validate_history() {
 	done <"$OCPROBE_STATE_DIR/validate-history.jsonl"
 
 	# Copy to the passed nameref array
+	# shellcheck disable=SC2034  # fail_count is a nameref; shellcheck cannot see the caller's array
 	for k in "${!local_counts[@]}"; do
 		fail_count["$k"]="${local_counts[$k]}"
 	done
 }
 
+# _validate_history_streak(model) — consecutive non-WORKS streak for ONE model,
+# read fresh from the history file. Same rules as load_validate_history, but for
+# a single model so it can be called while the history lock is held (that is
+# what makes the read-decide-write atomic). Echoes the streak.
+_validate_history_streak() {
+	local model="$1"
+	local safe_key="${model//\//_}"
+	local history_file="$OCPROBE_STATE_DIR/validate-history.jsonl"
+
+	if [[ ! -f "$history_file" ]]; then
+		printf '0\n'
+		return 0
+	fi
+
+	local streak=0 line line_model line_status
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		line_model=$(printf '%s' "$line" | awk '{print $1}')
+		line_status=$(printf '%s' "$line" | awk '{print $2}')
+		[[ -n "$line_model" && -n "$line_status" ]] || continue
+		[[ "${line_model//\//_}" == "$safe_key" ]] || continue
+		case "$line_status" in
+		WORKS) streak=0 ;;
+		EOL | NOT_FOUND) streak=2 ;;
+		*)
+			if [[ $streak -lt 2 ]]; then
+				streak=$((streak + 1))
+			fi
+			;;
+		esac
+	done <"$history_file"
+
+	printf '%s\n' "$streak"
+}
+
+# _validate_history_locked(fn, args...) — run fn with the history-scoped lock
+# held, guaranteeing the release on every path (success, failure, or early
+# return inside fn). The lock covers ONLY this short read-decide-write; it is
+# never held across a network probe, so probing concurrency is unchanged, and it
+# is a separate lock from acquire_lock() so it cannot serialize the rest of a run.
+#
+# On lock timeout the function still runs, unlocked: the lock is held for
+# milliseconds, so a timeout means another process is wedged, and dropping a
+# run's failure record is worse than a rare unsynchronised append.
+_validate_history_locked() {
+	local lock_dir="$OCPROBE_STATE_DIR/.validate-history.lock"
+
+	if ! _acquire_scoped_lock "$lock_dir"; then
+		log_warn "validate: could not acquire history lock, recording unlocked: $lock_dir"
+		"$@"
+		return $?
+	fi
+
+	local rc=0
+	"$@" || rc=$?
+	_release_scoped_lock "$lock_dir"
+	return $rc
+}
+
+# _validate_record_failure(model, status, proposal_file, tentative_file)
+# Atomic read-decide-write for one model's non-terminal failure: the streak is
+# re-read from the file *while the history lock is held*, so two concurrent
+# validate runs cannot both decide from the same stale count (which would let
+# both confirm on one real failure, or both stay tentative so a dead model is
+# never confirmed). Echoes the streak after the write.
+_validate_record_failure() {
+	local model="$1" status="$2" proposal_file="$3" tentative_file="$4"
+
+	local streak
+	streak=$(_validate_history_streak "$model")
+
+	if [[ "$streak" -eq 0 ]]; then
+		record_validate_history "$model" "$status"
+		echo "$model" >>"$tentative_file"
+		printf '1\n'
+	else
+		record_validate_history "$model" "$status"
+		echo "$model" >>"$proposal_file"
+		printf '2\n'
+	fi
+}
+
+# _validate_record_success(model) — atomic: if this model has a live failure
+# streak, clear it with a WORKS record. Streak re-read under the lock so a
+# concurrent run's record cannot be lost. Echoes the streak after the reset.
+_validate_record_success() {
+	local model="$1"
+
+	local streak
+	streak=$(_validate_history_streak "$model")
+
+	if [[ "$streak" -gt 0 ]]; then
+		record_validate_history "$model" "WORKS"
+		printf '0\n'
+	else
+		printf '%s\n' "$streak"
+	fi
+}
+
 # record_validate_history(model, status) — append one line, then prune_jsonl
 # Reuses the generic prune_jsonl utility from lib/db.sh (pure utility, not audit-specific)
+# NOTE: the append+prune pair is not atomic on its own (prune_jsonl rewrites the
+# file via tail+mv), so callers that race on a shared history file must hold the
+# history-scoped lock — see _validate_history_locked.
 record_validate_history() {
 	local model="$1" status="$2"
 	local history_file="$OCPROBE_STATE_DIR/validate-history.jsonl"
@@ -180,17 +283,15 @@ generate_validate_classification() {
 
 		case "$status" in
 		WORKS)
-			# Reset failure count on success
-			if [[ "${VALIDATE_FAIL_COUNT[$safe_key]:-0}" -gt 0 ]]; then
-				VALIDATE_FAIL_COUNT["$safe_key"]=0
-				record_validate_history "$model" "WORKS"
-			fi
+			# Reset failure count on success. Atomic read-decide-write: re-reads the
+			# streak under the history lock so a concurrent run's record is not lost.
+			VALIDATE_FAIL_COUNT["$safe_key"]=$(_validate_history_locked _validate_record_success "$model")
 			;;
 		EOL | NOT_FOUND)
 			# Terminal failures — confirm immediately regardless of history
 			echo "$model" >>"$proposal_file"
 			VALIDATE_FAIL_COUNT["$safe_key"]=2 # mark as confirmed
-			record_validate_history "$model" "$status"
+			_validate_history_locked record_validate_history "$model" "$status"
 			;;
 		SKIPPED_MODALITY)
 			# Already filtered out by generate_blacklist_proposal, but handle gracefully
@@ -202,25 +303,15 @@ generate_validate_classification() {
 			# is the opposite of what the user asked for. Report, never blacklist, and
 			# do not let it count toward the two-strike gate.
 			VALIDATE_FAIL_COUNT["$safe_key"]=0
-			record_validate_history "$model" "$status"
+			_validate_history_locked record_validate_history "$model" "$status"
 			printf '%s\tBILLING_ERROR\n' "$model" >>"${tentative_file}.billing"
 			;;
 		*)
-			# Other failures: TIMEOUT, AUTH_ERROR, BILLING_ERROR, ERROR, UNCLEAR
-			# shellcheck disable=SC2178,SC2128
-			local fail_count="${VALIDATE_FAIL_COUNT[$safe_key]:-0}"
-			# shellcheck disable=SC2128
-			if [[ $fail_count -eq 0 ]]; then
-				# First failure → TENTATIVE
-				VALIDATE_FAIL_COUNT["$safe_key"]=1
-				record_validate_history "$model" "$status"
-				echo "$model" >>"$tentative_file"
-			else
-				# Second consecutive failure → CONFIRMED
-				echo "$model" >>"$proposal_file"
-				VALIDATE_FAIL_COUNT["$safe_key"]=2
-				record_validate_history "$model" "$status"
-			fi
+			# Other failures: TIMEOUT, AUTH_ERROR, ERROR, UNCLEAR
+			# Atomic read-decide-write under the history lock — this is the two-strike
+			# gate decision, and it must not be taken twice from the same stale count.
+			# shellcheck disable=SC2034  # VALIDATE_FAIL_COUNT is a global associative array used by caller
+			VALIDATE_FAIL_COUNT["$safe_key"]=$(_validate_history_locked _validate_record_failure "$model" "$status" "$proposal_file" "$tentative_file")
 			;;
 		esac
 	done <"$results_file"
