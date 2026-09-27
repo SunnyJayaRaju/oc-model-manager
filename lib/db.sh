@@ -112,23 +112,27 @@ delete_session() {
 	fi
 
 	# (b) Title gate. Only ever delete a session that is recognisably a probe
-	# session. Reuses the existing list_sessions_with_titles helper rather than
-	# adding another query. A session that is absent from the listing, or whose
-	# title is not a known probe prefix, is REFUSED — fail closed, so an id that
-	# was mis-parsed out of model output cannot delete a real conversation.
+	# session. A session that is absent, or whose title is not a known probe
+	# prefix, is REFUSED — fail closed, so an id mis-parsed out of model output
+	# cannot delete a real conversation.
+	#
+	# The lookup is a single-row DB read, not `opencode session list`: that CLI
+	# listing paginates at 100 rows, so probing that way left a blind spot — a
+	# genuine probe session beyond the newest 100 was reported "not present" and
+	# refused, which leaked sessions that cmd_session_cleanup had already found
+	# via the DB. Reading the row directly is complete by construction and so is
+	# strictly MORE protective, not less: the same three prefixes are still
+	# required and an unknown id is still refused.
 	local validate_title_prefix="${OCPROBE_VALIDATE_TITLE_PREFIX:-ocprobe-validate}"
-	local found=0 title="" listed_sid listed_title
-	while IFS=$'\t' read -r listed_sid listed_title; do
-		[[ "$listed_sid" == "$sid" ]] || continue
-		title="$listed_title"
-		found=1
-		break
-	done < <(list_sessions_with_titles)
+	local row title
+	row=$(get_session_title "$sid")
 
-	if [[ $found -eq 0 ]]; then
-		log_error "delete_session: refusing to delete $sid — not present in session list, cannot confirm it is a probe session"
+	if [[ -z "$row" ]]; then
+		log_error "delete_session: refusing to delete $sid — not present in the session database, cannot confirm it is a probe session"
 		return 1
 	fi
+	# get_session_title emits "<id><TAB><title>"; strip the id.
+	title="${row#*$'\t'}"
 
 	case "$title" in
 	"${OCPROBE_PROBE_TITLE_PREFIX}"* | "${OCPROBE_PROBE_TITLE_PREFIX_LEGACY}"* | "$validate_title_prefix"*)
@@ -143,6 +147,21 @@ delete_session() {
 }
 
 # List all sessions with titles
+# get_session_title(sid) — print "<id><TAB><title>" for one session, or nothing
+# if it does not exist. Single-row primary-key lookup, so it is not subject to
+# the 100-row pagination of `opencode session list`. Mirrors the column
+# selection used by list_probe_sessions_since (id || char(9) || COALESCE(...)),
+# which also lets an absent row be told apart from a row whose title is empty.
+get_session_title() {
+	local sid="$1"
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
+	local sid_esc
+	sid_esc=$(sql_escape "$sid") || return 1
+	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
+		"SELECT id || char(9) || COALESCE(title, '') FROM session WHERE id='${sid_esc}' LIMIT 1;" \
+		2>/dev/null
+}
+
 list_sessions_with_titles() {
 	opencode session list 2>/dev/null | awk '/^ses_/{id=$1; $1=""; sub(/^ +/,""); print id"\t"$0}' || true
 }

@@ -7,15 +7,28 @@
 load '../helpers/bats-support/load'
 load '../helpers/bats-assert/load'
 
-setup() {
-  source "$BATS_TEST_DIRNAME/../helpers/setup_libs.bash"
-  create_test_db
-  # Mock opencode to simulate JSON output with sessionID
-  mock_opencode_json
-  
-  # Reset tracking file
-  : > "/tmp/ocprobe-test-delete-track"
-}
+  setup() {
+    source "$BATS_TEST_DIRNAME/../helpers/setup_libs.bash"
+    create_test_db
+    # Pin the config to the throwaway test database. cmd_probe calls load_config,
+    # which would otherwise fall back to the developer's real
+    # ~/.config/ocprobe/config.yaml and repoint OCPROBE_OPencode_DB at the real
+    # opencode.db. That went unnoticed while delete_session verified titles via
+    # the mocked `opencode session list`; now that it reads the database
+    # directly, the test must actually point at the database it seeded.
+    cat >"$BATS_TEST_TMPDIR/config.yaml" <<EOF
+version: 1
+opencode:
+  config_path: "$BATS_TEST_TMPDIR/opencode.json"
+  db_path: "$OCPROBE_OPencode_DB"
+EOF
+    export OCPROBE_CONFIG_OVERRIDE="$BATS_TEST_TMPDIR/config.yaml"
+    # Mock opencode to simulate JSON output with sessionID
+    mock_opencode_json
+
+    # Reset tracking file
+    : > "/tmp/ocprobe-test-delete-track"
+  }
 
 teardown() {
   rm -rf "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR"
