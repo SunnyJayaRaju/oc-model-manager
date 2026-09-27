@@ -24,6 +24,13 @@ set -uo pipefail
 : "${OCPROBE_VALIDATE_PROGRESS_INTERVAL:=25}"
 : "${OCPROBE_VALIDATE_LARGE_RUN_THRESHOLD:=200}"
 
+# Sentinel returned by _validate_history_locked() when the history lock could not
+# be acquired within its timeout, so the history update for that model was
+# SKIPPED rather than performed unsynchronised. Distinct from 0 (ok), 1 and 2
+# (ordinary failures) so callers can tell the two apart. EX_TEMPFAIL semantics:
+# the work was not done, retry later.
+OCPROBE_HISTORY_SKIPPED=75
+
 # ---- Modality Skip Patterns ---------------------------------------------------
 # Local glob matcher — semantics intentionally match policy_glob_match()
 # in lib/policy.sh (case-sensitive, * matches /, ? = one char) but this
@@ -176,22 +183,50 @@ _validate_history_streak() {
 # never held across a network probe, so probing concurrency is unchanged, and it
 # is a separate lock from acquire_lock() so it cannot serialize the rest of a run.
 #
-# On lock timeout the function still runs, unlocked: the lock is held for
-# milliseconds, so a timeout means another process is wedged, and dropping a
-# run's failure record is worse than a rare unsynchronised append.
+# FAILS CLOSED on lock timeout. The callback is NOT run unlocked: doing so would
+# re-open the exact read-decide-write race this lock exists to prevent, precisely
+# when contention makes it most likely. Instead the history update for this model
+# is skipped and OCPROBE_HISTORY_SKIPPED is returned so callers can tell "skipped
+# for lock contention" apart from "callback ran and failed". No data is lost — the
+# streak simply does not advance or reset this cycle, and the model is
+# re-evaluated on the next validate run.
+#
+# Note the retry already lives in _acquire_scoped_lock (50 x 0.1s, ~5s), so the
+# callback is only skipped after a real 5s stall, not on a momentary collision.
 _validate_history_locked() {
 	local lock_dir="$OCPROBE_STATE_DIR/.validate-history.lock"
 
 	if ! _acquire_scoped_lock "$lock_dir"; then
-		log_warn "validate: could not acquire history lock, recording unlocked: $lock_dir"
-		"$@"
-		return $?
+		log_warn "validate: history update SKIPPED this run due to lock contention ($lock_dir); no streak change was recorded and the model will be re-evaluated on the next validate run"
+		return "$OCPROBE_HISTORY_SKIPPED"
 	fi
 
 	local rc=0
 	"$@" || rc=$?
 	_release_scoped_lock "$lock_dir"
 	return $rc
+}
+
+# _validate_report_skipped(model, proposal_file, tentative_file)
+# Fallback used ONLY when the history lock timed out and the persistent write was
+# skipped (OCPROBE_HISTORY_SKIPPED). The run must still report what the probe it
+# just performed found, so this classifies from an unlocked read and emits the
+# same TENTATIVE/CONFIRMED line the locked path would have — but writes nothing
+# to the history file. A read cannot corrupt the file, so doing it unlocked is
+# safe. Echoes the streak the caller should keep in memory.
+_validate_report_skipped() {
+	local model="$1" proposal_file="$2" tentative_file="$3"
+
+	local streak
+	streak=$(_validate_history_streak "$model")
+
+	if [[ "$streak" -eq 0 ]]; then
+		echo "$model" >>"$tentative_file"
+		printf '1\n'
+	else
+		echo "$model" >>"$proposal_file"
+		printf '2\n'
+	fi
 }
 
 # _validate_record_failure(model, status, proposal_file, tentative_file)
@@ -260,6 +295,9 @@ record_validate_history() {
 #       0 (first time) → TENTATIVE, record failure, do NOT add to blacklist
 #       >=1 (second consecutive) → CONFIRMED, add to blacklist
 # Output: proposal file (CONFIRMED only), tentative_file (TENTATIVE only)
+# VALIDATE_FAIL_COUNT is assigned but never read inside this function: it is a
+# global associative array published for the caller to consume.
+# shellcheck disable=SC2034
 generate_validate_classification() {
 	local provider_id="$1"
 	local results_file="$2"
@@ -285,13 +323,25 @@ generate_validate_classification() {
 		WORKS)
 			# Reset failure count on success. Atomic read-decide-write: re-reads the
 			# streak under the history lock so a concurrent run's record is not lost.
-			VALIDATE_FAIL_COUNT["$safe_key"]=$(_validate_history_locked _validate_record_success "$model")
+			# On a skipped write the streak simply is not reset; keep the real current
+			# value rather than the sentinel so nothing downstream sees "75".
+			local works_rc=0
+			VALIDATE_FAIL_COUNT["$safe_key"]=$(_validate_history_locked _validate_record_success "$model") || works_rc=$?
+			if [[ $works_rc -eq "$OCPROBE_HISTORY_SKIPPED" ]]; then
+				VALIDATE_FAIL_COUNT["$safe_key"]=$(_validate_history_streak "$model")
+			fi
 			;;
 		EOL | NOT_FOUND)
 			# Terminal failures — confirm immediately regardless of history
 			echo "$model" >>"$proposal_file"
 			VALIDATE_FAIL_COUNT["$safe_key"]=2 # mark as confirmed
-			_validate_history_locked record_validate_history "$model" "$status"
+			# The rc must be consumed, not left bare: these libs run under `set -e`
+			# (locking.sh sets -euo pipefail and validate.sh does not clear it), so an
+			# unconsumed OCPROBE_HISTORY_SKIPPED would abort the whole run here. This
+			# run's user-visible report is already emitted above, so a skipped write
+			# only means the persistent streak does not advance (re-evaluated next run).
+			local eol_rc=0
+			_validate_history_locked record_validate_history "$model" "$status" || eol_rc=$?
 			;;
 		SKIPPED_MODALITY)
 			# Already filtered out by generate_blacklist_proposal, but handle gracefully
@@ -303,15 +353,24 @@ generate_validate_classification() {
 			# is the opposite of what the user asked for. Report, never blacklist, and
 			# do not let it count toward the two-strike gate.
 			VALIDATE_FAIL_COUNT["$safe_key"]=0
-			_validate_history_locked record_validate_history "$model" "$status"
+			# rc consumed for the same `set -e` reason as the EOL/NOT_FOUND branch:
+			# a bare non-zero return would abort the run. The report below is
+			# unconditional and does not depend on the history write.
+			local bill_rc=0
+			_validate_history_locked record_validate_history "$model" "$status" || bill_rc=$?
 			printf '%s\tBILLING_ERROR\n' "$model" >>"${tentative_file}.billing"
 			;;
 		*)
 			# Other failures: TIMEOUT, AUTH_ERROR, ERROR, UNCLEAR
 			# Atomic read-decide-write under the history lock — this is the two-strike
 			# gate decision, and it must not be taken twice from the same stale count.
-			# shellcheck disable=SC2034  # VALIDATE_FAIL_COUNT is a global associative array used by caller
-			VALIDATE_FAIL_COUNT["$safe_key"]=$(_validate_history_locked _validate_record_failure "$model" "$status" "$proposal_file" "$tentative_file")
+			# If the lock timed out, the persistent write is skipped but this run still
+			# reports its classification from the probe that just happened.
+			local fail_rc=0
+			VALIDATE_FAIL_COUNT["$safe_key"]=$(_validate_history_locked _validate_record_failure "$model" "$status" "$proposal_file" "$tentative_file") || fail_rc=$?
+			if [[ $fail_rc -eq "$OCPROBE_HISTORY_SKIPPED" ]]; then
+				VALIDATE_FAIL_COUNT["$safe_key"]=$(_validate_report_skipped "$model" "$proposal_file" "$tentative_file")
+			fi
 			;;
 		esac
 	done <"$results_file"
