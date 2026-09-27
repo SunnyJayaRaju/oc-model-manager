@@ -261,17 +261,20 @@ See `ocprobe config schema` for full schema.
 
 ## Validate Command
 
-`ocprobe validate` probes every model offered by each provider that has valid API credentials in `~/.local/share/opencode/auth.json`. Models that respond successfully (`WORKS`) stay visible in OpenCode's model picker; models that fail (timeout, auth error, billing error, not found, or other error) are added to the provider's `blacklist` in `opencode.json`.
+`ocprobe validate` probes every model offered by each provider that has valid API credentials in `~/.local/share/opencode/auth.json`. Models that respond successfully (`WORKS`) stay visible in OpenCode's model picker; models that fail (timeout, auth error, not found, or other error) are added to the provider's `blacklist` in `opencode.json`.
+
+**Billing errors are never blacklisted.** If a probe fails with `BILLING_ERROR`, the *account* cannot currently afford that model's default output size — the model itself is fine and works as soon as credits exist. Blacklisting it would permanently hide a working model on a free or credit-limited key, so it is reported for review but never added to the blacklist, and it does not count toward the two-failure gate.
 
 ---
  
 ### Two-Failure Gate
  
-Non-terminal failures (TIMEOUT, AUTH_ERROR, BILLING_ERROR, ERROR, UNCLEAR) require **two consecutive failures** before a model is added to the blacklist:
+Non-terminal failures (TIMEOUT, AUTH_ERROR, ERROR, UNCLEAR) require **two consecutive failures** before a model is added to the blacklist:
 - First failure → `TENTATIVE` (not blacklisted, surfaced for review)
 - Second consecutive failure → `CONFIRMED` (added to blacklist)
 - `WORKS` at any point resets the failure counter
 - `EOL` / `NOT_FOUND` → `CONFIRMED` immediately (terminal)
+- `BILLING_ERROR` → never blacklisted, and does not advance the counter (see above)
  
 ---
  
