@@ -25,6 +25,22 @@ setup() {
     
     # Mock opencode for tests that need it
     mock_opencode
+
+    # Never let these tests depend on — or touch — the real scheduler, on either
+    # backend. `ocprobe doctor` reports the scheduler through `cmd_scheduler
+    # status`, which dispatches on detect_platform INSIDE the child process:
+    # launchd_status on macOS, systemd_status on Linux. Both decide "NOT
+    # INSTALLED" from a $HOME-relative state file, so the previous version of
+    # this file was really asserting a fact about whichever machine ran it.
+    #
+    # So mock the backend THIS run will actually dispatch to. Asserting one
+    # backend's report while the other is what the code consults is precisely
+    # the mistake that made the first attempt of this fix fail on ubuntu.
+    case "$(detect_platform)" in
+        launchd) setup_launchd_stubs ok ;;
+        systemd) setup_systemd_stubs ok ;;
+    esac
+    isolate_scheduler_home
 }
 
 # ---- Dev Mode Detection Tests ----
@@ -240,6 +256,105 @@ EOF
     assert_output --partial "--- Scheduler ---"
     assert_output --partial "NOT INSTALLED"
     refute_output --partial "cmd_scheduler: command not found"
+}
+
+# ---- Scheduler state is controlled, not inherited ---------------------------
+# The two doctor tests above assert "NOT INSTALLED". That assertion is only
+# meaningful if the test actually controls the state it is asserting about, so
+# this test flips the plist into existence inside the throwaway HOME and requires
+# the report to change. If the fake HOME or the launchctl stub ever stop applying
+# — e.g. someone "simplifies" setup() back to reading the real host — this fails
+# and the NOT INSTALLED assertions stop being trustworthy.
+
+@test "doctor scheduler report is driven by the mocked state, not the host" {
+    # Everything below follows the backend detect_platform will actually
+    # dispatch to, so the assertions are about the code path the test really
+    # exercises. Asserting a launchd plist changes the report is meaningless on
+    # Linux, where systemd_status never looks at it.
+    local platform state_file when_enabled
+    platform=$(detect_platform)
+    case "$platform" in
+        launchd)
+            state_file="$HOME/Library/LaunchAgents/com.ocprobe.watch.plist"
+            when_enabled="INSTALLED (not running)"   # stubbed `launchctl list` is silent
+            ;;
+        systemd)
+            state_file="$HOME/.config/systemd/user/ocprobe-watch.service"
+            when_enabled="INSTALLED (enabled)"       # stubbed `is-enabled` exits 0
+            ;;
+        *)
+            skip "unsupported platform: $platform"
+            return
+            ;;
+    esac
+
+    local test_bin_dir="$BATS_TEST_TMPDIR/fake-installed/bin"
+    cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    chmod +x "$test_bin_dir/ocprobe"
+
+    local config_dir="$BATS_TEST_TMPDIR/mocksens-config"
+    mkdir -p "$config_dir"
+    cat > "$config_dir/config.yaml" <<EOF
+version: 1
+opencode:
+  config_path: "$BATS_TEST_TMPDIR/opencode.json"
+  db_path: "$BATS_TEST_TMPDIR/opencode.db"
+scheduler:
+  enabled: false
+  interval_seconds: 21600
+  run_at_load: false
+logging:
+  level: error
+  format: text
+  file_enabled: false
+EOF
+    echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
+
+    # Baseline: no state file in the throwaway HOME -> NOT INSTALLED
+    run bash -c "
+        export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
+        export OCPROBE_STATE_DIR="$BATS_TEST_TMPDIR/state"
+        export OCPROBE_LOG_LEVEL=error
+        mkdir -p "$BATS_TEST_TMPDIR/state"
+        '$test_bin_dir/ocprobe' doctor 2>&1
+    "
+    [[ "$status" -eq 0 || "$status" -eq 1 ]]
+    assert_output --partial "NOT INSTALLED"
+
+    # Now create the state file exactly where this backend looks, i.e. inside the
+    # throwaway HOME. The report MUST change, proving the assertion above is
+    # sensitive to state we control rather than passing vacuously.
+    printf 'x\n' > "$state_file"
+
+    run bash -c "
+        export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
+        export OCPROBE_STATE_DIR="$BATS_TEST_TMPDIR/state"
+        export OCPROBE_LOG_LEVEL=error
+        mkdir -p "$BATS_TEST_TMPDIR/state"
+        '$test_bin_dir/ocprobe' doctor 2>&1
+    "
+    [[ "$status" -eq 0 || "$status" -eq 1 ]]
+    assert_output --partial "$when_enabled"
+    refute_output --partial "NOT INSTALLED"
+
+    if [[ "$platform" == "systemd" ]]; then
+        # systemd_status consults BOTH the unit file and `systemctl --user
+        # is-enabled`. Flip only the systemctl stub and the report must change
+        # again, which proves the systemctl mock is really in the path (with no
+        # unit file it short-circuits and systemctl is never called at all).
+        setup_systemd_stubs fail
+
+        run bash -c "
+            export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
+            export OCPROBE_STATE_DIR="$BATS_TEST_TMPDIR/state"
+            export OCPROBE_LOG_LEVEL=error
+            mkdir -p "$BATS_TEST_TMPDIR/state"
+            '$test_bin_dir/ocprobe' doctor 2>&1
+        "
+        [[ "$status" -eq 0 || "$status" -eq 1 ]]
+        assert_output --partial "INSTALLED (disabled)"
+        refute_output --partial "NOT INSTALLED"
+    fi
 }
 
 # ---- Global Flag Parsing Tests ----

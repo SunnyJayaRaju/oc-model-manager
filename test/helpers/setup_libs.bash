@@ -224,3 +224,84 @@ INSERT INTO part VALUES (1, 'ses_probe1', 1, strftime('%s','now')*1000, '{"type"
 INSERT INTO part VALUES (2, 'ses_probe2', 2, (strftime('%s','now')-90000)*1000, '{"type":"text","text":"Reply with exactly: OK"}');
 EOF
 }
+
+# ---- launchd / scheduler mocking ---------------------------------------------
+# These live here rather than in a single test file because two suites need
+# them, and neither may ever touch the developer's real launchd agent: a real
+# `ocprobe scheduler install` on a workstation makes any assertion of
+# "NOT INSTALLED" fail spuriously. (That happened once already during this
+# project's own testing.)
+
+# setup_launchd_stubs [ok|fail] — put a fake `launchctl` first on PATH and
+# redirect launchd_plist_path() away from the real ~/Library/LaunchAgents, so
+# launchd_install / launchd_uninstall / launchd_status run entirely against a
+# controlled fake. Calls are recorded in $BATS_TEST_TMPDIR/launchctl.calls.
+#   $1 "ok"   -> `launchctl load` succeeds
+#      "fail" -> `launchctl load` exits 5
+setup_launchd_stubs() { # $1 = "ok" | "fail"
+  local bin="$BATS_TEST_TMPDIR/lb"
+  mkdir -p "$bin"
+  cat >"$bin/launchctl" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >>"$BATS_TEST_TMPDIR/launchctl.calls"
+if [[ "\$1" == "load" && "$1" == "fail" ]]; then
+    echo "Load failed: 5: Input/output error" >&2
+    exit 5
+fi
+exit 0
+EOF
+  chmod +x "$bin/launchctl"
+  export PATH="$bin:$PATH"
+  : >"$BATS_TEST_TMPDIR/launchctl.calls"
+  # redirect the plist away from ~/Library/LaunchAgents (current shell only)
+  eval "launchd_plist_path() { echo '$BATS_TEST_TMPDIR/com.ocprobe.watch.plist'; }"
+}
+
+# setup_systemd_stubs [ok|fail] — the systemd counterpart of
+# setup_launchd_stubs: a fake `systemctl` first on PATH, plus
+# systemd_unit_path()/systemd_timer_path() redirected away from the real
+# ~/.config/systemd/user. Calls are recorded in
+# $BATS_TEST_TMPDIR/systemctl.calls.
+#
+# systemd_status() is shaped differently from launchd_status in a way that
+# matters: it tests for the unit FILE first and only then asks
+# `systemctl --user is-enabled`. With no unit file it short-circuits to
+# "NOT INSTALLED" and never calls systemctl at all. So both dependencies have
+# to be mocked, or the systemctl stub is never exercised.
+#   $1 "ok"   -> `is-enabled` succeeds -> "INSTALLED (enabled)"
+#      "fail" -> `is-enabled` exits 1  -> "INSTALLED (disabled)"
+setup_systemd_stubs() { # $1 = "ok" | "fail"
+  local bin="$BATS_TEST_TMPDIR/sb"
+  mkdir -p "$bin"
+  cat >"$bin/systemctl" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >>"$BATS_TEST_TMPDIR/systemctl.calls"
+if [[ "\$1" == "--user" && "\$2" == "is-enabled" && "$1" == "fail" ]]; then
+    exit 1
+fi
+exit 0
+EOF
+  chmod +x "$bin/systemctl"
+  export PATH="$bin:$PATH"
+  : >"$BATS_TEST_TMPDIR/systemctl.calls"
+  # redirect the units away from the real ~/.config/systemd/user
+  eval "systemd_unit_path() { echo '$BATS_TEST_TMPDIR/ocprobe-watch.service'; }"
+  eval "systemd_timer_path() { echo '$BATS_TEST_TMPDIR/ocprobe-watch.timer'; }"
+}
+
+# isolate_scheduler_home — export a throwaway HOME so BOTH scheduler backends
+# resolve their state files inside the test's own temp dir:
+#   launchd_status -> $HOME/Library/LaunchAgents/com.ocprobe.watch.plist
+#   systemd_status -> $HOME/.config/systemd/user/ocprobe-watch.service
+# Both paths are $HOME-relative, so one fake HOME covers both platforms.
+#
+# This is needed whenever the code under test runs in a separate process:
+# bootstrap.bats drives `ocprobe doctor` through `bash -c`, and the stubs above
+# only redefine shell FUNCTIONS, which cannot cross that boundary. PATH and
+# HOME are both inherited by the child, so both reach it — without a fake HOME
+# the child resolves the REAL state file and the test depends on the host.
+isolate_scheduler_home() {
+  local h="$BATS_TEST_TMPDIR/fake-home"
+  mkdir -p "$h/Library/LaunchAgents" "$h/.config/systemd/user"
+  export HOME="$h"
+}
