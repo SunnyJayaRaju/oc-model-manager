@@ -48,15 +48,44 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test-unit:
-    name: Unit Tests
-    runs-on: ubuntu-latest
+    name: Unit Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Keep going on the other platform's failure so a macOS-only break still
+      # reports the Linux result (and vice versa) in the same run.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
-      - name: Install dependencies
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y jq python3 python3-yaml python3-jsonschema sqlite3 coreutils
-          # Install bats from source
+      - name: Install dependencies (macOS)
+        # Homebrew equivalents of the apt packages above. python3-yaml and
+        # python3-jsonschema are Debian package names, so they map to a Python
+        # venv here: installing into the runner's system/Homebrew python is
+        # unreliable (PEP 668 externally-managed-environment), and a venv also
+        # guarantees the `python3` the tests invoke is the one that has yaml and
+        # jsonschema (lib/config.sh imports both). Added to GITHUB_PATH so the
+        # test step below picks it up.
+        #
+        # coreutils is installed for parity only. Homebrew's coreutils provides
+        # g-prefixed binaries (gtimeout), not a bare `timeout`; the lib guards
+        # every bare `timeout` call with `command -v timeout` and otherwise falls
+        # back to a perl alarm, so its absence is not fatal on macOS.
+        if: runner.os == 'macOS'
+        run: |
+          brew install jq sqlite3 coreutils
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --upgrade pip pyyaml jsonschema
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: Install bats
+        # Pinned to the same version on both platforms so the two suites cannot
+        # drift apart through a runner's preinstalled bats.
+        run: |
           git clone --depth 1 --branch v1.14.0 https://github.com/bats-core/bats-core.git /tmp/bats
           cd /tmp/bats
           sudo ./install.sh /usr/local
@@ -64,15 +93,30 @@ jobs:
         run: bats test/unit/
 
   test-integration:
-    name: Integration Tests
-    runs-on: ubuntu-latest
+    name: Integration Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
-      - name: Install dependencies
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y jq python3 python3-yaml python3-jsonschema sqlite3 coreutils
-          # Install bats from source
+      - name: Install dependencies (macOS)
+        # See the note in test-unit: venv avoids PEP 668 and guarantees the
+        # interpreter the tests use has yaml + jsonschema.
+        if: runner.os == 'macOS'
+        run: |
+          brew install jq sqlite3 coreutils
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --upgrade pip pyyaml jsonschema
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: Install bats
+        run: |
           git clone --depth 1 --branch v1.14.0 https://github.com/bats-core/bats-core.git /tmp/bats
           cd /tmp/bats
           sudo ./install.sh /usr/local
