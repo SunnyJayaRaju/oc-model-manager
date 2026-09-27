@@ -101,13 +101,65 @@ fetch_catalog() {
 			log_error "opencode models command timed out or failed"
 			return 1
 		fi
-		python3 - "$OCPROBE_RUN_DIR/catalog.raw" "$cache_file" <<'PY'
+
+		# ---- Catalog floor guard ----------------------------------------------
+		# `opencode models` can exit 0 and return nothing (transient upstream
+		# blip, partial response, auth/rate-limit edge). Writing that straight to
+		# the cache replaces a good catalog with {"models":[]}, and the format
+		# check below only warns — so every previously-whitelisted model then
+		# lands in gone.txt and fires a CATALOG_SHRINK alert, for up to the whole
+		# cache TTL. Nothing is actually deleted (the gone list is alert-only;
+		# removal needs a probe-confirmed DEAD), so the damage is alert noise plus
+		# a poisoned cache, not data loss — but it is still worth refusing.
+		#
+		# Two rejection rules:
+		#   1. zero models — never a legitimate catalog.
+		#   2. fewer than 10% of the previous cache — a sudden collapse to a tiny
+		#      fraction of a previously-populated catalog is far more likely a
+		#      partial response than a real mass removal. 10% is deliberately
+		#      conservative and asymmetric: a false positive costs one cycle of
+		#      staleness (the next successful fetch, or --force-refresh, shows the
+		#      true catalog), while a false negative costs the poisoning plus one
+		#      alert per whitelisted model for the full TTL. For a prior catalog
+		#      of <= 10 models the 10% floor is <= 1, so only rule 1 can bite.
+		local new_count prior_count reject_reason=""
+		new_count=$(grep -c '[^[:space:]]' "$OCPROBE_RUN_DIR/catalog.raw" 2>/dev/null) || new_count=0
+		[[ "$new_count" =~ ^[0-9]+$ ]] || new_count=0
+		prior_count=0
+		if [[ -s "$cache_file" ]]; then
+			prior_count=$(jq -r '(.models // []) | length' "$cache_file" 2>/dev/null) || prior_count=0
+			[[ "$prior_count" =~ ^[0-9]+$ ]] || prior_count=0
+		fi
+
+		if [[ $new_count -eq 0 ]]; then
+			reject_reason="it contained no models at all"
+		elif [[ $prior_count -gt 0 ]] && [[ $((new_count * 10)) -lt $prior_count ]]; then
+			reject_reason="it had $new_count models, under 10% of the $prior_count in the existing cache"
+		fi
+
+		if [[ -n "$reject_reason" ]]; then
+			if [[ $prior_count -gt 0 ]]; then
+				# Keep the previous cache and fall through: catalog.txt is rebuilt
+				# from it below, so compute_diff sees no "gone" models and the
+				# CATALOG_SHRINK path cannot fire from this rejected fetch.
+				log_warn "Rejected suspiciously small catalog: $reject_reason. Treating it as a transient/partial response and keeping the existing cache ($prior_count models) for this run."
+			else
+				# No usable baseline: an empty first fetch has nothing to fall back
+				# on. Writing {"models":[]} would just create a meaningless
+				# baseline, and continuing would mark every whitelisted model as
+				# gone. Abort instead and let the caller retry.
+				log_warn "Catalog fetch returned an empty catalog and there is no previous cache to fall back on. Not writing an empty cache; aborting this run. Re-run 'ocprobe audit' (or use --force-refresh) to retry."
+				return 1
+			fi
+		else
+			python3 - "$OCPROBE_RUN_DIR/catalog.raw" "$cache_file" <<'PY'
 import json,sys,time
 models=[l.strip() for l in open(sys.argv[1]) if l.strip()]
 tmp=sys.argv[2]+".tmp"
 json.dump({"fetched_at":int(time.time()),"models":models},open(tmp,"w"))
 import os; os.replace(tmp,sys.argv[2])
 PY
+		fi
 	else
 		log_info "[1/7] Using cached catalog (age: $((cache_age / 3600))h $(((cache_age % 3600) / 60))m)"
 	fi
@@ -537,7 +589,11 @@ cmd_audit() {
 	load_policy
 	policy_write_never_remove_file
 
-	fetch_catalog
+	# fetch_catalog returns non-zero when the catalog is unusable (fetch failed,
+	# or an empty first fetch with no cache to fall back on). Abort before
+	# compute_diff, which would otherwise diff against a missing/empty catalog
+	# and mark every whitelisted model as gone.
+	fetch_catalog || return 1
 	compute_diff
 
 	# Load probe history for alert processing
@@ -562,7 +618,10 @@ cmd_check() {
 	load_policy
 	policy_write_never_remove_file
 
-	fetch_catalog
+	# See the note in cmd_audit: a non-zero return means there is no usable
+	# catalog, so stop before compute_diff can raise CATALOG_SHRINK for every
+	# whitelisted model.
+	fetch_catalog || return 1
 	compute_diff
 
 	declare -gA MODEL_LAST_STATUS MODEL_FAIL_COUNT
