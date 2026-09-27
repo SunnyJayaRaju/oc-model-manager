@@ -211,6 +211,13 @@ CREATE TABLE todo (
 INSERT INTO session VALUES ('ses_probe1', 'ocmm-probe-test', strftime('%s','now')*1000, strftime('%s','now')*1000);
 INSERT INTO session VALUES ('ses_probe2', 'ocmm-probe-old', (strftime('%s','now')-90000)*1000, (strftime('%s','now')-90000)*1000);
 INSERT INTO session VALUES ('ses_real', 'Real Session', strftime('%s','now')*1000, strftime('%s','now')*1000);
+-- The mocked `opencode run` reports sessionID "ses_test123", and the mocked
+-- `opencode session list` lists it. The database must agree with both, because
+-- delete_session verifies the title by reading this table directly (it used to
+-- read the paginated CLI listing instead, so the CLI mock alone was enough).
+INSERT INTO session VALUES ('ses_test123', 'ocprobe-probe', strftime('%s','now')*1000, strftime('%s','now')*1000);
+INSERT INTO message VALUES (4, 'ses_test123', strftime('%s','now')*1000);
+INSERT INTO part VALUES (4, 'ses_test123', 4, strftime('%s','now')*1000, '{"type":"text","text":"Reply with exactly: OK"}');
 INSERT INTO message VALUES (1, 'ses_probe1', strftime('%s','now')*1000);
 INSERT INTO message VALUES (2, 'ses_probe2', (strftime('%s','now')-90000)*1000);
 INSERT INTO part VALUES (1, 'ses_probe1', 1, strftime('%s','now')*1000, '{"type":"text","text":"Reply with exactly: OK"}');

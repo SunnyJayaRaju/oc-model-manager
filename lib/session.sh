@@ -13,6 +13,22 @@ cmd_session_list() {
 		"SELECT s.id, s.title, (SELECT COUNT(*) FROM message m WHERE m.session_id=s.id) AS msgs, datetime(s.time_updated/1000,'unixepoch','localtime') FROM session s ORDER BY s.time_updated DESC;"
 }
 
+# ---- In-place sed variant ----------------------------------------------------
+# `sed -i` takes a MANDATORY suffix argument on BSD/macOS (`sed -i ''`) and an
+# OPTIONAL, attached one on GNU (`sed -i`, or `sed -i.bak`). So the BSD form
+# `sed -i '' 'script' file` is parsed by GNU as: script='', then FILES
+# 'script' and 'file' — the real substitution never runs, and the command only
+# "works" because the bogus filename makes it exit non-zero and fall through to
+# the GNU form. That is fragile: correctness depends on the first invocation
+# FAILING, and if it ever returned 0 the edit would be silently skipped, leaving
+# a non-idempotent restore.
+# Detect the variant once and always invoke the correct form.
+if sed --version >/dev/null 2>&1; then
+	OCPROBE_SED_INPLACE=(sed -i) # GNU
+else
+	OCPROBE_SED_INPLACE=(sed -i '') # BSD / macOS
+fi
+
 # ---- Backup Session ---------------------------------------------------------
 cmd_session_backup() {
 	local sid="${1:-}"
@@ -51,7 +67,7 @@ SELECT * FROM todo WHERE session_id='$sql_sid';
 EOF
 
 	# Use INSERT OR REPLACE for idempotent restore
-	sed -i '' 's/^INSERT INTO /INSERT OR REPLACE INTO /' "$out" 2>/dev/null || sed -i 's/^INSERT INTO /INSERT OR REPLACE INTO /' "$out"
+	"${OCPROBE_SED_INPLACE[@]}" 's/^INSERT INTO /INSERT OR REPLACE INTO /' "$out"
 
 	local msgs parts
 	msgs=$(grep -c "INSERT OR REPLACE INTO message" "$out" || true)
@@ -143,22 +159,40 @@ cmd_session_cleanup() {
 	acquire_lock
 	trap 'release_lock' EXIT INT TERM
 
-	log_info "Cleaning probe sessions (ocprobe-probe)..."
+	log_info "Cleaning probe sessions (probe + validate)..."
 
-	local deleted=0
-	while IFS=$'\t' read -r sid title; do
-		[[ -n "$sid" && ("$title" == ${OCPROBE_PROBE_TITLE_PREFIX}* || "$title" == ${OCPROBE_PROBE_TITLE_PREFIX_LEGACY}*) ]] || continue
+	local deleted=0 sid
+	# Reuse the DB-backed listing rather than `opencode session list`, which
+	# paginates at 100 rows — on a large run the CLI view hides most of the
+	# sessions the run just created, so cleanup deleted only what it could see
+	# and leaked the rest. This is the same helper the main cleanup path in
+	# lib/models.sh uses.
+	#
+	# Pass 0 for since_ms so the listing is bounded by the age guard in SQL and
+	# by the freshness check below, rather than by one run's start time: this
+	# subcommand can be invoked at any point, including well after a run.
+	# list_probe_sessions_since also matches all three title prefixes in SQL
+	# (ocprobe-probe*, ocmm-probe*, ocprobe-validate*) — the validate prefix was
+	# previously missing here, so validate sessions were never cleaned. No
+	# title re-check is needed in this loop: delete_session below independently
+	# re-validates the id format and the title before removing anything.
+	# The title is not needed here: list_probe_sessions_since already filtered
+	# on all three prefixes in SQL, and delete_session re-validates the title
+	# before removing anything. Read it into _ so the tab-delimited line parses.
+	while IFS=$'\t' read -r sid _; do
+		[[ -n "$sid" ]] || continue
 		local sid_esc
 		sid_esc=$(sql_escape "$sid") || continue
-		# Only delete fresh (<1h) probe sessions
+		# Only delete fresh probe sessions, using the configured fresh guard
+		# rather than a hardcoded hour.
 		if sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-			"SELECT 1 FROM session WHERE id='${sid_esc}' AND time_created > (strftime('%s','now')-3600)*1000 LIMIT 1;" 2>/dev/null | grep -q 1; then
+			"SELECT 1 FROM session WHERE id='${sid_esc}' AND time_created > (strftime('%s','now')-${OCPROBE_FRESH_GUARD_HOURS}*3600)*1000 LIMIT 1;" 2>/dev/null | grep -q 1; then
 			delete_session "$sid" && {
 				deleted=$((deleted + 1))
 				log_info "deleted probe session $sid"
 			}
 		fi
-	done < <(list_sessions_with_titles)
+	done < <(list_probe_sessions_since 0)
 
 	log_info "cleaned $deleted probe session(s)"
 }

@@ -18,6 +18,13 @@ launchd_install() {
 
 	local bash_path oc_path homebrew_path
 	bash_path=$(command -v bash)
+	# A launchd plist with an empty ProgramArguments entry can load but can never
+	# run, and the failure only surfaces later in the scheduler log. Refuse to
+	# write one at all rather than produce a silently broken schedule.
+	if [[ -z "$bash_path" ]]; then
+		log_error "could not locate bash on PATH — refusing to write a launchd plist with an empty ProgramArguments entry"
+		return 1
+	fi
 	oc_path=$(command -v opencode)
 	homebrew_path=""
 
@@ -45,8 +52,20 @@ launchd_install() {
 EOF
 
 	launchctl unload "$plist" 2>/dev/null || true
-	launchctl load "$plist" && log_info "installed: check+alert every $((OCPROBE_WATCH_SECS / 3600))h — logs: ${OCPROBE_STATE_DIR}/scheduler.log"
+
+	# Check the exit status explicitly. `cmd && log_info ...` printed nothing at
+	# all on failure, and the note below then implied the schedule was live.
+	local load_out load_rc=0
+	load_out=$(launchctl load "$plist" 2>&1) || load_rc=$?
+	if [[ $load_rc -ne 0 ]]; then
+		log_error "launchctl load failed (exit $load_rc) for $plist — the watch schedule is NOT installed"
+		[[ -n "$load_out" ]] && log_error "  launchctl said: $load_out"
+		return 1
+	fi
+
+	log_info "installed: check+alert every $((OCPROBE_WATCH_SECS / 3600))h — logs: ${OCPROBE_STATE_DIR}/scheduler.log"
 	log_info "note: alerts appear via 'ocprobe alerts' (+desktop ping on CRITICAL). Apply remains manual."
+	return 0
 }
 
 launchd_uninstall() {
