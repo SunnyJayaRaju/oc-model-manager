@@ -224,3 +224,47 @@ INSERT INTO part VALUES (1, 'ses_probe1', 1, strftime('%s','now')*1000, '{"type"
 INSERT INTO part VALUES (2, 'ses_probe2', 2, (strftime('%s','now')-90000)*1000, '{"type":"text","text":"Reply with exactly: OK"}');
 EOF
 }
+
+# ---- launchd / scheduler mocking ---------------------------------------------
+# These live here rather than in a single test file because two suites need
+# them, and neither may ever touch the developer's real launchd agent: a real
+# `ocprobe scheduler install` on a workstation makes any assertion of
+# "NOT INSTALLED" fail spuriously. (That happened once already during this
+# project's own testing.)
+
+# setup_launchd_stubs [ok|fail] — put a fake `launchctl` first on PATH and
+# redirect launchd_plist_path() away from the real ~/Library/LaunchAgents, so
+# launchd_install / launchd_uninstall / launchd_status run entirely against a
+# controlled fake. Calls are recorded in $BATS_TEST_TMPDIR/launchctl.calls.
+#   $1 "ok"   -> `launchctl load` succeeds
+#      "fail" -> `launchctl load` exits 5
+setup_launchd_stubs() { # $1 = "ok" | "fail"
+  local bin="$BATS_TEST_TMPDIR/lb"
+  mkdir -p "$bin"
+  cat >"$bin/launchctl" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >>"$BATS_TEST_TMPDIR/launchctl.calls"
+if [[ "\$1" == "load" && "$1" == "fail" ]]; then
+    echo "Load failed: 5: Input/output error" >&2
+    exit 5
+fi
+exit 0
+EOF
+  chmod +x "$bin/launchctl"
+  export PATH="$bin:$PATH"
+  : >"$BATS_TEST_TMPDIR/launchctl.calls"
+  # redirect the plist away from ~/Library/LaunchAgents (current shell only)
+  eval "launchd_plist_path() { echo '$BATS_TEST_TMPDIR/com.ocprobe.watch.plist'; }"
+}
+
+# isolate_launchd_home — export a throwaway HOME so launchd_plist_path() resolves
+# inside the test's own temp dir. setup_launchd_stubs only redefines a shell
+# FUNCTION, which cannot cross a process boundary: bootstrap.bats drives
+# `ocprobe doctor` through `bash -c`, so without this the child would resolve
+# the REAL ~/Library/LaunchAgents and the test would depend on the host again.
+# PATH and HOME are both inherited by the child, so both reach it.
+isolate_launchd_home() {
+  local h="$BATS_TEST_TMPDIR/fake-home"
+  mkdir -p "$h/Library/LaunchAgents"
+  export HOME="$h"
+}

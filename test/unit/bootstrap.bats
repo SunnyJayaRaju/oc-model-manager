@@ -25,6 +25,16 @@ setup() {
     
     # Mock opencode for tests that need it
     mock_opencode
+
+    # Never let these tests depend on — or touch — the real launchd agent.
+    # `ocprobe doctor` reports the scheduler via launchd_status(), which reports
+    # NOT INSTALLED only when ~/Library/LaunchAgents/com.ocprobe.watch.plist is
+    # absent. On a workstation that actually has the schedule installed, that
+    # assertion failed spuriously and broke this file. The fake launchctl plus a
+    # throwaway HOME (both inherited by the `bash -c` child that runs doctor)
+    # pin the reported state to something this test controls.
+    setup_launchd_stubs ok
+    isolate_launchd_home
 }
 
 # ---- Dev Mode Detection Tests ----
@@ -240,6 +250,67 @@ EOF
     assert_output --partial "--- Scheduler ---"
     assert_output --partial "NOT INSTALLED"
     refute_output --partial "cmd_scheduler: command not found"
+}
+
+# ---- Scheduler state is controlled, not inherited ---------------------------
+# The two doctor tests above assert "NOT INSTALLED". That assertion is only
+# meaningful if the test actually controls the state it is asserting about, so
+# this test flips the plist into existence inside the throwaway HOME and requires
+# the report to change. If the fake HOME or the launchctl stub ever stop applying
+# — e.g. someone "simplifies" setup() back to reading the real host — this fails
+# and the NOT INSTALLED assertions stop being trustworthy.
+
+@test "doctor scheduler report is driven by the mocked state, not the host" {
+    local test_bin_dir="$BATS_TEST_TMPDIR/fake-installed/bin"
+    cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
+    chmod +x "$test_bin_dir/ocprobe"
+
+    local config_dir="$BATS_TEST_TMPDIR/mocksens-config"
+    mkdir -p "$config_dir"
+    cat > "$config_dir/config.yaml" <<EOF
+version: 1
+opencode:
+  config_path: "$BATS_TEST_TMPDIR/opencode.json"
+  db_path: "$BATS_TEST_TMPDIR/opencode.db"
+scheduler:
+  enabled: false
+  interval_seconds: 21600
+  run_at_load: false
+logging:
+  level: error
+  format: text
+  file_enabled: false
+EOF
+    echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
+
+    # Baseline: no plist in the fake HOME -> NOT INSTALLED
+    run bash -c "
+        export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
+        export OCPROBE_STATE_DIR="$BATS_TEST_TMPDIR/state"
+        export OCPROBE_LOG_LEVEL=error
+        mkdir -p "$BATS_TEST_TMPDIR/state"
+        '$test_bin_dir/ocprobe' doctor 2>&1
+    "
+    [[ "$status" -eq 0 || "$status" -eq 1 ]]
+    assert_output --partial "NOT INSTALLED"
+
+    # Now create the plist exactly where launchd_plist_path() looks, i.e. inside
+    # the throwaway HOME. The report MUST change, proving the assertion above is
+    # sensitive to state we control.
+    printf '<plist/>' > "$HOME/Library/LaunchAgents/com.ocprobe.watch.plist"
+
+    run bash -c "
+        export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
+        export OCPROBE_STATE_DIR="$BATS_TEST_TMPDIR/state"
+        export OCPROBE_LOG_LEVEL=error
+        mkdir -p "$BATS_TEST_TMPDIR/state"
+        '$test_bin_dir/ocprobe' doctor 2>&1
+    "
+    [[ "$status" -eq 0 || "$status" -eq 1 ]]
+    # The stubbed `launchctl list` prints nothing, so this is the
+    # "installed but not running" branch, not "running".
+    assert_output --partial "INSTALLED (not running)"
+    refute_output --partial "NOT INSTALLED"
 }
 
 # ---- Global Flag Parsing Tests ----

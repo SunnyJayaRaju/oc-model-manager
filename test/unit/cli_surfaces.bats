@@ -141,24 +141,6 @@ PERL_PATH_TOOLS="perl sleep bash date mkdir cat sed awk ls rm grep tr"
 
 # ---- launchd_install / launchd_uninstall (lib/scheduler.sh) ----------------
 
-setup_launchd_stubs() { # $1 = "ok" | "fail"
-    local bin="$BATS_TEST_TMPDIR/lb"
-    mkdir -p "$bin"
-    cat >"$bin/launchctl" <<EOF
-#!/usr/bin/env bash
-echo "\$@" >>"$BATS_TEST_TMPDIR/launchctl.calls"
-if [[ "\$1" == "load" && "$1" == "fail" ]]; then
-    echo "Load failed: 5: Input/output error" >&2
-    exit 5
-fi
-exit 0
-EOF
-    chmod +x "$bin/launchctl"
-    export PATH="$bin:$PATH"
-    : >"$BATS_TEST_TMPDIR/launchctl.calls"
-    # redirect the plist away from ~/Library/LaunchAgents
-    eval "launchd_plist_path() { echo '$BATS_TEST_TMPDIR/com.ocprobe.watch.plist'; }"
-}
 
 @test "launchd_install writes a plist and reports success when launchctl load succeeds" {
     setup_launchd_stubs ok
