@@ -6,6 +6,36 @@ set -euo pipefail
 # lib/core.sh — Shared utilities and constants
 # ============================================================================
 
+# ---- Minimum bash version guard --------------------------------------------
+# core.sh is the first library sourced by every entry point (bin/ocprobe and the
+# bats helper both source it first), so this is the single choke point where an
+# old interpreter can be rejected with an actionable message. Without it, a
+# bash 3.2 interpreter fails much later with an opaque parse error such as
+# "conditional binary operator expected" (from `[[ -v ]]`) or
+# "local: -n: invalid option" (from namerefs), which tells a user nothing.
+#
+# Floor is 4.3, not 4.2: `local -n` namerefs are used in lib/db.sh (4x) and
+# lib/validate.sh and landed in bash 4.3. A 4.2 floor would wave through an
+# interpreter that then dies on the first nameref — exactly the cryptic failure
+# this guard exists to prevent. No 4.3+/5.x-only constructs are used elsewhere,
+# so 4.3 is sufficient.
+#
+# This uses only syntax available in bash 3.2 so it can report the problem
+# rather than tripping over it. BASH_VERSINFO is [major, minor, patch].
+if [[ -z "${BASH_VERSINFO[0]:-}" ]] || [[ "${BASH_VERSINFO[0]}" -lt 4 ]] ||
+	{ [[ "${BASH_VERSINFO[0]}" -eq 4 ]] && [[ "${BASH_VERSINFO[1]:-0}" -lt 3 ]]; }; then
+	echo "ocprobe requires bash 4.3 or newer; you are running bash ${BASH_VERSION:-unknown}." >&2
+	echo "" >&2
+	echo "macOS ships bash 3.2 as /bin/bash, which is what you are likely using." >&2
+	echo "Install a modern bash and ensure it takes precedence on PATH:" >&2
+	echo "" >&2
+	echo "    brew install bash" >&2
+	echo "" >&2
+	echo "then verify with 'bash --version' — Homebrew's bash lives in" >&2
+	echo "$(brew --prefix 2>/dev/null || echo /opt/homebrew)/bin, which must come before /bin." >&2
+	exit 78 # EX_CONFIG
+fi
+
 # ---- Constants --------------------------------------------------------------
 # Use conditional assignment to allow re-sourcing
 : "${OCPROBE_PROBE_PROMPT:=Reply with exactly: OK}"
@@ -150,8 +180,11 @@ array_dedup() {
 	local idx=0
 	while :; do
 		local elem_var="${var_name}[$idx]"
-		# Check if array element exists before accessing
-		if [[ -v $elem_var ]]; then
+		# Check if array element exists before accessing.
+		# `${!elem_var+x}` is the portable equivalent of `[[ -v $elem_var ]]`:
+		# true when the variable named by $elem_var is set. `[[ -v ]]` requires
+		# bash 4.2 and is a parse error on older interpreters.
+		if [[ -n "${!elem_var+x}" ]]; then
 			local val="${!elem_var}"
 			if ! array_contains "$val" "${seen[@]}"; then
 				seen+=("$val")
