@@ -246,6 +246,49 @@ load_config() {
 		fi
 	done <<<"$config_vars"
 
+	# ---- Integer config validation --------------------------------------------
+	# Every value below is interpolated UNQUOTED into an interpreter that
+	# assumes it is a plain positive integer:
+	#   - SQL strings in lib/db.sh (OCPROBE_MAX_MSG_COUNT, OCPROBE_AGE_GUARD_HOURS,
+	#     OCPROBE_FRESH_GUARD_HOURS)
+	#   - a launchd plist <integer> and a systemd unit file in lib/scheduler.sh,
+	#     plus $(( )) arithmetic there (OCPROBE_WATCH_SECS)
+	#   - $(( )) arithmetic and `tail -n` in prune_jsonl (lib/core.sh)
+	#     (OCPROBE_HISTORY_LIMIT, OCPROBE_ALERT_LIMIT)
+	#   - $(( )) arithmetic in lib/models.sh (OCPROBE_CACHE_TTL_HOURS)
+	#
+	# CONFIG_SCHEMA already constrains each of these to `type: integer` with a
+	# minimum, and that remains the primary gate. This is the second layer: it
+	# costs nothing, runs on every load_config, and turns a malformed value into
+	# a named error at startup instead of a cryptic SQL syntax error, an
+	# unloadable plist, or an arithmetic abort deep inside a command.
+	#
+	# validate_positive_int() requires a value > 0, which matches every field
+	# here (all schema minimums are >= 1), so no zero-allowing variant is needed
+	# and the function's tested behaviour is untouched. It is passed the config
+	# key alongside the variable name so the failure names the key a user
+	# actually edits in config.yaml.
+	local int_var int_label
+	for int_var in \
+		OCPROBE_MAX_MSG_COUNT \
+		OCPROBE_AGE_GUARD_HOURS \
+		OCPROBE_FRESH_GUARD_HOURS \
+		OCPROBE_WATCH_SECS \
+		OCPROBE_HISTORY_LIMIT \
+		OCPROBE_ALERT_LIMIT \
+		OCPROBE_CACHE_TTL_HOURS; do
+		case "$int_var" in
+		OCPROBE_MAX_MSG_COUNT) int_label="session.max_msg_count" ;;
+		OCPROBE_AGE_GUARD_HOURS) int_label="session.age_guard_hours" ;;
+		OCPROBE_FRESH_GUARD_HOURS) int_label="session.fresh_guard_hours" ;;
+		OCPROBE_WATCH_SECS) int_label="scheduler.interval_seconds" ;;
+		OCPROBE_HISTORY_LIMIT) int_label="retention.history_limit" ;;
+		OCPROBE_ALERT_LIMIT) int_label="retention.alert_limit" ;;
+		OCPROBE_CACHE_TTL_HOURS) int_label="catalog.cache_ttl_hours" ;;
+		esac
+		validate_positive_int "$int_label ($int_var) [in $config_file]" "${!int_var}"
+	done
+
 	# Set derived paths
 	OCPROBE_AUDIT_DIR="${OCPROBE_AUDIT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/ocprobe.XXXXXX")}"
 	OCPROBE_STAMP="$(date +%Y%m%d-%H%M%S)"
