@@ -179,7 +179,7 @@ SCHEMA
 : "${OCPROBE_MAX_PARALLEL:=4}"
 : "${OCPROBE_PROBE_PROMPT:=Reply with exactly: OK}"
 : "${OCPROBE_PROBE_TITLE_PREFIX:=ocprobe-probe}"
-: "${OCPROBE_CACHE_TTL_HOURS:=24}"
+: "${OCPROBE_CACHE_TTL_HOURS:=1}"
 : "${OCPROBE_FORCE_REFRESH:=0}"
 : "${OCPROBE_QUICK:=0}"
 : "${OCPROBE_WATCH_SECS:=21600}"
@@ -326,7 +326,7 @@ probe:
   title_prefix: "ocprobe-probe"
 
 catalog:
-  cache_ttl_hours: 24
+  cache_ttl_hours: 1
   force_refresh: false
 
 scheduler:
@@ -418,7 +418,7 @@ print(f'OCPROBE_PROBE_TIMEOUT_WL={get("probe.timeout_whitelist", 30)}')
 print(f'OCPROBE_MAX_PARALLEL={get("probe.max_parallel", 4)}')
 print(f'OCPROBE_PROBE_PROMPT="{get("probe.prompt", "Reply with exactly: OK")}"')
 print(f'OCPROBE_PROBE_TITLE_PREFIX="{get("probe.title_prefix", "ocprobe-probe")}"')
-print(f'OCPROBE_CACHE_TTL_HOURS={get("catalog.cache_ttl_hours", 24)}')
+print(f'OCPROBE_CACHE_TTL_HOURS={get("catalog.cache_ttl_hours", 1)}')
 print(f'OCPROBE_WATCH_SECS={get("scheduler.interval_seconds", 21600)}')
 print(f'OCPROBE_WEBHOOK_URL="{get("alerts.webhook_url", "")}"')
 print(f'OCPROBE_DESKTOP_NOTIFICATIONS={1 if get("alerts.desktop_notifications", True) else 0}')
