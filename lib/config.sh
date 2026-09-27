@@ -233,8 +233,17 @@ load_config() {
 		if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
 			local var="${BASH_REMATCH[1]}"
 			local val="${BASH_REMATCH[2]}"
+			# Values the emitter could not safely wrap in quotes (anything with a
+			# newline or a double quote) arrive base64-encoded behind a b64: marker.
+			# Decode before quote-stripping so a multi-line value survives intact.
+			if [[ "$val" == b64:* ]]; then
+				# A sentinel byte is appended and stripped because command substitution
+				# strips trailing newlines, which would otherwise eat a value that ends
+				# in a newline.
+				val=$(python3 -c 'import base64,sys; sys.stdout.write(base64.b64decode(sys.argv[1]).decode() + chr(1))' "${val#b64:}") || val=""
+				val="${val%$'\x01'}"
 			# Strip surrounding quotes if present
-			if [[ "$val" =~ ^\"(.*)\"$ ]]; then
+			elif [[ "$val" =~ ^\"(.*)\"$ ]]; then
 				val="${BASH_REMATCH[1]}"
 			elif [[ "$val" =~ ^\'(.*)\'$ ]]; then
 				val="${BASH_REMATCH[1]}"
@@ -410,31 +419,49 @@ def get(path, default=None):
             return default
     return val
 
+import base64
+
+def s(var, value):
+    # Emit a string config value. load_config parses this output line by line as
+    # VAR="value", so a value containing a newline used to split one assignment
+    # across several lines: the continuation lines failed the ^VAR=value$ match
+    # and were dropped with a warning, leaving the value truncated AND carrying a
+    # stray leading quote. A double quote breaks the same convention. Both are
+    # therefore base64-encoded behind a b64: marker that load_config decodes.
+    t = str(value)
+    if "\n" in t or '"' in t:
+        # base64 output is shell-safe by construction (A-Za-z0-9+/=), so it is
+        # emitted unquoted; quoting it would leave the b64: marker behind a
+        # leading '"' and the decode branch would never match.
+        print(f'{var}=b64:{base64.b64encode(t.encode()).decode()}')
+    else:
+        print(f'{var}="{t}"')
+
 # Print as bash assignments
-print(f'OCPROBE_OPencode_CONFIG="{os.path.expanduser(str(get("opencode.config_path", "~/.config/opencode/opencode.json")))}"')
-print(f'OCPROBE_OPencode_DB="{os.path.expanduser(str(get("opencode.db_path", "~/.local/share/opencode/opencode.db")))}"')
+s("OCPROBE_OPencode_CONFIG", os.path.expanduser(str(get("opencode.config_path", "~/.config/opencode/opencode.json"))))
+s("OCPROBE_OPencode_DB", os.path.expanduser(str(get("opencode.db_path", "~/.local/share/opencode/opencode.db"))))
 print(f'OCPROBE_PROBE_TIMEOUT_NEW={get("probe.timeout_new", 45)}')
 print(f'OCPROBE_PROBE_TIMEOUT_WL={get("probe.timeout_whitelist", 30)}')
 print(f'OCPROBE_MAX_PARALLEL={get("probe.max_parallel", 4)}')
-print(f'OCPROBE_PROBE_PROMPT="{get("probe.prompt", "Reply with exactly: OK")}"')
-print(f'OCPROBE_PROBE_TITLE_PREFIX="{get("probe.title_prefix", "ocprobe-probe")}"')
+s("OCPROBE_PROBE_PROMPT", get("probe.prompt", "Reply with exactly: OK"))
+s("OCPROBE_PROBE_TITLE_PREFIX", get("probe.title_prefix", "ocprobe-probe"))
 print(f'OCPROBE_CACHE_TTL_HOURS={get("catalog.cache_ttl_hours", 1)}')
 print(f'OCPROBE_WATCH_SECS={get("scheduler.interval_seconds", 21600)}')
-print(f'OCPROBE_WEBHOOK_URL="{get("alerts.webhook_url", "")}"')
+s("OCPROBE_WEBHOOK_URL", get("alerts.webhook_url", ""))
 print(f'OCPROBE_DESKTOP_NOTIFICATIONS={1 if get("alerts.desktop_notifications", True) else 0}')
 print(f'OCPROBE_BATCH_MODE={1 if get("alerts.batch_mode", False) else 0}')
 print(f'OCPROBE_AGE_GUARD_HOURS={get("session.age_guard_hours", 24)}')
 print(f'OCPROBE_FRESH_GUARD_HOURS={get("session.fresh_guard_hours", 1)}')
 print(f'OCPROBE_MAX_MSG_COUNT={get("session.max_msg_count", 4)}')
-print(f'OCPROBE_SESSION_BACKUP_DIR="{os.path.expanduser(str(get("session.backup_dir", "~/.local/share/opencode/session-backups")))}"')
+s("OCPROBE_SESSION_BACKUP_DIR", os.path.expanduser(str(get("session.backup_dir", "~/.local/share/opencode/session-backups"))))
 print(f'OCPROBE_HISTORY_LIMIT={get("retention.history_limit", 5000)}')
 print(f'OCPROBE_ALERT_LIMIT={get("retention.alert_limit", 1000)}')
 print(f'OCPROBE_BACKUP_KEEP_DAYS={get("retention.backup_keep_days", 30)}')
 print(f'OCPROBE_GRAVEYARD_COOLDOWN_HOURS={get("retention.graveyard_cooldown_hours", 24)}')
 print(f'OCPROBE_MASS_REMOVAL_THRESHOLD_PCT={get("safety.mass_removal_threshold_pct", 50)}')
-print(f'OCPROBE_ALLOW_MASS_REMOVE_ENV="{get("safety.allow_mass_remove_env", "OCPROBE_ALLOW_MASS_REMOVE")}"')
-print(f'OCPROBE_LOG_LEVEL="{get("logging.level", "info")}"')
-print(f'OCPROBE_LOG_FORMAT="{get("logging.format", "text")}"')
+s("OCPROBE_ALLOW_MASS_REMOVE_ENV", get("safety.allow_mass_remove_env", "OCPROBE_ALLOW_MASS_REMOVE"))
+s("OCPROBE_LOG_LEVEL", get("logging.level", "info"))
+s("OCPROBE_LOG_FORMAT", get("logging.format", "text"))
 print(f'OCPROBE_LOG_FILE_ENABLED={1 if get("logging.file_enabled", True) else 0}')
 PYEOF
 }
