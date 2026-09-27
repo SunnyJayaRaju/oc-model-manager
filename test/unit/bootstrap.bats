@@ -337,7 +337,27 @@ EOF
     assert_output --partial "$when_enabled"
     refute_output --partial "NOT INSTALLED"
 
-    if [[ "$platform" == "systemd" ]]; then
+    if [[ "$platform" == "launchd" ]]; then
+        # Mirror of the systemd branch below. With the plist present, flip ONLY
+        # what `launchctl list` prints and require the report to change again.
+        # This is what proves launchctl is genuinely consulted: launchd_status
+        # pipes its output into `grep -q com.ocprobe.watch`, so the pipeline's
+        # status is grep's and the OUTPUT is the signal. A stub that only ever
+        # exits 0 in silence would leave this assertion vacuous, which is
+        # exactly how the systemd side had already been covered.
+        setup_launchd_stubs running
+
+        run bash -c "
+            export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
+            export OCPROBE_STATE_DIR="$BATS_TEST_TMPDIR/state"
+            export OCPROBE_LOG_LEVEL=error
+            mkdir -p "$BATS_TEST_TMPDIR/state"
+            '$test_bin_dir/ocprobe' doctor 2>&1
+        "
+        [[ "$status" -eq 0 || "$status" -eq 1 ]]
+        assert_output --partial "INSTALLED (running)"
+        refute_output --partial "INSTALLED (not running)"
+    elif [[ "$platform" == "systemd" ]]; then
         # systemd_status consults BOTH the unit file and `systemctl --user
         # is-enabled`. Flip only the systemctl stub and the report must change
         # again, which proves the systemctl mock is really in the path (with no

@@ -236,18 +236,39 @@ EOF
 # redirect launchd_plist_path() away from the real ~/Library/LaunchAgents, so
 # launchd_install / launchd_uninstall / launchd_status run entirely against a
 # controlled fake. Calls are recorded in $BATS_TEST_TMPDIR/launchctl.calls.
-#   $1 "ok"   -> `launchctl load` succeeds
-#      "fail" -> `launchctl load` exits 5
-setup_launchd_stubs() { # $1 = "ok" | "fail"
+#   $1 "ok"      -> `launchctl load` succeeds; `launchctl list` prints nothing
+#      "fail"    -> `launchctl load` exits 5
+#      "running" -> `launchctl list` prints the agent, i.e. launchd_status
+#                   should report INSTALLED (running) rather than not running
+setup_launchd_stubs() { # $1 = "ok" | "fail" | "running"
   local bin="$BATS_TEST_TMPDIR/lb"
   mkdir -p "$bin"
   cat >"$bin/launchctl" <<EOF
 #!/usr/bin/env bash
 echo "\$@" >>"$BATS_TEST_TMPDIR/launchctl.calls"
-if [[ "\$1" == "load" && "$1" == "fail" ]]; then
-    echo "Load failed: 5: Input/output error" >&2
-    exit 5
-fi
+case "\$1" in
+  list)
+    # launchd_status decides running vs not-running by GREPPING this output:
+    #   launchctl list | grep -q com.ocprobe.watch
+    # so the pipeline's status is grep's, and it is launchctl's STDOUT that
+    # matters, not its exit code. "running" mode therefore has to actually
+    # print the label; exiting 0 in silence always reads as "not running".
+    # (systemd_status is the mirror image: it throws the output away and reads
+    # the exit code, which is why its stub switches on is-enabled's status.)
+    if [[ "$1" == "running" ]]; then
+        printf 'PID\tStatus\tLabel\n'
+        printf '123\t0\t0\tcom.ocprobe.watch\n'
+    fi
+    exit 0
+    ;;
+  load)
+    if [[ "$1" == "fail" ]]; then
+      echo "Load failed: 5: Input/output error" >&2
+      exit 5
+    fi
+    exit 0
+    ;;
+esac
 exit 0
 EOF
   chmod +x "$bin/launchctl"
