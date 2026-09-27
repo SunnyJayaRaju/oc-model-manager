@@ -60,7 +60,7 @@ COMMANDS:
   validate        Probe all models for providers with credentials, blacklist failures
   scheduler       Manage launchd/systemd scheduler [install|uninstall|status]
   session         Session management [list|backup|restore|cleanup]
-  config          Configuration [show|validate|edit|schema]
+  config          Configuration [show|validate|edit|schema|path]
   policy          Manage declarative policy (experimental) [show|validate|path|init|dry-run]
   doctor          Health check: config, DB, auth, disk
   version         Show version

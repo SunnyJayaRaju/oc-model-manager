@@ -17,7 +17,11 @@ _has_flock() {
 acquire_lock() {
   local lock_dir="${OCPROBE_LOCK_DIR:-$OCPROBE_STATE_DIR/.lock}"
   local lock_file="${lock_dir}/lock"
-  local waited=0
+  # No `waited` here on purpose: the flock branch below returns before the
+  # mkdir fallback runs, and only the fallback uses a retry counter. It declares
+  # its own `waited` next to the code that uses it, mirroring `waited_flock` in
+  # the flock branch. Declaring it at function scope as well was a duplicate
+  # that made the two strategies look like they shared a single counter.
 
   # Try flock-based locking first (more robust)
   if _has_flock; then
