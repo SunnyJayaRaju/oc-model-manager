@@ -577,3 +577,72 @@ MOCK_EOF
     run bash -n "$OCPROBE_ROOT/bin/ocprobe"
     assert_success
 }
+
+# ---- H3 lock-contention sentinel -------------------------------------------
+# _validate_history_locked FAILS CLOSED: on lock timeout the callback must not be
+# run unlocked, and OCPROBE_HISTORY_SKIPPED must reach the caller so it can tell
+# "skipped for contention" apart from "callback ran". These paths had no test,
+# and the history-streak perf work changed how the streak value is returned, so
+# they are pinned here.
+
+@test "_validate_history_locked fails closed and returns the skip sentinel on lock timeout" {
+    _acquire_scoped_lock() { return 1; }   # simulate a 5s lock stall
+
+    run _validate_history_locked true
+    assert_failure
+    assert_equal "$OCPROBE_HISTORY_SKIPPED" "$status"
+}
+
+@test "_validate_history_locked does not run the callback unlocked on lock timeout" {
+    local ran_file="$BATS_TEST_TMPDIR/ran"
+    _acquire_scoped_lock() { return 1; }
+    _touch_marker() { : >"$ran_file"; }
+
+    _validate_history_locked _touch_marker >/dev/null 2>&1 || true
+
+    # Fail closed: the callback would have written outside the lock.
+    [ ! -f "$ran_file" ] || {
+        echo "callback ran unlocked despite lock contention" >&2
+        false
+    }
+}
+
+@test "generate_validate_classification: contended lock still classifies and never leaks the sentinel" {
+    local history_file="$OCPROBE_STATE_DIR/validate-history.jsonl"
+    local results_file="$BATS_TEST_TMPDIR/results.tsv"
+    local proposal_file="$BATS_TEST_TMPDIR/proposal.txt"
+    local tentative_file="$BATS_TEST_TMPDIR/tentative.txt"
+
+    mkdir -p "$OCPROBE_STATE_DIR"
+    printf 'test-provider/model-x\tTIMEOUT\t1000\n' >"$history_file"
+    cat >"$results_file" <<EOF
+test-provider/model-x	TIMEOUT	100
+test-provider/model-y	TIMEOUT	100
+EOF
+    : >"$proposal_file"; : >"$tentative_file"
+
+    _acquire_scoped_lock() { return 1; }
+    local rc=0
+    generate_validate_classification "test-provider" "$results_file" "$proposal_file" "$tentative_file" || rc=$?
+    assert_equal 0 "$rc"
+
+    # model-x is on its second strike -> CONFIRMED; model-y is a first strike.
+    run cat "$proposal_file"
+    assert_output --partial "test-provider/model-x"
+    run cat "$tentative_file"
+    assert_output --partial "test-provider/model-y"
+
+    # The sentinel must not be visible to anything downstream.
+    local k leaked=0
+    for k in "${!VALIDATE_FAIL_COUNT[@]}"; do
+        [[ "${VALIDATE_FAIL_COUNT[$k]}" == "$OCPROBE_HISTORY_SKIPPED" ]] && leaked=1
+    done
+    [[ $leaked -eq 0 ]] || {
+        echo "OCPROBE_HISTORY_SKIPPED leaked into VALIDATE_FAIL_COUNT" >&2
+        false
+    }
+
+    # Nothing was written: the skipped history update must not have happened.
+    run grep -c . "$history_file"
+    assert_output "1"
+}

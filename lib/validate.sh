@@ -104,77 +104,116 @@ OCPROBE_OPencode_AUTH="${OCPROBE_OPencode_AUTH:-$HOME/.local/share/opencode/auth
 load_validate_history() {
 	local -n fail_count=$1
 
-	[[ -f "$OCPROBE_STATE_DIR/validate-history.jsonl" ]] || return 0
+	# Same fold, same map as the per-model streak lookup, so the two views can
+	# never disagree. _validate_streak_sync rebuilds only if the file changed.
+	_validate_streak_sync
 
-	# Process history in order to build per-model streak
-	# We use a temporary associative array to track per-model state
-	declare -A local_counts=()
-
-	local line model status
-	while IFS= read -r line; do
-		[[ -n "$line" ]] || continue
-		model=$(printf '%s' "$line" | awk '{print $1}')
-		status=$(printf '%s' "$line" | awk '{print $2}')
-		[[ -n "$model" && -n "$status" ]] || continue
-
-		local safe_key="${model//\//_}"
-		case "$status" in
-		WORKS)
-			# Success resets the streak
-			local_counts["$safe_key"]=0
-			;;
-		EOL | NOT_FOUND)
-			# Terminal failures = confirmed (streak 2)
-			local_counts["$safe_key"]=2
-			;;
-		*)
-			# Other non-WORKS failures: increment streak, capped at 2
-			local current="${local_counts[$safe_key]:-0}"
-			local_counts["$safe_key"]=$((current < 2 ? current + 1 : 2))
-			;;
-		esac
-	done <"$OCPROBE_STATE_DIR/validate-history.jsonl"
-
-	# Copy to the passed nameref array
+	local k
 	# shellcheck disable=SC2034  # fail_count is a nameref; shellcheck cannot see the caller's array
-	for k in "${!local_counts[@]}"; do
-		fail_count["$k"]="${local_counts[$k]}"
+	for k in "${!_VALIDATE_HISTREAK[@]}"; do
+		fail_count["$k"]="${_VALIDATE_HISTREAK[$k]}"
 	done
 }
 
-# _validate_history_streak(model) — consecutive non-WORKS streak for ONE model,
-# read fresh from the history file. Same rules as load_validate_history, but for
-# a single model so it can be called while the history lock is held (that is
-# what makes the read-decide-write atomic). Echoes the streak.
-_validate_history_streak() {
-	local model="$1"
-	local safe_key="${model//\//_}"
-	local history_file="$OCPROBE_STATE_DIR/validate-history.jsonl"
+# ---- History streak cache -----------------------------------------------------
+# A model's streak depends ONLY on that model's own lines, in file order. The old
+# _validate_history_streak exploited that by re-reading the whole file and keeping
+# only the matching lines -- but it did that once PER MODEL, and it spawned TWO awk
+# processes per line to pull out $1 and $2. That is O(models x history) with a
+# process spawn per field, which is where "~2.4 hours for one validate run" at the
+# real catalog size (~941 models) came from.
+#
+# Instead: fold the file ONCE into a per-model streak map, then every lookup is a
+# single hash read. Semantics are unchanged. _validate_streak_apply is the same
+# case statement the per-model scanner used, applied in the same file order, and
+# an append only ever extends ONE model's own sequence -- so advancing just that
+# model's entry is identical to rescanning the file. The map is dropped and
+# rebuilt only when the file stops matching what we folded (see
+# _validate_streak_sync and record_validate_history).
+declare -gA _VALIDATE_HISTREAK=()
+declare -g _VALIDATE_HISTREAK_BYTES=-1
 
-	if [[ ! -f "$history_file" ]]; then
-		printf '0\n'
+# _validate_streak_apply <safe_key> <status> — one fold step, in place.
+# WORKS resets to 0, EOL/NOT_FOUND confirm at 2, anything else counts up capped at 2.
+_validate_streak_apply() {
+	local key="$1" status="$2"
+	case "$status" in
+	WORKS) _VALIDATE_HISTREAK["$key"]=0 ;;
+	EOL | NOT_FOUND) _VALIDATE_HISTREAK["$key"]=2 ;;
+	*)
+		local cur="${_VALIDATE_HISTREAK[$key]:-0}"
+		_VALIDATE_HISTREAK["$key"]=$((cur < 2 ? cur + 1 : 2))
+		;;
+	esac
+}
+
+# _validate_history_size — byte size of the history file, or -1 if absent.
+# Byte size is the cheap invalidation token: it changes on any append and on any
+# prune_jsonl rewrite, and costs one wc.
+_validate_history_size() {
+	local f="$OCPROBE_STATE_DIR/validate-history.jsonl"
+	[[ -f "$f" ]] || {
+		printf '%s\n' -1
+		return 0
+	}
+	wc -c <"$f" | tr -d '[:space:]'
+}
+
+# _validate_streak_rebuild — fold the entire file once. O(lines), no forks.
+_validate_streak_rebuild() {
+	_VALIDATE_HISTREAK=()
+	local f="$OCPROBE_STATE_DIR/validate-history.jsonl"
+	_VALIDATE_HISTREAK_BYTES=-1
+	[[ -f "$f" ]] || return 0
+	_VALIDATE_HISTREAK_BYTES=$(_validate_history_size)
+	# `read` with the default IFS splits on runs of spaces/tabs exactly as awk's
+	# $1/$2 did, but without a fork. The third field absorbs the rest of the line
+	# so `status` is field 2 alone, matching awk rather than read's 2-var form.
+	local model status _rest
+	while read -r model status _rest; do
+		[[ -n "$model" && -n "$status" ]] || continue
+		_validate_streak_apply "${model//\//_}" "$status"
+	done <"$f"
+	return 0
+}
+
+# _validate_streak_sync — rebuild only if the file differs from what we folded.
+# Covers another process appending, and our own append that got pruned away.
+_validate_streak_sync() {
+	local size
+	size=$(_validate_history_size)
+	[[ "$size" == "$_VALIDATE_HISTREAK_BYTES" ]] && return 0
+	_validate_streak_rebuild
+}
+
+# _validate_history_streak(model) — consecutive non-WORKS streak for ONE model.
+# Echoes the streak; see _validate_history_streak_into for the form the
+# classification loop uses.
+_validate_history_streak() {
+	_validate_history_streak_into "$1"
+	printf '%s\n' "$_VALIDATE_LAST_STREAK"
+}
+
+# _VALIDATE_LAST_STREAK carries a streak back to the caller without a command
+# substitution. `$( )` runs in a subshell, so any cache work done inside one is
+# thrown away when it exits — which is exactly what would undo the single-pass
+# fold above and put us back to one file scan per model. Assigning a global
+# keeps the work in the caller's shell.
+declare -g _VALIDATE_LAST_STREAK=0
+
+# _validate_history_streak_into <model> — as above, but assigns
+# _VALIDATE_LAST_STREAK instead of echoing. An empty model can never match a
+# history line (lines with an empty model field are skipped when folding), and
+# "" is not a legal associative-array subscript, so answer 0 directly — the same
+# result the old per-model scanner gave, without a "bad array subscript" error.
+_validate_history_streak_into() {
+	local safe_key="${1//\//_}"
+	if [[ -z "$safe_key" ]]; then
+		_VALIDATE_LAST_STREAK=0
 		return 0
 	fi
-
-	local streak=0 line line_model line_status
-	while IFS= read -r line; do
-		[[ -n "$line" ]] || continue
-		line_model=$(printf '%s' "$line" | awk '{print $1}')
-		line_status=$(printf '%s' "$line" | awk '{print $2}')
-		[[ -n "$line_model" && -n "$line_status" ]] || continue
-		[[ "${line_model//\//_}" == "$safe_key" ]] || continue
-		case "$line_status" in
-		WORKS) streak=0 ;;
-		EOL | NOT_FOUND) streak=2 ;;
-		*)
-			if [[ $streak -lt 2 ]]; then
-				streak=$((streak + 1))
-			fi
-			;;
-		esac
-	done <"$history_file"
-
-	printf '%s\n' "$streak"
+	_validate_streak_sync
+	_VALIDATE_LAST_STREAK="${_VALIDATE_HISTREAK[$safe_key]:-0}"
 }
 
 # _validate_history_locked(fn, args...) — run fn with the history-scoped lock
@@ -217,15 +256,14 @@ _validate_history_locked() {
 _validate_report_skipped() {
 	local model="$1" proposal_file="$2" tentative_file="$3"
 
-	local streak
-	streak=$(_validate_history_streak "$model")
+	_validate_history_streak_into "$model"
 
-	if [[ "$streak" -eq 0 ]]; then
+	if [[ "$_VALIDATE_LAST_STREAK" -eq 0 ]]; then
 		echo "$model" >>"$tentative_file"
-		printf '1\n'
+		_VALIDATE_LAST_STREAK=1
 	else
 		echo "$model" >>"$proposal_file"
-		printf '2\n'
+		_VALIDATE_LAST_STREAK=2
 	fi
 }
 
@@ -238,17 +276,16 @@ _validate_report_skipped() {
 _validate_record_failure() {
 	local model="$1" status="$2" proposal_file="$3" tentative_file="$4"
 
-	local streak
-	streak=$(_validate_history_streak "$model")
+	_validate_history_streak_into "$model"
 
-	if [[ "$streak" -eq 0 ]]; then
+	if [[ "$_VALIDATE_LAST_STREAK" -eq 0 ]]; then
 		record_validate_history "$model" "$status"
 		echo "$model" >>"$tentative_file"
-		printf '1\n'
+		_VALIDATE_LAST_STREAK=1
 	else
 		record_validate_history "$model" "$status"
 		echo "$model" >>"$proposal_file"
-		printf '2\n'
+		_VALIDATE_LAST_STREAK=2
 	fi
 }
 
@@ -258,14 +295,11 @@ _validate_record_failure() {
 _validate_record_success() {
 	local model="$1"
 
-	local streak
-	streak=$(_validate_history_streak "$model")
+	_validate_history_streak_into "$model"
 
-	if [[ "$streak" -gt 0 ]]; then
+	if [[ "$_VALIDATE_LAST_STREAK" -gt 0 ]]; then
 		record_validate_history "$model" "WORKS"
-		printf '0\n'
-	else
-		printf '%s\n' "$streak"
+		_VALIDATE_LAST_STREAK=0
 	fi
 }
 
@@ -281,8 +315,41 @@ record_validate_history() {
 	# Portable millisecond timestamp: python for cross-platform support
 	local timestamp
 	timestamp=$(python3 -c 'import time; print(int(time.time() * 1000))')
-	printf '%s\t%s\t%d\n' "$model" "$status" "$timestamp" >>"$history_file"
+
+	# Bring the folded map in line with the file BEFORE appending. The
+	# incremental step below is only valid on top of a map that already matches
+	# the file; without this, anything that changed the file behind our back
+	# (another process, a prune, a rewritten file) would leave us folding onto a
+	# stale value. In the steady state this is a single wc and no rebuild,
+	# because the previous record already recorded the size it left behind.
+	_validate_streak_sync
+
+	# Size before the append, so a prune_jsonl rewrite below can be told apart
+	# from a plain append.
+	local before
+	before=$(_validate_history_size)
+	[[ "$before" == "-1" ]] && before=0
+
+	local line
+	line=$(printf '%s\t%s\t%d' "$model" "$status" "$timestamp")
+	printf '%s\n' "$line" >>"$history_file"
 	prune_jsonl "$history_file" "$OCPROBE_HISTORY_LIMIT"
+
+	# Keep the folded map in step with the file we just wrote, so the NEXT
+	# model's lookup is O(1) rather than a rescan — that is what makes a run
+	# linear in models instead of quadratic. If the size is not exactly
+	# before+len(line)+1 then prune_jsonl rewrote the file and dropped lines we
+	# had already folded in, so the map can no longer be trusted: drop it and let
+	# the next read rebuild from the file.
+	local after
+	after=$(_validate_history_size)
+	if [[ "$after" == "$((before + ${#line} + 1))" ]]; then
+		_validate_streak_apply "${model//\//_}" "$status"
+		_VALIDATE_HISTREAK_BYTES="$after"
+	else
+		_VALIDATE_HISTREAK=()
+		_VALIDATE_HISTREAK_BYTES=-1
+	fi
 }
 
 # ---- Validate Classification ---------------------------------------------------
@@ -326,9 +393,11 @@ generate_validate_classification() {
 			# On a skipped write the streak simply is not reset; keep the real current
 			# value rather than the sentinel so nothing downstream sees "75".
 			local works_rc=0
-			VALIDATE_FAIL_COUNT["$safe_key"]=$(_validate_history_locked _validate_record_success "$model") || works_rc=$?
+			_validate_history_locked _validate_record_success "$model" || works_rc=$?
+			VALIDATE_FAIL_COUNT["$safe_key"]="$_VALIDATE_LAST_STREAK"
 			if [[ $works_rc -eq "$OCPROBE_HISTORY_SKIPPED" ]]; then
-				VALIDATE_FAIL_COUNT["$safe_key"]=$(_validate_history_streak "$model")
+				_validate_history_streak_into "$model"
+				VALIDATE_FAIL_COUNT["$safe_key"]="$_VALIDATE_LAST_STREAK"
 			fi
 			;;
 		EOL | NOT_FOUND)
@@ -367,9 +436,11 @@ generate_validate_classification() {
 			# If the lock timed out, the persistent write is skipped but this run still
 			# reports its classification from the probe that just happened.
 			local fail_rc=0
-			VALIDATE_FAIL_COUNT["$safe_key"]=$(_validate_history_locked _validate_record_failure "$model" "$status" "$proposal_file" "$tentative_file") || fail_rc=$?
+			_validate_history_locked _validate_record_failure "$model" "$status" "$proposal_file" "$tentative_file" || fail_rc=$?
+			VALIDATE_FAIL_COUNT["$safe_key"]="$_VALIDATE_LAST_STREAK"
 			if [[ $fail_rc -eq "$OCPROBE_HISTORY_SKIPPED" ]]; then
-				VALIDATE_FAIL_COUNT["$safe_key"]=$(_validate_report_skipped "$model" "$proposal_file" "$tentative_file")
+				_validate_report_skipped "$model" "$proposal_file" "$tentative_file"
+				VALIDATE_FAIL_COUNT["$safe_key"]="$_VALIDATE_LAST_STREAK"
 			fi
 			;;
 		esac
