@@ -98,8 +98,47 @@ batch_get_fresh_probe_sessions() {
 }
 
 # Delete session
+# Single choke point for session deletion, so the safety guards live HERE rather
+# than at each call site: a future caller cannot delete an unvalidated id.
 delete_session() {
 	local sid="$1"
+
+	# (a) Format gate. opencode session ids are "ses_" followed by [A-Za-z0-9_-]
+	# (the same shape list_sessions_with_titles matches with /^ses_/). Anything
+	# else cannot be a real id, so refuse before invoking the CLI.
+	if [[ ! "$sid" =~ ^ses_[A-Za-z0-9_-]+$ ]]; then
+		log_error "delete_session: refusing malformed session id: '$sid'"
+		return 1
+	fi
+
+	# (b) Title gate. Only ever delete a session that is recognisably a probe
+	# session. Reuses the existing list_sessions_with_titles helper rather than
+	# adding another query. A session that is absent from the listing, or whose
+	# title is not a known probe prefix, is REFUSED — fail closed, so an id that
+	# was mis-parsed out of model output cannot delete a real conversation.
+	local validate_title_prefix="${OCPROBE_VALIDATE_TITLE_PREFIX:-ocprobe-validate}"
+	local found=0 title="" listed_sid listed_title
+	while IFS=$'\t' read -r listed_sid listed_title; do
+		[[ "$listed_sid" == "$sid" ]] || continue
+		title="$listed_title"
+		found=1
+		break
+	done < <(list_sessions_with_titles)
+
+	if [[ $found -eq 0 ]]; then
+		log_error "delete_session: refusing to delete $sid — not present in session list, cannot confirm it is a probe session"
+		return 1
+	fi
+
+	case "$title" in
+	"${OCPROBE_PROBE_TITLE_PREFIX}"* | "${OCPROBE_PROBE_TITLE_PREFIX_LEGACY}"* | "$validate_title_prefix"*)
+		;;
+	*)
+		log_error "delete_session: refusing to delete $sid — title '$title' is not a probe session"
+		return 1
+		;;
+	esac
+
 	opencode session delete "$sid" >/dev/null 2>&1
 }
 

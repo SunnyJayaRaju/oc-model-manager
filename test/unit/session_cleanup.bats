@@ -69,6 +69,7 @@ MODELS
   session)
     case "$2" in
       list)
+        echo "ses_test123  ocprobe-probe  2024-01-01"
         echo "ses_abc123  ocmm-probe-test  2024-01-01"
         echo "ses_def456  Real Session  2024-01-01"
         ;;
