@@ -69,8 +69,7 @@ jobs:
         # venv here: installing into the runner's system/Homebrew python is
         # unreliable (PEP 668 externally-managed-environment), and a venv also
         # guarantees the `python3` the tests invoke is the one that has yaml and
-        # jsonschema (lib/config.sh imports both). Added to GITHUB_PATH so the
-        # test step below picks it up.
+        # jsonschema (lib/config.sh imports both).
         #
         # coreutils is installed for parity only. Homebrew's coreutils provides
         # g-prefixed binaries (gtimeout), not a bare `timeout`; the lib guards
@@ -86,26 +85,41 @@ jobs:
           brew install jq sqlite3 coreutils bash
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --upgrade pip pyyaml jsonschema
-          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
-          # GITHUB_PATH is PREPENDED, so this puts Homebrew's bash ahead of
-          # /usr/local/bin and /bin for every later step in this job.
+          # ORDER MATTERS. GITHUB_PATH entries are prepended, and the LAST line
+          # written ends up FIRST in PATH. We need the venv to win for `python3`
+          # (it has yaml/jsonschema; Homebrew's python3 does not) while Homebrew
+          # still wins for `bash` (the venv ships no bash). Writing Homebrew
+          # first and the venv last therefore yields: venv, homebrew, ...rest —
+          # python3 resolves into the venv and bash falls through to Homebrew.
+          # Reversing these two lines makes 54 tests fail with
+          # "ModuleNotFoundError: No module named 'yaml'".
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
-      - name: Verify bash version
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: Verify toolchain
         # Fail here, loudly, rather than letting the suite die later with
-        # "conditional binary operator expected". The step itself still runs
-        # under the runner's /bin/bash (GitHub hardcodes that as the `run:`
-        # shell), but `bash` resolved from PATH is what bats will use.
+        # "conditional binary operator expected" or a missing Python module.
+        # The step itself may still run under the runner's /bin/bash, but
+        # `bash`/`python3` resolved from PATH are what bats will use.
         run: |
-          echo "bash on PATH: $(command -v bash)"
-          echo "system bash:  /bin/bash $(/bin/bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+          echo "--- bash ---"
+          echo "bash on PATH:  $(command -v bash)"
+          echo "system bash:   /bin/bash $(/bin/bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)"
           bash --version | head -1
-          ver=$(bash -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"')
-          echo "resolved bash version: $ver"
-          major=${ver%%.*}; minor=${ver##*.}
-          if [ "$major" -lt 4 ] || { [ "$major" -eq 4 ] && [ "$minor" -lt 3 ]; }; then
-            echo "::error::tests would run under bash $ver; need >= 4.3"
+          bver=$(bash -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"')
+          bmajor=${bver%%.*}; bminor=${bver##*.}
+          if [ "$bmajor" -lt 4 ] || { [ "$bmajor" -eq 4 ] && [ "$bminor" -lt 3 ]; }; then
+            echo "::error::tests would run under bash $bver; need >= 4.3"
             exit 1
           fi
+          echo "--- python ---"
+          echo "python3 on PATH: $(command -v python3)"
+          python3 --version
+          if ! python3 -c 'import yaml, jsonschema' 2>/dev/null; then
+            echo "::error::python3 on PATH cannot import yaml and jsonschema (lib/config.sh needs both)"
+            python3 -c 'import yaml' 2>&1 | head -3 || true
+            exit 1
+          fi
+          echo "yaml + jsonschema importable: yes"
       - name: Install bats
         # Pinned to the same version on both platforms so the two suites cannot
         # drift apart through a runner's preinstalled bats.
@@ -132,27 +146,38 @@ jobs:
           sudo apt-get install -y jq python3 python3-yaml python3-jsonschema sqlite3 coreutils
       - name: Install dependencies (macOS)
         # See the note in test-unit: venv avoids PEP 668 and guarantees the
-        # interpreter the tests use has yaml + jsonschema. `bash` is required
-        # because macOS /bin/bash is 3.2 and the lib needs >= 4.3.
+        # interpreter the tests use has yaml + jsonschema; `bash` is required
+        # because macOS /bin/bash is 3.2 and the lib needs >= 4.3. The
+        # GITHUB_PATH order (Homebrew first, venv last) is deliberate — see the
+        # long comment in test-unit.
         if: runner.os == 'macOS'
         run: |
           brew install jq sqlite3 coreutils bash
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --upgrade pip pyyaml jsonschema
-          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
-      - name: Verify bash version
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: Verify toolchain
         run: |
-          echo "bash on PATH: $(command -v bash)"
-          echo "system bash:  /bin/bash $(/bin/bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+          echo "--- bash ---"
+          echo "bash on PATH:  $(command -v bash)"
+          echo "system bash:   /bin/bash $(/bin/bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)"
           bash --version | head -1
-          ver=$(bash -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"')
-          echo "resolved bash version: $ver"
-          major=${ver%%.*}; minor=${ver##*.}
-          if [ "$major" -lt 4 ] || { [ "$major" -eq 4 ] && [ "$minor" -lt 3 ]; }; then
-            echo "::error::tests would run under bash $ver; need >= 4.3"
+          bver=$(bash -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"')
+          bmajor=${bver%%.*}; bminor=${bver##*.}
+          if [ "$bmajor" -lt 4 ] || { [ "$bmajor" -eq 4 ] && [ "$bminor" -lt 3 ]; }; then
+            echo "::error::tests would run under bash $bver; need >= 4.3"
             exit 1
           fi
+          echo "--- python ---"
+          echo "python3 on PATH: $(command -v python3)"
+          python3 --version
+          if ! python3 -c 'import yaml, jsonschema' 2>/dev/null; then
+            echo "::error::python3 on PATH cannot import yaml and jsonschema (lib/config.sh needs both)"
+            python3 -c 'import yaml' 2>&1 | head -3 || true
+            exit 1
+          fi
+          echo "yaml + jsonschema importable: yes"
       - name: Install bats
         run: |
           git clone --depth 1 --branch v1.14.0 https://github.com/bats-core/bats-core.git /tmp/bats
