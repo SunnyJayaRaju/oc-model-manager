@@ -8,10 +8,15 @@
 # Usage: map_old_command "old_command"
 map_old_command() {
   local old_cmd="$1"
+  # Emit ONE WORD PER LINE, matching map_old_flags and handle_special_cases.
+  # This previously echoed e.g. "scheduler install" as a single string, so
+  # run_shim passed one argv element containing a space to ocprobe, whose `case`
+  # statement compares separate words and so reported
+  # "Unknown command: scheduler install".
   case "$old_cmd" in
-    install-scheduler) echo "scheduler install" ;;
-    uninstall-scheduler) echo "scheduler uninstall" ;;
-    *) echo "$old_cmd" ;;
+    install-scheduler) printf '%s\n' scheduler install ;;
+    uninstall-scheduler) printf '%s\n' scheduler uninstall ;;
+    *) printf '%s\n' "$old_cmd" ;;
   esac
 }
 
@@ -48,9 +53,19 @@ run_shim() {
   local _old_program="$1"
   shift
   
-  # Map command
-  local cmd
-  cmd=$(map_old_command "$1")
+  # With no subcommand there is no $1 to map. This script runs under `set -u`,
+  # so referencing it was a fatal "$1: unbound variable" instead of usage.
+  if [[ $# -eq 0 ]]; then
+    printf 'usage: %s <command> [flags]\n' "$_old_program" >&2
+    printf 'This shim is deprecated; use ocprobe directly.\n' >&2
+    printf "Try 'ocprobe help' for the current command list.\n" >&2
+    return 0
+  fi
+
+  # Map command. Split on newlines so a multi-word mapping becomes separate
+  # argv entries that ocprobe's `case` statement can actually match.
+  local -a cmd_words=()
+  mapfile -t cmd_words < <(map_old_command "$1")
   shift
   
   # Map flags
@@ -61,7 +76,7 @@ run_shim() {
   done
   
   # Combine command and flags
-  local final_args=("$cmd" "${mapped_args[@]}")
+  local -a final_args=("${cmd_words[@]}" "${mapped_args[@]}")
   
   # Handle special cases
   local special_args

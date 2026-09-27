@@ -17,69 +17,6 @@ teardown() {
   rm -rf "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR"
 }
 
-@test "is_probe_session returns true for valid probe session" {
-  run is_probe_session "ses_probe1"
-  assert_success
-}
-
-@test "is_probe_session returns false for old session" {
-  run is_probe_session "ses_probe2"
-  assert_failure
-}
-
-@test "is_probe_session returns false for real session" {
-  run is_probe_session "ses_real"
-  assert_failure
-}
-
-@test "batch_get_old_sessions finds old sessions" {
-  local -a sessions=("ses_probe1" "ses_probe2" "ses_real")
-  local result
-  result=$(batch_get_old_sessions sessions 1)
-  printf "DEBUG: result='%s'\n" "$result" >&2
-  printf "DEBUG: result hex=%s\n" "$(printf "%s" "$result" | xxd)" >&2
-  
-  # Use case instead of grep to avoid any grep issues
-  case "$result" in
-    *ses_probe2*) local ec=0 ;;
-    *) local ec=1 ;;
-  esac
-  run test $ec -eq 0
-  assert_success
-  
-  case "$result" in
-    *ses_probe1*) local ec=0 ;;
-    *) local ec=1 ;;
-  esac
-  run test $ec -eq 1
-  assert_success
-  
-  case "$result" in
-    *ses_real*) local ec=0 ;;
-    *) local ec=1 ;;
-  esac
-  run test $ec -eq 1
-  assert_success
-}
-
-@test "batch_get_fresh_probe_sessions finds fresh sessions with messages" {
-  local -a sessions=("ses_probe1" "ses_probe2" "ses_real")
-  local result
-  result=$(batch_get_fresh_probe_sessions sessions 1)
-  case "$result" in
-    *ses_probe1*) local ec=0 ;;
-    *) local ec=1 ;;
-  esac
-  run test $ec -eq 0
-  assert_success
-  case "$result" in
-    *ses_probe2*) local ec=0 ;;
-    *) local ec=1 ;;
-  esac
-  run test $ec -eq 1
-  assert_success
-}
-
 @test "session_age_ms returns age in milliseconds" {
   local age
   age=$(session_age_ms "ses_probe2")

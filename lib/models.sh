@@ -333,6 +333,15 @@ process_alerts() {
 cleanup_probe_sessions() {
 	log_info "[5/7] Cleaning probe sessions..."
 
+	# Historical note: session safety here is NOT the older is_probe_session()
+	# exact-prompt-match check, which was removed as dead code. That older
+	# approach compared the first message's text against the probe prompt
+	# verbatim; it was the original safety net for the 2026-08-25 session-loss
+	# incident, and it has since been superseded by the design used here:
+	# a title-prefix match (probe / legacy-probe / validate) in SQL, bounded
+	# by this run's start time, plus the age and message-count guards. Any
+	# future change to session deletion must keep all three properties -- the
+	# exact-prompt property is no longer provided by any code path.
 	# Candidate sessions come from the DB (complete), bounded by this run's start
 	# time — NOT from `opencode session list`, which paginates at 100 rows and hid
 	# 842 of 942 probe sessions on a full-catalog run. Age and message-count guards

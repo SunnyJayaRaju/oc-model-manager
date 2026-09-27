@@ -8,28 +8,6 @@ set -euo pipefail
 
 # ---- Session Queries --------------------------------------------------------
 
-# Check if a session is a probe session (exact prompt match, small, fresh)
-is_probe_session() {
-	local sid="$1"
-	local sid_escaped prompt_escaped
-	sid_escaped=$(sql_escape "$sid") || return 1
-	prompt_escaped=$(sql_escape "$OCPROBE_PROBE_PROMPT") || return 1
-
-	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
-
-	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT 1 FROM message m \
-     WHERE m.session_id='${sid_escaped}' \
-       AND m.id=(SELECT m2.id FROM message m2 WHERE m2.session_id='${sid_escaped}' ORDER BY m2.time_created, m2.id LIMIT 1) \
-       AND (SELECT COUNT(*) FROM message WHERE session_id='${sid_escaped}') <= ${OCPROBE_MAX_MSG_COUNT} \
-       AND m.time_created > (strftime('%s','now')-${OCPROBE_AGE_GUARD_HOURS}*3600)*1000 \
-       AND EXISTS (SELECT 1 FROM part p WHERE p.message_id=m.id \
-                   AND json_extract(p.data,'\$.type')='text' \
-                   AND trim(json_extract(p.data,'\$.text'), '\"')='${prompt_escaped}') \
-     LIMIT 1;" \
-		2>/dev/null | grep -q 1
-}
-
 # Get session age in milliseconds
 session_age_ms() {
 	local sid="$1"
@@ -47,56 +25,6 @@ session_age_ms() {
 	echo "$age_ms"
 }
 
-# Batch query: get old sessions (> age guard)
-batch_get_old_sessions() {
-	local -n session_array=$1
-	local age_hours="${2:-$OCPROBE_AGE_GUARD_HOURS}"
-
-	[[ -f "$OCPROBE_OPencode_DB" ]] || return 0
-	[[ ${#session_array[@]} -eq 0 ]] && return 0
-
-	local in_clause
-	local -a escaped_sessions=()
-	for sid in "${session_array[@]}"; do
-		local escaped
-		escaped=$(sql_escape "$sid") || continue
-		escaped_sessions+=("$escaped")
-	done
-	[[ ${#escaped_sessions[@]} -eq 0 ]] && return 0
-	in_clause=$(printf "'%s'," "${escaped_sessions[@]}" | sed 's/,$//')
-
-	while IFS= read -r sid; do
-		[[ -n "$sid" ]] && echo "$sid"
-	done < <(sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT id FROM session WHERE id IN ($in_clause) AND time_created <= (strftime('%s','now')-${age_hours}*3600)*1000;" \
-		2>/dev/null)
-}
-
-# Batch query: get fresh probe sessions (< fresh guard, has messages)
-batch_get_fresh_probe_sessions() {
-	local -n session_array=$1
-	local fresh_hours="${2:-$OCPROBE_FRESH_GUARD_HOURS}"
-
-	[[ -f "$OCPROBE_OPencode_DB" ]] || return 0
-	[[ ${#session_array[@]} -eq 0 ]] && return 0
-
-	local in_clause
-	local -a escaped_sessions=()
-	for sid in "${session_array[@]}"; do
-		local escaped
-		escaped=$(sql_escape "$sid") || continue
-		escaped_sessions+=("$escaped")
-	done
-	[[ ${#escaped_sessions[@]} -eq 0 ]] && return 0
-	in_clause=$(printf "'%s'," "${escaped_sessions[@]}" | sed 's/,$//')
-
-	while IFS= read -r sid; do
-		[[ -n "$sid" ]] && echo "$sid"
-	done < <(sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT id FROM session WHERE id IN ($in_clause) AND time_created > (strftime('%s','now')-${fresh_hours}*3600)*1000 AND EXISTS (SELECT 1 FROM message WHERE session_id=session.id) LIMIT 1;" \
-		2>/dev/null)
-}
-
 # Delete session
 # Single choke point for session deletion, so the safety guards live HERE rather
 # than at each call site: a future caller cannot delete an unvalidated id.
@@ -104,7 +32,7 @@ delete_session() {
 	local sid="$1"
 
 	# (a) Format gate. opencode session ids are "ses_" followed by [A-Za-z0-9_-]
-	# (the same shape list_sessions_with_titles matches with /^ses_/). Anything
+	# (the same shape get_session_title matches with /^ses_/). Anything
 	# else cannot be a real id, so refuse before invoking the CLI.
 	if [[ ! "$sid" =~ ^ses_[A-Za-z0-9_-]+$ ]]; then
 		log_error "delete_session: refusing malformed session id: '$sid'"
@@ -160,10 +88,6 @@ get_session_title() {
 	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
 		"SELECT id || char(9) || COALESCE(title, '') FROM session WHERE id='${sid_esc}' LIMIT 1;" \
 		2>/dev/null
-}
-
-list_sessions_with_titles() {
-	opencode session list 2>/dev/null | awk '/^ses_/{id=$1; $1=""; sub(/^ +/,""); print id"\t"$0}' || true
 }
 
 # All session ids currently in the DB (complete, unpaginated).
