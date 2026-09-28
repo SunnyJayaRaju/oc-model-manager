@@ -65,8 +65,6 @@ $ ocprobe validate --apply        # Apply: write blacklist, create backup, verif
 $ ocprobe policy show             # Show current policy (or note if missing)
 ```
 
-
-
 ---
 
 ## Table of Contents
@@ -89,6 +87,7 @@ $ ocprobe policy show             # Show current policy (or note if missing)
 ### Homebrew (macOS / Linux)
 
 > **Note:** Legacy shims `oc-model-audit.sh`, `oc-model-manager`, and `oc-session-backup` are deprecated. Use `ocprobe` subcommands directly (`ocprobe audit`, `ocprobe check`, `ocprobe session`, etc.). They will be removed in a future major release.
+
 ```bash
 brew tap SunnyJayaRaju/ocprobe
 brew install ocprobe
@@ -97,6 +96,7 @@ brew install ocprobe
 > **Note:** The previous tap `SunnyJayaRaju/ocm` is deprecated. If you previously installed via `brew tap SunnyJayaRaju/ocm && brew install ocm`, please run `brew untap SunnyJayaRaju/ocm` and use the new tap above.
 
 ### From Source
+
 ```bash
 git clone https://github.com/SunnyJayaRaju/oc-model-manager.git
 cd oc-model-manager
@@ -104,6 +104,7 @@ make install
 ```
 
 ### Manual (Pre-built Release)
+
 ```bash
 # Latest release: https://github.com/SunnyJayaRaju/oc-model-manager/releases/latest
 VERSION=$(curl -s https://api.github.com/repos/SunnyJayaRaju/oc-model-manager/releases/latest | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4 | sed 's/^v//')
@@ -151,38 +152,39 @@ $ ocprobe session backup ses_abc  # Backup session to SQL dump
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `audit` | Full cycle: diff → probe → confirm → apply (default) |
-| `check` | Dry-run only; exit 1 if changes pending |
-| `status` | Show whitelisted models + recent probe results |
-| `alerts [--clear]` | Show/clear recorded alerts |
-| `probe <model>` | Test one model now |
-| `watch` | Run check+alert on interval (never auto-applies) |
-| `validate [--provider <id>] [--model <id>] [--apply] [--verbose] [--json]` | Probe all models for configured providers, blacklist failures |
-| `policy [show|validate|path|init|dry-run]` | Experimental, off by default; audit/check only (never validate) |
-| `validate restore` | Revert opencode.json from last validate backup |
-| `scheduler [install\|uninstall\|status]` | Manage background scheduler |
-| `session [list\|backup\|restore\|cleanup]` | Session management |
-| `config [show\|validate\|edit\|schema\|path]` | Configuration management |
-| `doctor` | Health check: config, DB, auth, disk |
-| `version` | Show version |
-| `help` | Show help |
+| Command                                                                    | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `audit`                                                                    | Full cycle: diff → probe → confirm → apply (default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `check`                                                                    | Dry-run only; exit 1 if changes pending                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `status`                                                                   | Show whitelisted models + recent probe results                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `alerts [--clear]`                                                         | Show/clear recorded alerts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `probe <model>`                                                            | Test one model now                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `watch`                                                                    | Run check+alert on interval (never auto-applies)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `validate [--provider <id>] [--model <id>] [--apply] [--verbose] [--json]` | Probe all models for configured providers, blacklist failures                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `policy [show                                                              | validate                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | path | init | dry-run]` | Experimental, off by default; audit/check only (never validate) |
+| `validate restore`                                                         | Revert opencode.json from last validate backup                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `scheduler [install\|uninstall\|status]`                                   | Manage background scheduler                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `session [list\|backup\|restore\|cleanup]`                                 | Session management                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `session restore <file.sql>`                                               | Restore a backup dump. A pre-restore copy of the database is taken first. The dump is enforced **per statement** inside SQLite: only `INSERT`s into `session`, `message`, `part` and `todo` are permitted (plus the `unistr()` function, which is how a newline inside a value is encoded). `ATTACH`, `DROP`, `DELETE`, `UPDATE`, `ALTER`, any `CREATE`, any `PRAGMA`, any other function, and every read (`INSERT … SELECT`) are refused. The whole file is one transaction, so a rejected dump leaves the database byte-identical. |
+| `config [show\|validate\|edit\|schema\|path]`                              | Configuration management                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `doctor`                                                                   | Health check: config, DB, auth, disk                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `version`                                                                  | Show version                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `help`                                                                     | Show help                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 ---
 
 ## Global Options
 
-| Option | Description |
-|--------|-------------|
-| `--quick` | Skip whitelist probe (audit/check only) |
-| `--force-refresh` | Force catalog refresh (ignore cache) |
-| `--yes, -y` | Assume yes to prompts |
-| `--json` | Output JSON (machine-readable) |
-| `--dry-run` | Show what would be done without doing it |
-| `--config <path>` | Override config file |
-| `--verbose, -v` | Verbose logging |
-| `--help, -h` | Show help |
+| Option            | Description                              |
+| ----------------- | ---------------------------------------- |
+| `--quick`         | Skip whitelist probe (audit/check only)  |
+| `--force-refresh` | Force catalog refresh (ignore cache)     |
+| `--yes, -y`       | Assume yes to prompts                    |
+| `--json`          | Output JSON (machine-readable)           |
+| `--dry-run`       | Show what would be done without doing it |
+| `--config <path>` | Override config file                     |
+| `--verbose, -v`   | Verbose logging                          |
+| `--help, -h`      | Show help                                |
 
 ---
 
@@ -197,9 +199,9 @@ opencode:
   db_path: "~/.local/share/opencode/opencode.db"
 
 probe:
-  timeout_new: 45          # seconds for new models
-  timeout_whitelist: 30    # seconds for whitelisted models
-  max_parallel: 4          # concurrent probes
+  timeout_new: 45 # seconds for new models
+  timeout_whitelist: 30 # seconds for whitelisted models
+  max_parallel: 4 # concurrent probes
   prompt: "Reply with exactly: OK"
   title_prefix: "ocprobe-probe"
 
@@ -209,7 +211,7 @@ catalog:
 
 scheduler:
   enabled: false
-  interval_seconds: 21600  # 6 hours
+  interval_seconds: 21600 # 6 hours
   run_at_load: false
 
 alerts:
@@ -247,7 +249,7 @@ See `ocprobe config schema` for full schema.
 
 - **Catalog Management** — Diff upstream catalog against whitelist, discover new models, detect removed models
 - **Live Probing** — Test models with configurable timeouts, parallel execution, and intelligent status detection (WORKS, EOL, PAYWALLED, BROKEN, TIMEOUT, NOTFOUND)
-- **Safety First** — Session cleanup only removes *this run's* probe sessions (verified via exact prompt match in DB); mass-removal guard prevents catastrophic whitelist wipes
+- **Safety First** — Session cleanup only removes _this run's_ probe sessions (verified via exact prompt match in DB); mass-removal guard prevents catastrophic whitelist wipes
 - **Alerting** — Desktop notifications, webhook support, alert history with severity levels
 - **Scheduler** — launchd (macOS) / systemd (Linux) integration for continuous monitoring
 - **Session Management** — Backup/restore sessions to replayable SQL dumps
@@ -263,60 +265,61 @@ See `ocprobe config schema` for full schema.
 
 `ocprobe validate` probes every model offered by each provider that has valid API credentials in `~/.local/share/opencode/auth.json`. Models that respond successfully (`WORKS`) stay visible in OpenCode's model picker; models that fail (timeout, auth error, not found, or other error) are added to the provider's `blacklist` in `opencode.json`.
 
-**Billing errors are never blacklisted.** If a probe fails with `BILLING_ERROR`, the *account* cannot currently afford that model's default output size — the model itself is fine and works as soon as credits exist. Blacklisting it would permanently hide a working model on a free or credit-limited key, so it is reported for review but never added to the blacklist, and it does not count toward the two-failure gate.
+**Billing errors are never blacklisted.** If a probe fails with `BILLING_ERROR`, the _account_ cannot currently afford that model's default output size — the model itself is fine and works as soon as credits exist. Blacklisting it would permanently hide a working model on a free or credit-limited key, so it is reported for review but never added to the blacklist, and it does not count toward the two-failure gate.
 
 ---
- 
+
 ### Two-Failure Gate
- 
+
 Non-terminal failures (TIMEOUT, AUTH_ERROR, ERROR, UNCLEAR) require **two consecutive failures** before a model is added to the blacklist:
+
 - First failure → `TENTATIVE` (not blacklisted, surfaced for review)
 - Second consecutive failure → `CONFIRMED` (added to blacklist)
 - `WORKS` at any point resets the failure counter
 - `EOL` / `NOT_FOUND` → `CONFIRMED` immediately (terminal)
 - `BILLING_ERROR` → never blacklisted, and does not advance the counter (see above)
- 
+
 ---
- 
+
 ### Modality Skip List
- 
+
 Models matching patterns in the default patterns file (installed at `share/ocprobe/validate-skip-patterns.txt` under the install prefix, resolved via `OCPROBE_CONFIG_DIR`) or the optional user override at `~/.local/state/ocprobe/validate-skip-patterns-user.txt` are **never probed** and receive `SKIPPED_MODALITY` status. Default patterns cover embeddings, reranking, image/audio/video generation, moderation, etc.
- 
+
 ---
- 
+
 ### AUTH_ERROR Provider-Wide Abort
- 
+
 If a provider's `AUTH_ERROR` rate exceeds `OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD_PCT` (default 40%), the provider is **skipped entirely** — no models are probed, no blacklist changes are made. This prevents blacklisting models due to credential/quota issues.
- 
+
 ---
- 
+
 ### Usage
- 
+
 ```bash
 # Dry-run: show what would be blacklisted (exit 0 if no changes, 1 if changes pending)
 ocprobe validate
- 
+
 # Apply changes: write blacklist to opencode.json, create backup, verify effect
 ocprobe validate --apply
- 
+
 # Scope to a single provider
 ocprobe validate --provider openrouter
- 
+
 # Scope to a single model
 ocprobe validate --provider nvidia --model nvidia/meta/llama-4-maverick-17b-128e-instruct
- 
+
 # Verbose per-model logging
 ocprobe validate --verbose
- 
+
 # Machine-readable output with schema_version
 ocprobe validate --json
- 
+
 # Restore from last validate backup
 ocprobe validate restore
 ```
- 
+
 ### Behavior
- 
+
 - **Default is dry-run** — prints a per-provider diff of proposed blacklist additions/removals
 - **Uses blacklist (additive)** — only hides confirmed failures; does not whitelist-only (which would hide unprobed models)
 - **Fresh every run** — no cached/stale blacklisting; every run re-probes all models
@@ -333,14 +336,15 @@ ocprobe validate restore
 ### Classification
 
 Each model is classified as:
-| Status | Meaning |
-|--------|---------|
-| `WORKS` | Model responded with expected output |
-| `TIMEOUT` | Probe exceeded timeout |
-| `AUTH_ERROR` | Invalid/missing API key |
-| `BILLING_ERROR` | Payment required, quota exceeded |
-| `NOT_FOUND` | Model EOL, 404, or gone |
-| `ERROR` | Other error (rate limit, server error, etc.) |
+
+| Status             | Meaning                                              |
+| ------------------ | ---------------------------------------------------- |
+| `WORKS`            | Model responded with expected output                 |
+| `TIMEOUT`          | Probe exceeded timeout                               |
+| `AUTH_ERROR`       | Invalid/missing API key                              |
+| `BILLING_ERROR`    | Payment required, quota exceeded                     |
+| `NOT_FOUND`        | Model EOL, 404, or gone                              |
+| `ERROR`            | Other error (rate limit, server error, etc.)         |
 | `SKIPPED_MODALITY` | Model matched a modality skip pattern (never probed) |
 
 ---
@@ -352,16 +356,17 @@ Each model is classified as:
 
 ### Schema fields
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `version` | integer | **required** | Must be `1` |
-| `enabled` | boolean | `false` | Master switch for the policy engine |
-| `auto_apply` | boolean | `false` | Apply policy decisions without confirmation |
-| `never_remove` | array of strings | `[]` | Models (provider/model) to never remove from whitelist |
-| `never_add` | array of strings | `[]` | Models (provider/model) to never add to whitelist |
-| `providers` | object | `{}` | Per-provider rules (see below) |
+| Field          | Type             | Default      | Description                                            |
+| -------------- | ---------------- | ------------ | ------------------------------------------------------ |
+| `version`      | integer          | **required** | Must be `1`                                            |
+| `enabled`      | boolean          | `false`      | Master switch for the policy engine                    |
+| `auto_apply`   | boolean          | `false`      | Apply policy decisions without confirmation            |
+| `never_remove` | array of strings | `[]`         | Models (provider/model) to never remove from whitelist |
+| `never_add`    | array of strings | `[]`         | Models (provider/model) to never add to whitelist      |
+| `providers`    | object           | `{}`         | Per-provider rules (see below)                         |
 
 **Per-provider rules** (`providers.<provider>`):
+
 - `enabled` (boolean, default: `true`) — enable/disable policy for this provider
 - `include` (array of globs, default: `["*"]`) — models to consider
 - `exclude` (array of globs, default: `[]`) — models to skip
@@ -380,19 +385,20 @@ Each model is classified as:
 
 ### Commands
 
-| Command | Description |
-|---------|-------------|
-| `ocprobe policy show` | Display current policy file (or note if missing) |
-| `ocprobe policy validate` | Validate policy file against schema |
-| `ocprobe policy path` | Print resolved policy file path |
-| `ocprobe policy init` | Create a scaffold policy file (disabled) at default location |
-| `ocprobe policy dry-run` | Show candidates & exclusions without probing or applying |
+| Command                   | Description                                                  |
+| ------------------------- | ------------------------------------------------------------ |
+| `ocprobe policy show`     | Display current policy file (or note if missing)             |
+| `ocprobe policy validate` | Validate policy file against schema                          |
+| `ocprobe policy path`     | Print resolved policy file path                              |
+| `ocprobe policy init`     | Create a scaffold policy file (disabled) at default location |
+| `ocprobe policy dry-run`  | Show candidates & exclusions without probing or applying     |
 
 ### Current status
 
 **Wired into audit/check** — new-model candidates are filtered by `never_add` and provider `include`/`exclude` rules before probing; whitelisted models matching `never_remove` are protected from removal regardless of probe failures. The effective `auto_apply` (per-provider override or global) skips the confirmation prompt but **never bypasses** the mass-removal guard, backups, or graveyard recording.
 
 **Per-provider `auto_apply` is enforced** — effective auto_apply for a provider/model is determined by:
+
 - If `providers.<provider>.auto_apply` is explicitly set in the policy file → use it
 - Otherwise → use global `auto_apply`
 
@@ -400,11 +406,9 @@ At confirmation time, the prompt is skipped only if policy is enabled AND every 
 
 ---
 
-
-
 ## Safety Guarantees
 
-1. **Session Isolation** — Only sessions created during *this run* with the exact probe prompt (`Reply with exactly: OK`) in the first message are deleted. Real conversations are never touched.
+1. **Session Isolation** — Only sessions created during _this run_ with the exact probe prompt (`Reply with exactly: OK`) in the first message are deleted. Real conversations are never touched.
 
 2. **Mass Removal Guard** — If >50% of whitelist would be removed in one run, `ocprobe` refuses to apply (override with `OCPROBE_ALLOW_MASS_REMOVE=1`).
 

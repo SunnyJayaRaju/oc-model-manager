@@ -288,7 +288,7 @@ make_session_db() {
 
     run cmd_session_restore "$sql"
     assert_failure
-    assert_output --partial "disallowed statement"
+    assert_output --partial "was rejected"
     # the table must still be there
     run sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='session';"
     assert_output "session"
@@ -302,7 +302,7 @@ make_session_db() {
 
     run cmd_session_restore "$sql"
     assert_failure
-    assert_output --partial "disallowed statement"
+    assert_output --partial "was rejected"
 }
 
 @test "cmd_session_restore aborts cleanly when the pre-restore backup fails" {

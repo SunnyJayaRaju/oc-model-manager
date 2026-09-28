@@ -91,35 +91,12 @@ cmd_session_restore() {
 
 	load_config
 
-	# Content validation: only INSERT / BEGIN / COMMIT / PRAGMA may appear, and each
-	# statement must sit on a single line. This rejects DROP/DELETE/ALTER/UPDATE/
-	# ATTACH, sqlite3 dot-commands (.shell/.output/.read) and comments — anything
-	# that could alter the database beyond restoring rows. Dumps produced by
-	# `ocprobe session backup` always pass: sqlite3's insert mode escapes newlines
-	# as unistr('...\u000a...'), so every INSERT stays on one line.
-	local bad_line
-	bad_line=$(awk '
-		{
-			line = $0
-			gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-			if (line == "") next
-			if (tolower(line) ~ /^(insert|begin|commit|pragma)([[:space:]]|;|$)/) next
-			printf "line %d: %s", NR, $0
-			exit
-		}
-	' "$file") || true
-
-	if [[ -n "$bad_line" ]]; then
-		log_error "refusing restore: $file contains a disallowed statement"
-		log_error "  $bad_line"
-		log_error "  only INSERT / BEGIN / COMMIT / PRAGMA are allowed, one statement per line"
-		return 1
-	fi
-
-	# Back up the live database before writing to it. backup_opencode_config()
+	# Back up the live database BEFORE writing to it. backup_opencode_config()
 	# backs up opencode.json (and cmd_session does not source validate.sh), so use
 	# SQLite's online backup for the session DB itself. .backup exits non-zero on
-	# failure, so an unbacked database aborts the restore.
+	# failure, so an unbacked database aborts the restore. This must stay ahead of
+	# the enforcement block below: if the backup cannot be taken, nothing may be
+	# written at all.
 	local backup_dir="${OCPROBE_SESSION_BACKUP_DIR:-$HOME/.local/share/opencode/session-backups}"
 	backup_dir="${backup_dir/#\~/$HOME}"
 	mkdir -p "$backup_dir" || {
@@ -134,22 +111,107 @@ cmd_session_restore() {
 	fi
 	log_info "database backed up to $db_backup"
 
-	# -bail: stop at the first failing statement instead of continuing and
-	# COMMITting the successful ones (which would be a silent partial restore).
-	# On error the open transaction is rolled back when sqlite3 exits.
-	local rc=0
-	{
-		echo "PRAGMA busy_timeout=10000;"
-		echo "BEGIN IMMEDIATE;"
-		cat "$file"
-		echo "COMMIT;"
-	} | sqlite3 -bail "$OCPROBE_OPencode_DB" || rc=$?
+	# Statement-level enforcement, performed INSIDE SQLite.
+	#
+	# This used to be a line-prefix filter: accept a line if its first keyword was
+	# INSERT/BEGIN/COMMIT/PRAGMA. That cannot be made safe, because SQLite runs
+	# EVERY semicolon-separated statement on a line. So
+	#     INSERT INTO session VALUES('a','x',1,2); DROP TABLE session;
+	# passed the filter and dropped the table, and
+	#     INSERT ...; ATTACH DATABASE '/tmp/x.db' AS e; CREATE TABLE e.t(x); ...
+	# wrote an attacker-controlled file on the host. Both reported success.
+	#
+	# Enforcement is now per statement, through a SQLite authorizer that allows only:
+	#   - SQLITE_INSERT on the four tables `cmd_session_backup` actually emits
+	#   - SQLITE_TRANSACTION, so this function owns BEGIN IMMEDIATE / COMMIT
+	#   - SQLITE_FUNCTION for unistr() and nothing else
+	# and denies everything else: ATTACH/DETACH, DROP/DELETE/UPDATE/ALTER, any
+	# CREATE (which surfaces as an INSERT into sqlite_master, so the table allowlist
+	# rejects it), every PRAGMA, every other function, and all reads
+	# (SQLITE_READ / SQLITE_SELECT, so INSERT..SELECT cannot copy out of
+	# sqlite_master or any other table).
+	#
+	# unistr() must be permitted: `sqlite3 .mode insert` escapes a newline inside a
+	# value as unistr('...\u000a...'), so every genuine dump contains it. It only
+	# decodes \uXXXX escapes and cannot touch the filesystem.
+	#
+	# The whole file is one transaction. Any denial, parse error or exception rolls
+	# it all back, so a rejected restore leaves the database byte-identical.
+	#
+	# Statements are split with sqlite3.complete_statement() so a value containing a
+	# newline still restores, and each is run with execute() rather than
+	# executescript(), which would commit implicitly and defeat the rollback.
+	local restore_rc=0
+	python3 - "$OCPROBE_OPencode_DB" "$file" <<'PY' || restore_rc=$?
+import sqlite3
+import sys
 
-	if ((rc != 0)); then
-		log_error "restore failed (sqlite3 exit $rc) — nothing committed; backup kept at $db_backup"
+db_path, dump_path = sys.argv[1], sys.argv[2]
+
+# The exact tables `cmd_session_backup` writes: .mode insert session / message /
+# part / todo, one INSERT OR REPLACE per row.
+ALLOWED_TABLES = frozenset(("session", "message", "part", "todo"))
+ALLOWED_FUNCS = frozenset(("unistr",))
+
+# Authorizer action codes from sqlite3.h. Spelled out rather than reflected:
+# several constants share a value (SQLITE_INSERT and SQLITE_TOOBIG are both 18),
+# so building this map with getattr() silently picks the wrong name.
+OP_INSERT, OP_TRANSACTION, OP_FUNCTION = 18, 22, 31
+
+
+def authorize(action, arg1, arg2, db_name, trigger_name):
+    if action == OP_INSERT:
+        return sqlite3.SQLITE_OK if arg1 in ALLOWED_TABLES else sqlite3.SQLITE_DENY
+    if action == OP_TRANSACTION:
+        return sqlite3.SQLITE_OK
+    if action == OP_FUNCTION:
+        # arg2 carries the function name. Python has passed both the bare str and
+        # a (name, narg) tuple across versions, so accept either shape.
+        name = arg2[0] if isinstance(arg2, (tuple, list)) else arg2
+        return sqlite3.SQLITE_OK if name in ALLOWED_FUNCS else sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_DENY
+
+
+con = sqlite3.connect(db_path, isolation_level=None)
+try:
+    # Set the busy timeout before the authorizer goes on; afterwards a PRAGMA
+    # would be denied like any other.
+    con.execute("PRAGMA busy_timeout=10000")
+    con.set_authorizer(authorize)
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        pending = ""
+        with open(dump_path, encoding="utf-8") as handle:
+            for line in handle:
+                pending += line
+                if not sqlite3.complete_statement(pending):
+                    continue
+                statement = pending.strip()
+                pending = ""
+                if statement:
+                    con.execute(statement)
+        if pending.strip():
+            # Trailing text that never closed is not a statement we can vouch for.
+            raise ValueError("trailing text is not a complete statement: %r" % pending[:120])
+        con.execute("COMMIT")
+    except Exception as exc:
+        try:
+            con.execute("ROLLBACK")
+        except Exception:
+            pass
+        sys.stderr.write("restore failed: %s: %s\n" % (type(exc).__name__, exc))
+        sys.exit(1)
+finally:
+    con.set_authorizer(None)
+    con.close()
+sys.exit(0)
+PY
+
+	if ((restore_rc != 0)); then
+		log_error "restore refused: $file was rejected (see the error above) — nothing committed; backup kept at $db_backup"
+		log_error "  only INSERT statements into: session, message, part, todo are permitted"
 		return 1
 	fi
-
 	log_info "restored from $file"
 }
 
