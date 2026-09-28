@@ -40,3 +40,8 @@ auth.json
 *.p12
 *.pfx
 opencode.json.ocprobe-backup-*
+
+# Python bytecode cache (lib/session_restore.py is imported by the unit tests,
+# so running them leaves one behind)
+__pycache__/
+*.py[cod]
