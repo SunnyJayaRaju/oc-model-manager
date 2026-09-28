@@ -220,7 +220,9 @@ array_dedup() {
 		# bash 4.2 and is a parse error on older interpreters.
 		if [[ -n "${!elem_var+x}" ]]; then
 			local val="${!elem_var}"
-			if ! array_contains "$val" "${seen[@]}"; then
+			# ${a[@]+"${a[@]}"} not "${a[@]}": $seen is empty on the first
+			# element, which is unbound under set -u on bash 4.3.
+			if ! array_contains "$val" ${seen[@]+"${seen[@]}"}; then
 				seen+=("$val")
 				result+=("$val")
 			fi

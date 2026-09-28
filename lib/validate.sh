@@ -78,7 +78,8 @@ is_modality_skip() {
 	rm -f "$patterns_file"
 
 	local pattern
-	for pattern in "${patterns[@]}"; do
+	# ${a[@]+"${a[@]}"} not "${a[@]}": empty arrays are unbound under set -u on bash 4.3.
+	for pattern in ${patterns[@]+"${patterns[@]}"}; do
 		validate_glob_match "$pattern" "$model_id" && return 0
 	done
 	return 1

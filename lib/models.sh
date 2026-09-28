@@ -411,7 +411,8 @@ generate_report() {
 	done < <(awk -F'\t' '$1=="WHITELIST"&&$3!="WORKS"' "$OCPROBE_RESULTS_FILE")
 
 	# Write dead list for apply
-	printf '%s\n' "${DEAD[@]}" | awk -F' [[]' 'NF{print $1}' >"$OCPROBE_RUN_DIR/dead.txt"
+	# ${a[@]+"${a[@]}"} not "${a[@]}": empty arrays are unbound under set -u on bash 4.3.
+	printf '%s\n' ${DEAD[@]+"${DEAD[@]}"} | awk -F' [[]' 'NF{print $1}' >"$OCPROBE_RUN_DIR/dead.txt"
 
 	local dead_n=${#DEAD[@]}
 	local ok_count
@@ -450,7 +451,7 @@ generate_report() {
 
 	# Store for apply
 	export REPORT_ADDS=("${ADDS[@]}")
-	export REPORT_DEAD=("${DEAD[@]}")
+	export REPORT_DEAD=(${DEAD[@]+"${DEAD[@]}"})
 	export REPORT_DEFER=("${DEFER[@]}")
 	export REPORT_PROTECTED=("${PROTECTED[@]}")
 	export REPORT_DEAD_N=$dead_n

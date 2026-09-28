@@ -228,5 +228,6 @@ parse_global_flags "$@"
 init_logging
 
 # Use remaining args for command dispatch
-set -- "${OCPROBE_REMAINING_ARGS[@]}"
+# ${a[@]+"${a[@]}"} not "${a[@]}": no remaining args is unbound under set -u on bash 4.3.
+set -- ${OCPROBE_REMAINING_ARGS[@]+"${OCPROBE_REMAINING_ARGS[@]}"}
 main "$@"
