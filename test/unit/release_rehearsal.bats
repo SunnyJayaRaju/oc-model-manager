@@ -217,11 +217,19 @@ EOF
 
 # ---- gates ----------------------------------------------------------------
 
-@test "the script and workflow are shellcheck-clean and parse" {
-    run shellcheck --severity=warning "$SCRIPT"
-    assert_success
+@test "the script and workflow are syntax-clean and covered by the lint gate" {
+    # NOT invoking shellcheck here. It is absent from the macOS runners -- it is
+    # installed by the Lint job, which is the only place it is needed -- so a
+    # test that runs it can only ever pass on Linux. That was already fixed once
+    # in this suite (the 3.1.3 prep branch) and reintroduced here; the rule is
+    # that lint lives in the Lint job and `make lint`, and a test asserts the
+    # COVERAGE by reading those commands instead of executing them.
     run bash -n "$SCRIPT"
     assert_success
+    run grep -c 'shellcheck --severity=warning.*scripts/\*\.sh' "$ROOT/Makefile"
+    assert_output "1"
+    run grep -c 'shellcheck --severity=warning.*scripts/\*\.sh' "$ROOT/.github/workflows/ci.yml"
+    assert_output "1"
     run python3 - "$WORKFLOW" <<'PY'
 import sys
 
