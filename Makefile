@@ -26,9 +26,9 @@ help:
 
 lint:
 	@echo "Running shellcheck..."
-	@shellcheck bin/ocprobe lib/*.sh
+	@shellcheck --severity=warning bin/ocprobe lib/*.sh scripts/*.sh
 	@echo "Checking bash syntax..."
-	@for f in bin/ocprobe lib/*.sh; do bash -n "$$f" || exit 1; done
+	@for f in bin/ocprobe lib/*.sh scripts/*.sh; do bash -n "$$f" || exit 1; done
 	@echo "Lint passed"
 
 test: test-unit test-integration
