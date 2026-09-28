@@ -11,7 +11,8 @@ name: release-rehearsal
 # It cannot push anywhere, by construction:
 #   - workflow_dispatch only, never on a tag or a push
 #   - permissions: contents: read
-#   - the tap is checked out over public https, with no token and no credentials
+#   - the tap is cloned over public https as a plain read-only clone: no token,
+#     no credentials persisted, and it cannot write anyway
 #   - the updater runs against a COPY of the formula in a temp dir
 #   - no step in this file invokes git's push, and the rehearsal script contains
 #     no git command at all (asserted by a unit test)
@@ -28,19 +29,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # The tap, by public URL and with no credentials. If this ever needs a
-      # token to read a public repository, something is wrong with the setup --
-      # and a token here would be a token the rehearsal could use to push.
-      - name: Check out the tap repo (public, no token)
-        uses: actions/checkout@v7
-        with:
-          repository: SunnyJayaRaju/homebrew-ocprobe
-          # Deliberately no `token:`. The default GITHUB_TOKEN is not passed,
-          # so this is an anonymous-ish read of a public repo with no
-          # credentials left behind for a later step to misuse.
+      # A plain clone, NOT a second actions/checkout. The first dispatch run of
+      # this workflow failed with
+      #
+      #     bash: scripts/ci/rehearsal.sh: No such file or directory
+      #
+      # because actions/checkout deletes the working directory's contents before
+      # it checks out -- so the second one, pointed at the tap, removed the
+      # source repo this step needs. A clone has no such side effect, needs no
+      # credentials, and cannot write to the tap.
+      - name: Clone the tap repo (public, read-only, no credentials)
+        run: |
+          git clone --quiet --depth 1 \
+            https://github.com/SunnyJayaRaju/homebrew-ocprobe.git \
+            "$RUNNER_TEMP/homebrew-ocprobe"
+          test -f "$RUNNER_TEMP/homebrew-ocprobe/Formula/ocprobe.rb"
 
       - name: Rehearse
-        run: bash scripts/ci/rehearsal.sh --tap-dir "$GITHUB_WORKSPACE/homebrew-ocprobe"
+        run: bash scripts/ci/rehearsal.sh --tap-dir "$RUNNER_TEMP/homebrew-ocprobe"
 
       - name: Show the built artifact
         if: always()
@@ -58,3 +64,4 @@ jobs:
             .rehearsal/dist/
             .rehearsal/copy/
           retention-days: 7
+          if-no-files-found: warn

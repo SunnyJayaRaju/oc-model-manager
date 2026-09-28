@@ -166,6 +166,24 @@ PY
     assert_line "PERMS={'contents': 'read'}"
 }
 
+@test "the tap is cloned, not checked out over the workspace" {
+    # actions/checkout deletes the working directory's contents before it checks
+    # out, so a second one pointed at the tap removed the source repo and the
+    # rehearsal died with "scripts/ci/rehearsal.sh: No such file or directory".
+    # That is what the first dispatch run of this workflow did. A clone has no
+    # such side effect.
+    # Count only real step lines: the comment explaining the bug names the
+    # action, and a raw grep would match its own explanation.
+    run bash -c "grep -cE '^[[:space:]]*-[[:space:]]+uses:[[:space:]]+actions/checkout' '$WORKFLOW'"
+    assert_output "1"
+    run bash -c "grep -cE 'repository: *SunnyJayaRaju/homebrew-ocprobe' '$WORKFLOW' || true"
+    assert_output "0"
+    run bash -c "grep -c 'git clone' '$WORKFLOW'"
+    assert_output "1"
+    run bash -c "grep -c 'https://github.com/SunnyJayaRaju/homebrew-ocprobe.git' '$WORKFLOW'"
+    assert_output "1"
+}
+
 @test "no step in the workflow is given a token" {
     run python3 - "$WORKFLOW" <<'PY'
 import sys
