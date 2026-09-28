@@ -132,6 +132,41 @@ load_validate_history() {
 # _validate_streak_sync and record_validate_history).
 declare -gA _VALIDATE_HISTREAK=()
 declare -g _VALIDATE_HISTREAK_BYTES=-1
+# The cache is valid only when BOTH of these match what was folded. Byte size
+# alone is NOT sufficient: it is not injective, so another run that appends one
+# line and then prunes an equal number of bytes leaves the size identical with
+# different content, and the cache was trusted while stale. That produced a
+# streak of 1 where the truth was 0 -- CONFIRMED instead of TENTATIVE, i.e. a
+# model blacklisted that should not have been. The generation counter is bumped
+# by every writer, so it catches that case; keeping the size check as well
+# catches a rewrite that somehow did not bump it.
+declare -g _VALIDATE_HISTREAK_GEN=""
+
+# Path of the generation sidecar, kept next to the history file.
+_validate_gen_file() {
+	printf '%s\n' "$OCPROBE_STATE_DIR/.validate-history.gen"
+}
+
+# _validate_history_gen_bump — increment the sidecar atomically (temp + mv, so a
+# concurrent reader never sees a partial write) and leave the new value in
+# _VALIDATE_GEN_NEW. record_validate_history is the ONLY writer of
+# validate-history.jsonl, and every one of its call sites runs under
+# _validate_history_locked, so bumping here covers every mutation of the file.
+_validate_history_gen_bump() {
+	local f tmp cur=0
+	f=$(_validate_gen_file)
+	tmp="$f.tmp.$$"
+	if [[ -f "$f" ]]; then
+		# As in _validate_streak_sync: keep what read assigned even at EOF.
+		read -r cur <"$f" 2>/dev/null || true
+		[[ "$cur" =~ ^[0-9]+$ ]] || cur=0
+	fi
+	[[ "$cur" =~ ^[0-9]+$ ]] || cur=0
+	_VALIDATE_GEN_NEW=$((cur + 1))
+	if printf '%s\n' "$_VALIDATE_GEN_NEW" >"$tmp" 2>/dev/null; then
+		mv "$tmp" "$f" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+	fi
+}
 
 # _validate_streak_apply <safe_key> <status> — one fold step, in place.
 # WORKS resets to 0, EOL/NOT_FOUND confirm at 2, anything else counts up capped at 2.
@@ -162,6 +197,7 @@ _validate_history_size() {
 # _validate_streak_rebuild — fold the entire file once. O(lines), no forks.
 _validate_streak_rebuild() {
 	_VALIDATE_HISTREAK=()
+	_VALIDATE_HISTREAK_GEN=""
 	local f="$OCPROBE_STATE_DIR/validate-history.jsonl"
 	_VALIDATE_HISTREAK_BYTES=-1
 	[[ -f "$f" ]] || return 0
@@ -178,12 +214,29 @@ _validate_streak_rebuild() {
 }
 
 # _validate_streak_sync — rebuild only if the file differs from what we folded.
-# Covers another process appending, and our own append that got pruned away.
+# The generation is read with the bash `read` builtin, not a command
+# substitution or a subprocess, so this stays fork-free per model and the O(n)
+# fix is preserved. A missing or non-numeric sidecar reads as "unknown", which
+# never matches a cached value, so the first read after a missing sidecar
+# rebuilds once and then caches normally.
 _validate_streak_sync() {
-	local size
+	local gen="" size gfile
+	gfile="$OCPROBE_STATE_DIR/.validate-history.gen"
+	if [[ -f "$gfile" ]]; then
+		# `read` assigns what it read even when it hits EOF without a trailing
+		# newline, but returns non-zero in that case. Swallowing that status with
+		# `|| gen=""` would throw the value away and silently degrade this check
+		# back to size-only -- reintroducing exactly the bug the generation
+		# counter exists to prevent -- for any writer that omits the newline.
+		read -r gen <"$gfile" 2>/dev/null || true
+	fi
+	[[ "$gen" =~ ^[0-9]+$ ]] || gen=""
 	size=$(_validate_history_size)
-	[[ "$size" == "$_VALIDATE_HISTREAK_BYTES" ]] && return 0
+	if [[ "$gen" == "$_VALIDATE_HISTREAK_GEN" && "$size" == "$_VALIDATE_HISTREAK_BYTES" ]]; then
+		return 0
+	fi
 	_validate_streak_rebuild
+	_VALIDATE_HISTREAK_GEN="$gen"
 }
 
 # _validate_history_streak(model) — consecutive non-WORKS streak for ONE model.
@@ -343,10 +396,22 @@ record_validate_history() {
 	# the next read rebuild from the file.
 	local after
 	after=$(_validate_history_size)
+
+	# Bump the generation for the write we just made, so any other process's
+	# cache is invalidated. Done before the bookkeeping below so the cached token
+	# can adopt the new value.
+	_validate_history_gen_bump
+
 	if [[ "$after" == "$((before + ${#line} + 1))" ]]; then
+		# No prune: the fold is still exactly right, and advancing one model's
+		# entry is identical to rescanning.
 		_validate_streak_apply "${model//\//_}" "$status"
 		_VALIDATE_HISTREAK_BYTES="$after"
+		_VALIDATE_HISTREAK_GEN="$_VALIDATE_GEN_NEW"
 	else
+		# A prune rewrote the file and dropped lines we had already folded in, so
+		# the map can no longer be trusted. Drop it AND leave the cached generation
+		# pointing at the old value, so the next read sees a mismatch and rebuilds.
 		_VALIDATE_HISTREAK=()
 		_VALIDATE_HISTREAK_BYTES=-1
 	fi
