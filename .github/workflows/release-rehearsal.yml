@@ -1,0 +1,67 @@
+name: release-rehearsal
+
+# Rehearse the release -> tap formula update, end to end, with no release.
+#
+# Why this exists: the whole path (build the tarball, publish it with a .sha256
+# asset, point the updater at it, edit the tap formula) only ever ran on a tag
+# push, and only ever ran for real once. Everything upstream of "push to the tap"
+# was untested, so a mistake in the updater surfaced as a broken published
+# formula rather than as a failed rehearsal.
+#
+# It cannot push anywhere, by construction:
+#   - workflow_dispatch only, never on a tag or a push
+#   - permissions: contents: read
+#   - the tap is cloned over public https as a plain read-only clone: no token,
+#     no credentials persisted, and it cannot write anyway
+#   - the updater runs against a COPY of the formula in a temp dir
+#   - no step in this file invokes git's push, and the rehearsal script contains
+#     no git command at all (asserted by a unit test)
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    name: Rehearse the release -> tap update
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # A plain clone, NOT a second actions/checkout. The first dispatch run of
+      # this workflow failed with
+      #
+      #     bash: scripts/ci/rehearsal.sh: No such file or directory
+      #
+      # because actions/checkout deletes the working directory's contents before
+      # it checks out -- so the second one, pointed at the tap, removed the
+      # source repo this step needs. A clone has no such side effect, needs no
+      # credentials, and cannot write to the tap.
+      - name: Clone the tap repo (public, read-only, no credentials)
+        run: |
+          git clone --quiet --depth 1 \
+            https://github.com/SunnyJayaRaju/homebrew-ocprobe.git \
+            "$RUNNER_TEMP/homebrew-ocprobe"
+          test -f "$RUNNER_TEMP/homebrew-ocprobe/Formula/ocprobe.rb"
+
+      - name: Rehearse
+        run: bash scripts/ci/rehearsal.sh --tap-dir "$RUNNER_TEMP/homebrew-ocprobe"
+
+      - name: Show the built artifact
+        if: always()
+        run: |
+          ls -la .rehearsal/dist/ || true
+          echo "--- .sha256 asset ---"
+          cat .rehearsal/dist/*.sha256 2>/dev/null || true
+
+      - name: Upload the rehearsal output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-rehearsal
+          path: |
+            .rehearsal/dist/
+            .rehearsal/copy/
+          retention-days: 7
+          if-no-files-found: warn
