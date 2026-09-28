@@ -208,13 +208,37 @@ setup() {
 
 @test "the release-prep branch is ahead of main and not merged" {
     # A release-prep branch is opened, not merged: the tag and the release are
-    # deliberate human steps. This asserts the branch carries work of its own --
-    # a PR that is already in main would mean there is nothing to review.
+    # deliberate human steps, so this asserts the branch still carries work of
+    # its own relative to main.
     #
-    # `git diff` rather than `git log origin/main..HEAD`: the assertion must also
-    # hold in the working tree, so it passes before the commit exists too.
-    run bash -c "cd '$ROOT' && git diff --stat origin/main -- VERSION CHANGELOG.md README.md | wc -l | tr -d ' '"
-    [ "$output" -ge 1 ] || {
+    # Both `main` and `origin/main` are ABSENT in the CI checkout: a
+    # --depth 1 --single-branch clone of this branch has neither, and asking git
+    # for one produces "fatal: bad revision", which the test then read as "no
+    # changes" and failed on. So: resolve a base ref, and skip if the clone
+    # genuinely cannot tell us. A skipped assertion is honest; a false failure
+    # on every runner is not.
+    run bash -c "
+        cd '$ROOT'
+        base=\$(git rev-parse --verify main 2>/dev/null ||
+               git rev-parse --verify origin/main 2>/dev/null ||
+               git rev-parse --verify refs/remotes/origin/main 2>/dev/null || true)
+        if [ -z \"\$base\" ]; then
+            echo 'SKIP: no main ref in this clone'
+            exit 0
+        fi
+        n=\$(git diff --stat \"\$base\" -- VERSION CHANGELOG.md README.md | wc -l | tr -d ' ')
+        echo \"changed_files=\$n\"
+    "
+    if [[ "$output" == *SKIP* ]]; then
+        skip "$output"
+    fi
+    [[ "$output" == *"changed_files="* ]] || {
+        echo "could not determine the diff against main:" >&2
+        printf '%s\n' "$output" >&2
+        false
+    }
+    local n="${output##*changed_files=}"
+    [ "$n" -ge 1 ] || {
         echo "this branch changes nothing vs main, so there is nothing to release" >&2
         false
     }
