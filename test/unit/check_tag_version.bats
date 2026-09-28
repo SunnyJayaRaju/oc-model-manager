@@ -29,7 +29,12 @@ setup() {
 }
 
 # Runs the script against the real VERSION file, with a given tag.
-with_tag() { run env RELEASE_TAG="$1" REPO_ROOT="$ROOT" bash "$SCRIPT" --quiet; }
+# RELEASE_TAG and GITHUB_REF_NAME are both cleared unless the test sets one:
+# the script falls back to GITHUB_REF_NAME, and Actions sets that to "16/merge"
+# for a pull-request build. An empty RELEASE_TAG therefore did not mean "no
+# tag" -- it meant "use the branch ref", which is a different (and correct) code
+# path being tested under the wrong name.
+with_tag() { run env -u GITHUB_REF_NAME RELEASE_TAG="$1" REPO_ROOT="$ROOT" bash "$SCRIPT" --quiet; }
 with_tag_and_root() { # $1 = tag, $2 = a tree with a different VERSION
     run env RELEASE_TAG="$1" REPO_ROOT="$2" bash "$SCRIPT" --quiet
 }
@@ -85,6 +90,17 @@ with_tag_and_root() { # $1 = tag, $2 = a tree with a different VERSION
         bash "$SCRIPT" --quiet
     assert_success
     assert_output "$CURRENT"
+}
+
+@test "a pull-request ref is rejected, not treated as a tag" {
+    # Actions sets GITHUB_REF_NAME to "16/merge" on a pull-request build. The
+    # fallback must not quietly accept that as a version -- it happens to be
+    # caught by the pattern, but the point is that it is caught as a MALFORMED
+    # TAG rather than being passed through into an artifact name.
+    run env -u RELEASE_TAG GITHUB_REF_NAME="16/merge" REPO_ROOT="$ROOT" \
+        bash "$SCRIPT" --quiet
+    assert_failure
+    assert_output --partial "does not match"
 }
 
 # ---- the mismatch case, which is the whole point ---------------------------
@@ -197,11 +213,19 @@ with_tag_and_root() { # $1 = tag, $2 = a tree with a different VERSION
 }
 
 @test "the script is shellcheck-clean and linted" {
-    run shellcheck --severity=warning "$SCRIPT"
-    assert_success
+    # shellcheck is NOT installed on the macOS test runners, so it must not be
+    # invoked from here: the Lint job (which installs it) and `make lint` are
+    # the lint gates. This test did invoke it, and failed the macOS leg with
+    # "shellcheck: command not found" -- a test that can only pass on one
+    # platform is worse than no test, because it makes a real run look red.
+    # `bash -n` is the portable syntax gate, so that is what runs here.
     run bash -n "$SCRIPT"
     assert_success
+    # The lint COVERAGE is still asserted, by reading the commands rather than
+    # executing them.
     run grep -c 'shellcheck --severity=warning.*scripts/\*\.sh' "$ROOT/Makefile"
+    assert_output "1"
+    run grep -c 'shellcheck --severity=warning.*scripts/\*\.sh' "$ROOT/.github/workflows/ci.yml"
     assert_output "1"
 }
 
