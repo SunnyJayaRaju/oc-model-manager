@@ -140,7 +140,10 @@ cmd_session_restore() {
 	# This must stay AFTER the pre-restore backup above: if the backup cannot be
 	# taken, nothing may be written at all.
 	local restore_rc=0
-	python3 "${BASH_SOURCE%/*}/session_restore.py" "$OCPROBE_OPencode_DB" "$file" || restore_rc=$?
+	# -B: never write a __pycache__ next to the module. The installed lib
+	# directory is read-only for a Homebrew install, and CPython's attempt to
+	# cache there would either fail the restore or litter the install tree.
+	python3 -B "${BASH_SOURCE%/*}/session_restore.py" "$OCPROBE_OPencode_DB" "$file" || restore_rc=$?
 
 	if ((restore_rc != 0)); then
 		log_error "restore refused: $file was rejected (see the error above) — nothing committed; backup kept at $db_backup"
