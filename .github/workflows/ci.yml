@@ -253,10 +253,68 @@ jobs:
       - name: Run integration tests
         run: bats test/integration/
 
+  # The release tarball has never been checked. The build job assembles it with
+  # `cp -r bin lib config docs ...` and `make package` does the same, so
+  # lib/session_restore.py -- a Python module, not a .sh -- does ship. But
+  # nothing verified that, and nothing verified the *installed* copy works: the
+  # unit suite runs from the working tree, where every file is trivially
+  # present. A release that dropped the module would install a tool whose
+  # `session restore` fails with "no such file", and CI would be green.
+  #
+  # So this builds the tarball the same way the build job does, installs it
+  # into the layout the Homebrew formula uses, and exercises the installed
+  # binary. Both legs, because the tar is built on ubuntu and installed on both
+  # platforms, and a packaging mistake is exactly the kind of thing that only
+  # shows up on one of them.
+  package-check:
+    name: Package Check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq python3 python3-yaml python3-jsonschema sqlite3 coreutils
+      - name: Install dependencies (macOS)
+        # Same reasoning and ordering as the unit job: the venv must win for
+        # python3 (it has yaml/jsonschema) while Homebrew wins for everything
+        # else, and GITHUB_PATH is last-write-first.
+        if: runner.os == 'macOS'
+        run: |
+          brew install jq sqlite3 coreutils
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --upgrade pip pyyaml jsonschema
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: Build the release tarball exactly as the build job does
+        run: bash scripts/ci/package-check.sh build
+      - name: Verify the packaged file list
+        # Separate from the runtime checks on purpose: this one is about *what
+        # is in the tarball*, and it must fail even if the binary happens to
+        # work from the working tree for some other reason.
+        run: bash scripts/ci/package-check.sh verify-tarball
+      - name: Install and exercise the installed copy
+        run: bash scripts/ci/package-check.sh verify-install
+      - name: Show what was installed
+        if: always()
+        run: bash scripts/ci/package-check.sh show
+      - name: Upload the package for inspection
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-check-${{ matrix.os }}
+          path: "${{ runner.temp }}/pkgcheck/"
+          retention-days: 3
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, test-unit, test-integration, test-bash43]
+    needs: [lint, test-unit, test-integration, test-bash43, package-check]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v7

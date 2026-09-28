@@ -316,7 +316,7 @@ _no_damage() {
 # the macOS leg catches that from now on.
 
 @test "the authorizer allowlist covers every function a real dump can need" {
-    run python3 - "$BATS_TEST_DIRNAME/../../lib/session_restore.py" <<'PY'
+    run python3 -B - "$BATS_TEST_DIRNAME/../../lib/session_restore.py" <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("sr", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
@@ -355,7 +355,7 @@ PY
 @test "the authorizer denies everything outside the documented allowlists" {
     # Drive authorize() directly with every action code and argument shape, so
     # this asserts policy rather than whatever the local sqlite reports.
-    run python3 - "$BATS_TEST_DIRNAME/../../lib/session_restore.py" <<'PY'
+    run python3 -B - "$BATS_TEST_DIRNAME/../../lib/session_restore.py" <<'PY'
 import importlib.util, sqlite3, sys
 spec = importlib.util.spec_from_file_location("sr", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
