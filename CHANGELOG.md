@@ -96,6 +96,23 @@ wrong, and what CI is now able to catch before you do.
   build job adopted whatever tag was pushed and overwrote `VERSION` with it. A
   tag must now match `^v[0-9]+\.[0-9]+\.[0-9]+$` *and* the `VERSION` file, and
   the check runs before anything is packaged.
+- **The tap updater no longer assumes the formula has a `version` line.** A
+  Homebrew formula normally takes its version from the url, and `brew audit`
+  calls a `version` line that merely restates it redundant -- so the tap's
+  formula drops it, and the updater used to write the url and the sha256 and
+  *then* fail on the missing line. `url` and `sha256` are now the managed
+  fields; `version` is updated when present and not added when absent. Every
+  other check is unchanged: the tag pattern, `curl --fail`, the self-computed
+  sha256 cross-checked against the published `.sha256`, 64-hex validation, the
+  post-edit assertions and the idempotent no-op.
+
+- **The release -> tap update can now be rehearsed without releasing anything.**
+  A `workflow_dispatch` job builds the tarball the way the release job does,
+  serves it and its `.sha256` from a local http server, runs the real updater
+  against a copy of the formula, and prints the diff. It has no token, read-only
+  permissions, and no way to push; that is asserted by tests rather than merely
+  intended. Previously that path only ever ran on a real tag push, and only
+  ever ran for real once.
 
 ### Performance
 
