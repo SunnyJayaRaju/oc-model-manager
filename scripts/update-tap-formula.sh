@@ -17,12 +17,33 @@
 # formula's sha256 and the tag job published a formula that could not install.
 # Everything below is the opposite: fail loudly, verify the download against
 # the published checksum, and then check that the edits actually landed.
+#
+# Two formula shapes are supported, because a Homebrew formula does not need a
+# `version` line: the version is normally derived from the url, and `brew audit
+# --strict` calls a version line that merely restates the url redundant. So:
+#
+#   url and sha256  are always managed, because they must always be there
+#   version         is updated when present, and NOT added when absent
+#
+# When there is no version line the url carries the version, so that is what the
+# post-edit assertion checks instead. Previously the script wrote the url and
+# the sha256 and then failed on the missing version line -- half applied, and it
+# read as though the formula were at fault.
+#
+# RELEASE_BASE_URL overrides where the release artifacts are fetched from, so
+# the whole flow can be rehearsed against a local http server with no release
+# and no token. It changes only the base; the path shape is always
+# <base>/<tag>/ocprobe-<version>.tar.gz.
 set -euo pipefail
 
 TAG="${TAG:-}"
 REPO_SLUG="${REPO_SLUG:-}"
 FORMULA="${FORMULA:-Formula/ocprobe.rb}"
 WORK_DIR="${WORK_DIR:-}"
+RELEASE_BASE_URL="${RELEASE_BASE_URL:-https://github.com/${REPO_SLUG}/releases/download}"
+# One trailing slash, however many the caller supplied: "${BASE%/}" is applied
+# once below, but an empty override must not silently become "/".
+[[ -n "$RELEASE_BASE_URL" ]] || RELEASE_BASE_URL="https://github.com"
 
 # A 404 body, an HTML error page or an empty string is the failure this script
 # exists to catch, so every message is explicit and every exit is non-zero.
@@ -45,7 +66,10 @@ die() {
 VERSION="${TAG#v}"
 [[ -f "$FORMULA" ]] || die "formula not found: $FORMULA"
 
-URL="https://github.com/${REPO_SLUG}/releases/download/${TAG}/ocprobe-${VERSION}.tar.gz"
+# %{...} on the next line: `${BASE%/}` strips exactly one trailing slash, which
+# is the only case that matters, and %/{1,2} is not portable in a pattern.
+BASE="${RELEASE_BASE_URL%/}"
+URL="${BASE}/${TAG}/ocprobe-${VERSION}.tar.gz"
 
 if [[ -z "$WORK_DIR" ]]; then
 	WORK_DIR="$(mktemp -d)"
@@ -92,20 +116,54 @@ PUBLISHED="$(awk 'NR == 1 { print $1 }' "${WORK_DIR}/published.sha256" | tr 'A-F
 # ---- 4. edit, then prove the edit landed ------------------------------------
 cp "$FORMULA" "${WORK_DIR}/formula.before"
 
+# Does the formula carry an explicit version line? Decided BEFORE the edit,
+# because the post-edit assertion has to match whichever shape it is looking at.
+HAS_VERSION_LINE=0
+if grep -qE '^[[:space:]]*version[[:space:]]+"' "$FORMULA"; then
+	HAS_VERSION_LINE=1
+fi
+
 # -i.bak rather than bare -i so this is GNU and BSD sed alike. Each pattern is
 # anchored to the start of a line and the leading whitespace is captured and
 # re-emitted, so indentation survives.
-sed -E -i.bak \
-	-e "s|^([[:space:]]*)version[[:space:]]+\".*\"|\\1version \"${VERSION}\"|" \
-	-e "s|^([[:space:]]*)url[[:space:]]+\".*\"|\\1url \"${URL}\"|" \
-	-e "s|^([[:space:]]*)sha256[[:space:]]+\".*\"|\\1sha256 \"${COMPUTED}\"|" \
-	"$FORMULA"
+#
+# The version expression is only passed to sed when the line exists: a sed
+# expression that matches nothing is silent, so including it unconditionally
+# would look like it had worked either way.
+SED_ARGS=(
+	-e "s|^([[:space:]]*)url[[:space:]]+\".*\"|\\1url \"${URL}\"|"
+	-e "s|^([[:space:]]*)sha256[[:space:]]+\".*\"|\\1sha256 \"${COMPUTED}\"|"
+)
+if [[ "$HAS_VERSION_LINE" -eq 1 ]]; then
+	SED_ARGS=(
+		-e "s|^([[:space:]]*)version[[:space:]]+\".*\"|\\1version \"${VERSION}\"|"
+		"${SED_ARGS[@]}"
+	)
+fi
+sed -E -i.bak "${SED_ARGS[@]}" "$FORMULA"
 rm -f "${FORMULA}.bak"
 
 # A silent no-op sed would otherwise produce a formula that still points at the
 # previous release, which is worse than a failure because it looks successful.
-grep -q "^[[:space:]]*version[[:space:]]*\"${VERSION}\"" "$FORMULA" ||
-	die "version substitution did not apply -- is there a version line in $FORMULA?"
+#
+# The version check is conditional on the shape, and the no-version shape is
+# checked through the url instead: the version has to be recorded somewhere, and
+# with no version line the url is where it lives.
+if [[ "$HAS_VERSION_LINE" -eq 1 ]]; then
+	grep -q "^[[:space:]]*version[[:space:]]*\"${VERSION}\"" "$FORMULA" ||
+		die "version substitution did not apply -- is there a version line in $FORMULA?"
+else
+	# ...and confirm none was introduced: a version line that restates the url is
+	# something `brew audit --strict` reports as redundant, so adding one would
+	# trade a working formula for a failing audit.
+	if grep -qE '^[[:space:]]*version[[:space:]]+"' "$FORMULA"; then
+		die "a version line appeared in a formula that had none: $FORMULA"
+	fi
+	# The url must name both the tag and the tarball, because that is now the
+	# only place the version appears.
+	grep -qF "/${TAG}/ocprobe-${VERSION}.tar.gz" "$FORMULA" ||
+		die "url does not name ${TAG}/ocprobe-${VERSION}.tar.gz -- with no version line, the url carries the version: $FORMULA"
+fi
 grep -qF "url \"${URL}\"" "$FORMULA" ||
 	die "url substitution did not apply -- is there a url line in $FORMULA?"
 grep -q "^[[:space:]]*sha256[[:space:]]*\"${COMPUTED}\"" "$FORMULA" ||

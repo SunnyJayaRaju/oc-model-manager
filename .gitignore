@@ -45,3 +45,6 @@ opencode.json.ocprobe-backup-*
 # so running them leaves one behind)
 __pycache__/
 *.py[cod]
+
+# Local release rehearsal scratch (scripts/ci/rehearsal.sh)
+.rehearsal/
