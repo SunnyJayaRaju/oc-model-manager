@@ -296,6 +296,16 @@ load_config() {
 		OCPROBE_CACHE_TTL_HOURS) int_label="catalog.cache_ttl_hours" ;;
 		esac
 		validate_positive_int "$int_label ($int_var) [in $config_file]" "${!int_var}"
+		# NORMALIZE to canonical decimal. The gate above forces base 10, so "08"
+		# and "007" are accepted -- but the raw string is still not safe to use:
+		# these values are interpolated UNQUOTED into SQL integer literals and
+		# into $(( )) arithmetic, where a leading zero is an octal trap all over
+		# again. Canonical decimal is the only form that is correct in every sink.
+		# "0" cannot reach here (the gate rejects it), so the strip cannot empty
+		# the value, but guard anyway rather than export an empty variable.
+		local canonical="${!int_var#"${!int_var%%[!0]*}"}"
+		[[ -n "$canonical" ]] || canonical=0
+		printf -v "$int_var" '%s' "$canonical"
 	done
 
 	# Set derived paths

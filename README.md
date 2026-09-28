@@ -164,6 +164,7 @@ $ ocprobe session backup ses_abc  # Backup session to SQL dump
 | `validate restore` | Revert opencode.json from last validate backup |
 | `scheduler [install\|uninstall\|status]` | Manage background scheduler |
 | `session [list\|backup\|restore\|cleanup]` | Session management |
+| `session restore <file.sql>` | Restore a backup dump. A pre-restore copy of the database is taken first. The dump is enforced **per statement** inside SQLite: only `INSERT`s into `session`, `message`, `part` and `todo` are permitted (plus the `unistr()` function, which is how a newline inside a value is encoded). `ATTACH`, `DROP`, `DELETE`, `UPDATE`, `ALTER`, any `CREATE`, any `PRAGMA`, any other function, and every read (`INSERT … SELECT`) are refused. The whole file is one transaction, so a rejected dump leaves the database byte-identical. |
 | `config [show\|validate\|edit\|schema\|path]` | Configuration management |
 | `doctor` | Health check: config, DB, auth, disk |
 | `version` | Show version |

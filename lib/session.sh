@@ -91,35 +91,12 @@ cmd_session_restore() {
 
 	load_config
 
-	# Content validation: only INSERT / BEGIN / COMMIT / PRAGMA may appear, and each
-	# statement must sit on a single line. This rejects DROP/DELETE/ALTER/UPDATE/
-	# ATTACH, sqlite3 dot-commands (.shell/.output/.read) and comments — anything
-	# that could alter the database beyond restoring rows. Dumps produced by
-	# `ocprobe session backup` always pass: sqlite3's insert mode escapes newlines
-	# as unistr('...\u000a...'), so every INSERT stays on one line.
-	local bad_line
-	bad_line=$(awk '
-		{
-			line = $0
-			gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-			if (line == "") next
-			if (tolower(line) ~ /^(insert|begin|commit|pragma)([[:space:]]|;|$)/) next
-			printf "line %d: %s", NR, $0
-			exit
-		}
-	' "$file") || true
-
-	if [[ -n "$bad_line" ]]; then
-		log_error "refusing restore: $file contains a disallowed statement"
-		log_error "  $bad_line"
-		log_error "  only INSERT / BEGIN / COMMIT / PRAGMA are allowed, one statement per line"
-		return 1
-	fi
-
-	# Back up the live database before writing to it. backup_opencode_config()
+	# Back up the live database BEFORE writing to it. backup_opencode_config()
 	# backs up opencode.json (and cmd_session does not source validate.sh), so use
 	# SQLite's online backup for the session DB itself. .backup exits non-zero on
-	# failure, so an unbacked database aborts the restore.
+	# failure, so an unbacked database aborts the restore. This must stay ahead of
+	# the enforcement block below: if the backup cannot be taken, nothing may be
+	# written at all.
 	local backup_dir="${OCPROBE_SESSION_BACKUP_DIR:-$HOME/.local/share/opencode/session-backups}"
 	backup_dir="${backup_dir/#\~/$HOME}"
 	mkdir -p "$backup_dir" || {
@@ -134,22 +111,42 @@ cmd_session_restore() {
 	fi
 	log_info "database backed up to $db_backup"
 
-	# -bail: stop at the first failing statement instead of continuing and
-	# COMMITting the successful ones (which would be a silent partial restore).
-	# On error the open transaction is rolled back when sqlite3 exits.
-	local rc=0
-	{
-		echo "PRAGMA busy_timeout=10000;"
-		echo "BEGIN IMMEDIATE;"
-		cat "$file"
-		echo "COMMIT;"
-	} | sqlite3 -bail "$OCPROBE_OPencode_DB" || rc=$?
+	# Statement-level enforcement. The policy lives in lib/session_restore.py
+	# rather than inline here, because the set of SQL function names SQLite
+	# reports is build-dependent and a missing one only shows up on a platform you
+	# are not developing on: the ubuntu runner reports a SQLITE_FUNCTION callback
+	# for the conflict target of INSERT OR REPLACE ("replace"), which sqlite 3.54
+	# on macOS does not report at all. An allowlist of just {"unistr"} therefore
+	# passed every local test and the macOS CI leg while breaking restore for
+	# every Linux user. See that module for the allowlist and its reasoning.
+	#
+	# It allows only:
+	#   - SQLITE_INSERT on the four tables `cmd_session_backup` actually emits
+	#   - SQLITE_TRANSACTION, so the module owns BEGIN IMMEDIATE / COMMIT
+	#   - SQLITE_FUNCTION for the few pure string helpers a genuine dump contains
+	# and denies everything else: ATTACH/DETACH, DROP/DELETE/UPDATE/ALTER, any
+	# CREATE (which surfaces as an INSERT into sqlite_master, so the table
+	# allowlist rejects it), every PRAGMA, every other function, and all reads
+	# (SQLITE_READ / SQLITE_SELECT, so INSERT..SELECT cannot copy out of
+	# sqlite_master or any other table).
+	#
+	# Statements are split with sqlite3.complete_statement() so a value spanning
+	# lines still restores -- and which shape a dump uses for a newline is
+	# sqlite-build dependent -- and each runs through execute() rather than
+	# executescript(), which would commit implicitly and defeat the rollback.
+	# The whole file is one transaction: any denial, parse error or exception rolls
+	# it all back, so a rejected restore leaves the database byte-identical.
+	#
+	# This must stay AFTER the pre-restore backup above: if the backup cannot be
+	# taken, nothing may be written at all.
+	local restore_rc=0
+	python3 "${BASH_SOURCE%/*}/session_restore.py" "$OCPROBE_OPencode_DB" "$file" || restore_rc=$?
 
-	if ((rc != 0)); then
-		log_error "restore failed (sqlite3 exit $rc) — nothing committed; backup kept at $db_backup"
+	if ((restore_rc != 0)); then
+		log_error "restore refused: $file was rejected (see the error above) — nothing committed; backup kept at $db_backup"
+		log_error "  only INSERT statements into: session, message, part, todo are permitted"
 		return 1
 	fi
-
 	log_info "restored from $file"
 }
 
