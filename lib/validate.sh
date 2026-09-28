@@ -153,6 +153,13 @@ _validate_gen_file() {
 # _VALIDATE_GEN_NEW. record_validate_history is the ONLY writer of
 # validate-history.jsonl, and every one of its call sites runs under
 # _validate_history_locked, so bumping here covers every mutation of the file.
+# Returns 0 on success, 1 if the counter could not be advanced. A caller MUST
+# check this: the counter is the only thing that invalidates another process's
+# cached streak when the history file is rewritten to the same byte size, so a
+# silent failure reopens exactly the stale-cache hole the counter exists to
+# close. Previously both failure modes (temp write, then mv) were swallowed with
+# 2>/dev/null, so a read-only or otherwise unwritable state directory produced
+# a successful-looking record with a counter that never moved.
 _validate_history_gen_bump() {
 	local f tmp cur=0
 	f=$(_validate_gen_file)
@@ -164,9 +171,40 @@ _validate_history_gen_bump() {
 	fi
 	[[ "$cur" =~ ^[0-9]+$ ]] || cur=0
 	_VALIDATE_GEN_NEW=$((cur + 1))
-	if printf '%s\n' "$_VALIDATE_GEN_NEW" >"$tmp" 2>/dev/null; then
-		mv "$tmp" "$f" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+
+	# The sidecar must be a regular file. If something is already sitting at
+	# that path -- a directory, say -- then `mv "$tmp" "$f"` SUCCEEDS by moving
+	# the temp file *inside* it, leaving the sidecar itself untouched. That is
+	# the silent case this function has to catch, and a plain `mv ... ||` cannot:
+	# mv reports success.
+	if [[ -d "$f" ]]; then
+		rm -f "$tmp" 2>/dev/null
+		log_warn "validate history: $f is a directory, not the generation sidecar; the streak cache is being dropped rather than trusted"
+		return 1
 	fi
+
+	if ! printf '%s\n' "$_VALIDATE_GEN_NEW" >"$tmp" 2>/dev/null; then
+		rm -f "$tmp" 2>/dev/null
+		log_warn "validate history: could not write the generation sidecar at $f; the streak cache is being dropped rather than trusted"
+		return 1
+	fi
+	if ! mv "$tmp" "$f" 2>/dev/null; then
+		rm -f "$tmp" 2>/dev/null
+		log_warn "validate history: could not install the generation sidecar at $f; the streak cache is being dropped rather than trusted"
+		return 1
+	fi
+
+	# Read the sidecar back rather than trusting that the write landed. This is
+	# the cheap end-to-end check: a counter that is not the value we just
+	# computed means some other outcome we have not imagined, and the only safe
+	# response to a generation we cannot confirm is to stop using the cache.
+	local check=""
+	read -r check <"$f" 2>/dev/null || true
+	if [[ "$check" != "$_VALIDATE_GEN_NEW" ]]; then
+		log_warn "validate history: generation sidecar at $f reads '$check', expected '$_VALIDATE_GEN_NEW'; the streak cache is being dropped rather than trusted"
+		return 1
+	fi
+	return 0
 }
 
 # _validate_streak_apply <safe_key> <status> — one fold step, in place.
@@ -332,15 +370,23 @@ _validate_record_failure() {
 
 	_validate_history_streak_into "$model"
 
+	# The rc is consumed, not left bare: these libs run under `set -e`, so a bare
+	# non-zero from record_validate_history (lock contention, or a generation
+	# bump that could not be written) would abort the whole run and lose this
+	# model's classification. The classification below comes from the probe that
+	# just happened, so it is still correct; only the persistent streak may not
+	# advance, and that is re-evaluated next run.
+	local rec_rc=0
 	if [[ "$_VALIDATE_LAST_STREAK" -eq 0 ]]; then
-		record_validate_history "$model" "$status"
+		record_validate_history "$model" "$status" || rec_rc=$?
 		echo "$model" >>"$tentative_file"
 		_VALIDATE_LAST_STREAK=1
 	else
-		record_validate_history "$model" "$status"
+		record_validate_history "$model" "$status" || rec_rc=$?
 		echo "$model" >>"$proposal_file"
 		_VALIDATE_LAST_STREAK=2
 	fi
+	return "$rec_rc"
 }
 
 # _validate_record_success(model) — atomic: if this model has a live failure
@@ -352,9 +398,15 @@ _validate_record_success() {
 	_validate_history_streak_into "$model"
 
 	if [[ "$_VALIDATE_LAST_STREAK" -gt 0 ]]; then
-		record_validate_history "$model" "WORKS"
+		# rc consumed for the same `set -e` reason as _validate_record_failure.
+		# The streak is cleared either way: this run saw WORKS, so the gate must
+		# not hold, and the persisted history is only re-read next run.
+		local ok_rc=0
+		record_validate_history "$model" "WORKS" || ok_rc=$?
 		_VALIDATE_LAST_STREAK=0
+		return "$ok_rc"
 	fi
+	return 0
 }
 
 # record_validate_history(model, status) — append one line, then prune_jsonl
@@ -401,7 +453,20 @@ record_validate_history() {
 	# Bump the generation for the write we just made, so any other process's
 	# cache is invalidated. Done before the bookkeeping below so the cached token
 	# can adopt the new value.
-	_validate_history_gen_bump
+	#
+	# A failed bump is reported, not absorbed: the line is already on disk, but
+	# the counter did not move, so this process's cache and every other
+	# process's are now suspect. Drop our own, and tell the caller it happened
+	# rather than letting it believe the record was cleanly recorded.
+	local gen_rc=0
+	_validate_history_gen_bump || gen_rc=$?
+	if [[ "$gen_rc" -ne 0 ]]; then
+		_VALIDATE_HISTREAK=()
+		_VALIDATE_HISTREAK_BYTES=-1
+		# Leave _VALIDATE_HISTREAK_GEN at its previous value so the next read
+		# sees a mismatch and rebuilds from the file.
+		return 1
+	fi
 
 	if [[ "$after" == "$((before + ${#line} + 1))" ]]; then
 		# No prune: the fold is still exactly right, and advancing one model's
