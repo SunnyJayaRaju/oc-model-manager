@@ -320,8 +320,22 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install pandoc
         run: sudo apt-get update && sudo apt-get install -y pandoc
-      - name: Set version from tag
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Check the tag against VERSION
+        # Previously: `echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"`, which
+        # adopted whatever tag was pushed and overwrote VERSION with it. Tagging
+        # v9.9.9 against a tree saying 3.1.2 produced a release claiming 9.9.9
+        # with the source's own version discarded, and nothing noticed.
+        #
+        # The tag goes through `env:`, not into the run: body -- a tag is
+        # attacker-influenced text in a general sense and must never be spliced
+        # into a shell script. Before any packaging, so a bad tag never produces
+        # an artifact.
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="$(bash scripts/ci/check-tag-version.sh)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "validated tag against VERSION: $VERSION"
       - name: Generate man page
         run: |
           pandoc docs/ocprobe.1.md -s -t man -o docs/ocprobe.1
