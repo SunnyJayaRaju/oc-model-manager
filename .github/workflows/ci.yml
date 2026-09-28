@@ -155,33 +155,23 @@ jobs:
           # ubuntu unit job installs, so the two legs differ only in bash.
           sudo apt-get install -y jq python3 python3-yaml python3-jsonschema \
             sqlite3 coreutils build-essential curl
-      - name: Build bash 4.3.30
-        run: |
-          set -euo pipefail
-          # 4.3 is not packaged for any current distro, so build it. 4.3.30 is
-          # the last 4.3 release.
+      - name: Cache the bash 4.3 build
+        uses: actions/cache@v4
+        with:
+          # Compiling bash 4.3.30 costs ~3m20s on every run, which is most of
+          # this job. The binary only changes when the version, the pinned
+          # source hash, or the runner OS/machine changes -- all of which are
+          # in the key -- so a hit restores it in seconds.
           #
-          # The tarball is pinned by sha256: a moving download of an ancient
-          # shell that will be PATH-first for the whole test run is not
-          # something to take on trust.
-          ver=4.3.30
-          curl -fsSL -o bash.tar.gz "https://ftp.gnu.org/gnu/bash/bash-${ver}.tar.gz"
-          echo "317881019bbf2262fb814b7dd8e40632d13c3608d2f237800a8828fbb8a640dd  bash.tar.gz" | sha256sum -c -
-          tar xzf bash.tar.gz
-          cd "bash-${ver}"
-          # -std=gnu89 and the two -W flags are not cosmetic. 4.3 predates C99
-          # and uses K&R function definitions plus implicit ioctl/time
-          # declarations; a current gcc or clang compiles those as hard errors
-          # by default, so the stock flags fail to build. gnu89 puts them back
-          # to what 4.3 was written against.
-          ./configure --prefix="$HOME/bash43" --without-bash-malloc \
-            CFLAGS="-O1 -std=gnu89 -Wno-implicit-function-declaration -fcommon"
-          make -j"$(nproc)"
-          make install
-          # GITHUB_PATH entries are prepended, so this wins over /usr/bin/bash.
-          # bats re-execs through `#!/usr/bin/env bash`, so `bash` is the
-          # switch that matters.
-          echo "$HOME/bash43/bin" >> "$GITHUB_PATH"
+          # The hash prefix must stay in step with BASH_SHA256 in
+          # scripts/ci/install-bash43.sh; that script asserts the version and
+          # fails the job if the restored binary is not 4.3.
+          path: ~/bash43
+          key: bash43-4.3.30-317881019bbf2262-linux-x64
+      - name: Build or restore bash 4.3.30
+        # sha256 pin, build flags, PATH wiring and the 4.3 assertion all
+        # live in the script so there is one definition of "bash 4.3".
+        run: bash scripts/ci/install-bash43.sh
       - name: Verify toolchain
         # Fail loudly rather than silently testing the wrong bash. If the build
         # ever resolves to something else, this job would otherwise go green
