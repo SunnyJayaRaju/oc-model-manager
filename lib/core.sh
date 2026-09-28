@@ -71,9 +71,43 @@ fi
 : "${OCPROBE_LOCK_DIR:=}"
 
 # ---- Validation -------------------------------------------------------------
+# Max digits for a config integer. Well beyond any legitimate value here (the
+# largest shipped default is a timeout of 21600) and comfortably inside int64,
+# so no value that passes this gate can overflow an arithmetic expansion or a
+# SQL integer literal. It also makes the overflow case a clean rejection with a
+# message that says why, instead of whatever the shell's arithmetic evaluator
+# decides to print.
+OCPROBE_MAX_INT_DIGITS=10
+
 validate_positive_int() {
 	local var_name="$1" var_value="$2"
-	[[ "$var_value" =~ ^[0-9]+$ ]] && [[ "$var_value" -gt 0 ]] || die "$var_name must be a positive integer (got: $var_value)"
+	# 10# forces base 10. Without it a leading zero means OCTAL, which produced
+	# two errors for one problem -- first "value too great for base (error token
+	# is \"08\")" from the shell, then "must be a positive integer" -- and meant
+	# that `007` was silently accepted as octal 7, so the number reaching the
+	# unquoted SQL and $(( )) sinks was not the number the user wrote.
+	# Each rejection both calls die and returns 1 explicitly. In production die
+	# exits, so the `return 1` is unreachable -- but the contract of this function
+	# is "return non-zero on rejection", not "exit", and test/unit/core.bats mocks
+	# die to `echo; return 1` precisely so it can assert on the status. Relying on
+	# die's exit would make this function report success under that mock.
+	if [[ ! "$var_value" =~ ^[0-9]+$ ]]; then
+		die "$var_name must be a positive integer (got: $var_value)"
+		return 1
+	fi
+	if ((${#var_value} > OCPROBE_MAX_INT_DIGITS)); then
+		die "$var_name must be at most $OCPROBE_MAX_INT_DIGITS digits (got: $var_value)"
+		return 1
+	fi
+	# Strip leading zeros before comparing, so "00" and "000" are correctly seen
+	# as the zero they are rather than as octal 0.
+	local canonical="${var_value#"${var_value%%[!0]*}"}"
+	[[ -n "$canonical" ]] || canonical=0
+	if ((10#$canonical < 1)); then
+		die "$var_name must be a positive integer (got: $var_value)"
+		return 1
+	fi
+	return 0
 }
 
 validate_model_name() {

@@ -306,6 +306,101 @@ _no_damage() {
         "INSERT OR REPLACE INTO part VALUES(1,'s',1,1,'line1\nline2');\nDROP TABLE session;\n"
 }
 
+# ---- The authorizer policy itself -------------------------------------------
+# Asserted directly, and on every platform, because what SQLite REPORTS to an
+# authorizer is build-dependent. An allowlist of just {"unistr"} passed every
+# local test and the macOS CI leg, because sqlite 3.54 never reports the
+# conflict target of INSERT OR REPLACE as a function -- and then the ubuntu
+# runner, whose sqlite does report it, refused every legitimate restore with
+# "not authorized to use function: replace". Testing the policy directly means
+# the macOS leg catches that from now on.
+
+@test "the authorizer allowlist covers every function a real dump can need" {
+    run python3 - "$BATS_TEST_DIRNAME/../../lib/session_restore.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sr", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+
+# Everything `sqlite3 .mode insert` can legitimately emit. unistr is how a
+# newer build escapes a newline, char is how an older one might, and replace is
+# the conflict target some builds report for INSERT OR REPLACE. A literal
+# newline needs no function at all.
+required = {"unistr", "char", "replace"}
+missing = required - m.ALLOWED_FUNCS
+if missing:
+    print("MISSING from ALLOWED_FUNCS: %s" % sorted(missing))
+    sys.exit(1)
+
+# And nothing dangerous may be in it.
+forbidden = {"load_extension", "readfile", "writefile", "edit", "eval",
+             "getcsv", "fts3_tokenizer", "printf", "random", "hex"}
+leaked = forbidden & m.ALLOWED_FUNCS
+if leaked:
+    print("FORBIDDEN in ALLOWED_FUNCS: %s" % sorted(leaked))
+    sys.exit(1)
+
+# The allowlist must stay small: every extra name is more surface.
+if len(m.ALLOWED_FUNCS) > 4:
+    print("ALLOWED_FUNCS has grown to %d entries: %s"
+          % (len(m.ALLOWED_FUNCS), sorted(m.ALLOWED_FUNCS)))
+    sys.exit(1)
+PY
+    assert_success
+    refute_output --partial "MISSING"
+    refute_output --partial "FORBIDDEN"
+    refute_output --partial "grown"
+}
+
+@test "the authorizer denies everything outside the documented allowlists" {
+    # Drive authorize() directly with every action code and argument shape, so
+    # this asserts policy rather than whatever the local sqlite reports.
+    run python3 - "$BATS_TEST_DIRNAME/../../lib/session_restore.py" <<'PY'
+import importlib.util, sqlite3, sys
+spec = importlib.util.spec_from_file_location("sr", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+OK, DENY = sqlite3.SQLITE_OK, sqlite3.SQLITE_DENY
+fails = []
+
+def want(label, got, expected):
+    if got != expected:
+        fails.append("%s: got %s want %s" % (label, got, expected))
+
+# INSERT: only the four backup tables.
+for tbl in ("session", "message", "part", "todo"):
+    want("INSERT " + tbl, m.authorize(18, tbl, None, "main", None), OK)
+for tbl in ("sqlite_master", "other", "marker", "temp.session", "PRAGMA_table"):
+    want("INSERT " + tbl, m.authorize(18, tbl, None, "main", None), DENY)
+
+# TRANSACTION: allowed, so the module owns BEGIN/COMMIT.
+want("TRANSACTION", m.authorize(22, "BEGIN", None, "main", None), OK)
+
+# FUNCTIONS: allowed for the documented set, denied otherwise, in BOTH arg2
+# shapes python has used across versions.
+for name in sorted(m.ALLOWED_FUNCS):
+    want("FUNC str " + name, m.authorize(31, None, name, "main", None), OK)
+    want("FUNC tuple " + name, m.authorize(31, None, (name, 1), "main", None), OK)
+for name in ("load_extension", "randomblob", "upper", "sqlite_version", "json"):
+    want("FUNC str " + name, m.authorize(31, None, name, "main", None), DENY)
+    want("FUNC tuple " + name, m.authorize(31, None, (name, 1), "main", None), DENY)
+
+# Everything else denied outright.
+for code, label in ((1, "CREATE_INDEX"), (2, "CREATE_TABLE"), (7, "CREATE_TRIGGER"),
+                    (8, "CREATE_VIEW"), (9, "DELETE"), (10, "DROP_INDEX"),
+                    (11, "DROP_TABLE"), (16, "DROP_TRIGGER"), (19, "PRAGMA"),
+                    (20, "READ"), (21, "SELECT"), (23, "UPDATE"), (24, "ATTACH"),
+                    (25, "DETACH"), (26, "ALTER_TABLE"), (29, "CREATE_VTABLE"),
+                    (30, "DROP_VTABLE"), (32, "SAVEPOINT"), (33, "RECURSIVE")):
+    want(label, m.authorize(code, "session", "col", "main", None), DENY)
+
+if fails:
+    print("\n".join(fails))
+    sys.exit(1)
+PY
+    assert_success
+}
+
 # ---- Behaviour that must be preserved ------------------------------------
 
 @test "restore: usage error with no argument" {
@@ -347,10 +442,20 @@ SQL
     "${OCPROBE_SED_INPLACE[@]}" 's/^INSERT INTO /INSERT OR REPLACE INTO /' "$dump"
     grep -q "INSERT OR REPLACE INTO session" "$dump" || {
         echo "fixture is not shaped like a real backup dump" >&2; false; }
-    # The dump must really exercise the hard cases, or this test proves nothing:
-    # a newline in a value makes sqlite emit unistr('...\\u000a...'), and the
-    # semicolon / dashes / emoji must survive verbatim.
-    grep -q "unistr(" "$dump" || { echo "dump has no unistr() -- newline did not survive" >&2; false; }
+    # The dump must really exercise the hard cases, or this test proves nothing.
+    # NOTE: how a newline inside a value is escaped is sqlite-build specific --
+    # sqlite 3.54 (macOS) writes unistr('...\\u000a...'), while the ubuntu
+    # runner's build writes the newline literally. Both are valid dumps and the
+    # restore handles both, so this asserts the portable properties: one
+    # INSERT per allowlisted table, and the hostile characters still present.
+    local t
+    for t in session message part todo; do
+        local n; n=$(grep -c "INSERT OR REPLACE INTO $t " "$dump")
+        [ "$n" -ge 1 ] || {
+            echo "dump has no INSERT OR REPLACE INTO $t -- not a backup-shaped dump" >&2
+            false
+        }
+    done
     grep -q "semicolon" "$dump" || { echo "dump lost the semicolon" >&2; false; }
     grep -q -- "--" "$dump"   || { echo "dump lost the -- dashes" >&2; false; }
 
@@ -378,6 +483,77 @@ SQL
     assert_equal "$stored_title" "$got_title"
     assert_equal "$stored_data"  "$got_data"
     assert_equal "1/1/0" "$(_rows_of)"   # ses_r restored, marker untouched, other empty
+}
+
+@test "restore: a dump with a LITERAL newline in a value round-trips" {
+    # `sqlite3 .mode insert` escapes a newline differently depending on the
+    # sqlite build: some emit unistr('...\\u000a...') on one line, others write
+    # the newline literally so the string literal spans lines. The ubuntu CI
+    # runner uses the latter. Both must restore byte-exactly, and the second
+    # shape only works if the statement splitter accumulates lines instead of
+    # treating each line as a statement.
+    _fresh_db
+    local title data
+    title="first line
+second line; with a semicolon and a ''quote''"
+    data="payload
+across lines; ''quoted''"
+    sqlite3 "$DB" <<SQL
+INSERT INTO session VALUES('ses_n','$title',10,20);
+INSERT INTO message VALUES(1,'ses_n',11);
+INSERT INTO part VALUES(1,'ses_n',1,12,'$data');
+INSERT INTO todo VALUES(1,'ses_n');
+SQL
+    local stored_title stored_data
+    stored_title=$(sqlite3 "$DB" "SELECT title FROM session WHERE id='ses_n';")
+    stored_data=$(sqlite3 "$DB" "SELECT data FROM part WHERE id=1;")
+    [[ "$stored_title" == *$'\n'* ]] || {
+        echo "stored title has no newline; fixture is wrong" >&2; false; }
+
+    # Build the dump with sqlite's own quote() so the SQL is valid by
+    # construction on any build, then turn the escaped newline inside the string
+    # literal into a REAL newline. That is the shape the ubuntu runner emits.
+    local dump="$BATS_TEST_TMPDIR/literal.sql"
+    local sid st sd
+    sid=$(sqlite3 :memory: "SELECT quote('ses_n');")
+    st=$(sqlite3 :memory: "SELECT quote('$(printf '%s' "$stored_title" | sed "s/'/''/g")');")
+    sd=$(sqlite3 :memory: "SELECT quote('$(printf '%s' "$stored_data" | sed "s/'/''/g")');")
+    {
+        printf 'INSERT OR REPLACE INTO session VALUES(%s,%s,10,20);\n' "$sid" "$st"
+        printf 'INSERT OR REPLACE INTO message VALUES(1,%s,11);\n' "$sid"
+        printf 'INSERT OR REPLACE INTO part VALUES(1,%s,1,12,%s);\n' "$sid" "$sd"
+        printf 'INSERT OR REPLACE INTO todo VALUES(1,%s);\n' "$sid"
+    } >"$dump"
+
+    # Convert the backslash-n escape INSIDE the string literals into real
+    # newlines, so the first statement physically spans two lines.
+    python3 - "$dump" <<'PYEOF'
+import sys
+p = sys.argv[1]
+lines = open(p).read().split("\n")
+out = []
+for line in lines:
+    if not line:
+        continue
+    # Only inside a quoted literal: these dumps have no other backslashes.
+    if "'" in line and "\\n" in line:
+        line = line.replace("\\n", "\n")
+    out.append(line)
+open(p, "w").write("\n".join(out) + "\n")
+PYEOF
+
+    # The statement must genuinely span lines, or this proves nothing.
+    [ "$(wc -l <"$dump" | tr -d ' ')" -gt 4 ] || {
+        echo "fixture did not produce a multi-line statement ($(wc -l <"$dump" | tr -d ' ') lines)" >&2
+        false
+    }
+
+    sqlite3 "$DB" "DELETE FROM session; DELETE FROM message; DELETE FROM part; DELETE FROM todo;"
+    run cmd_session_restore "$dump"
+    assert_success
+    assert_output --partial "restored from"
+    assert_equal "$stored_title" "$(sqlite3 "$DB" "SELECT title FROM session WHERE id='ses_n';")"
+    assert_equal "$stored_data"  "$(sqlite3 "$DB" "SELECT data FROM part WHERE id=1;")"
 }
 
 @test "restore: pre-restore backup is created and a backup failure aborts cleanly" {
