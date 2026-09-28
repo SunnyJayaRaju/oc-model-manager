@@ -163,23 +163,25 @@ EOF
 		die "ocprobe doctor produced no recognisable output"
 
 	# --- 4. a real restore of a valid dump --------------------------------
-	# Seeded with the exact tables cmd_session_backup dumps, and the embedded
-	# newline is built with char(10) rather than a literal \u escape: the sqlite3
-	# CLI parses backslash escapes itself and rejects a bare \u, which is why the
-	# generated dump below is the ground truth rather than anything hand-written.
+	# Seeded with the exact tables cmd_session_backup dumps. The embedded newline
+	# is built with char(10), never unistr(): unistr() only exists in sqlite
+	# >= 3.42, and the ubuntu runner's build does not have it, so naming it here
+	# fails on one leg and passes on the other. How a newline gets escaped in a
+	# dump is build-dependent -- macOS writes unistr('...\u000a...') and ubuntu
+	# writes it literally -- and the restore handles both, which is why the dump
+	# below is generated rather than hand-written.
 	sqlite3 "$db" <<'SQL'
 CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, data TEXT);
 CREATE TABLE message(id TEXT PRIMARY KEY, session_id TEXT, data TEXT);
 CREATE TABLE part(id TEXT PRIMARY KEY, message_id TEXT, data TEXT);
 CREATE TABLE todo(id TEXT PRIMARY KEY, session_id TEXT, content TEXT);
-INSERT INTO session VALUES('sess_abc','packaging check',unistr('multi' || char(10) || 'line'));
+INSERT INTO session VALUES('sess_abc','packaging check','multi' || char(10) || 'line');
 INSERT INTO message VALUES('msg_1','sess_abc','has ; semicolon');
 SQL
 	# Generate the dump the way cmd_session_backup does: `sqlite3 .mode insert`
 	# over each table, then `sed s/^INSERT INTO /INSERT OR REPLACE INTO /`.
-	# Generating it rather than writing it by hand means the restore below is
-	# fed a byte-for-byte real dump, including the unistr() escaping and the
-	# newline inside a value.
+	# Generating it means the restore is fed whatever THIS sqlite build actually
+	# emits, which is the only honest way to test both escaping styles.
 	sqlite3 -readonly "$db" >"$WORK/good.sql" <<'SQL'
 .mode insert session
 SELECT * FROM session;

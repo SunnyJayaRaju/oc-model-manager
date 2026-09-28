@@ -379,7 +379,38 @@ def restore(db_path, dump_path):
     return 0
 
 
+def functions_used(statement):
+    """Return the SQL function names called in `statement`.
+
+    Deliberately a crude regex over the text rather than an AST: the only use
+    is to ask "would this dump reference something outside the allowlist?", and
+    a real dump is a flat list of INSERT statements, so the set of names is
+    small and the answers are asserted by the test suite.
+    """
+    return set(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", statement)) - {
+        "INSERT",
+        "VALUES",
+        "REPLACE",
+        "INTO",
+        "SELECT",
+        "TABLE",
+    }
+
+
 def main(argv):
+    # A maintenance mode for the test suite: report the allowlist functions a
+    # dump would need that are not permitted. Kept here rather than in the
+    # tests so the allowlist has exactly one definition.
+    if len(argv) == 3 and argv[1] == "--allowlist-check":
+        with open(argv[2], encoding="utf-8") as handle:
+            used = set()
+            for line in handle:
+                used |= functions_used(line)
+        missing = sorted(used - ALLOWED_FUNCS)
+        if missing:
+            sys.stderr.write("%s\n" % ", ".join(missing))
+            return 1
+        return 0
     if len(argv) != 3:
         sys.stderr.write("usage: session_restore.py <database> <dump.sql>\n")
         return 2

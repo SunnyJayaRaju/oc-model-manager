@@ -281,16 +281,42 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq python3 python3-yaml python3-jsonschema sqlite3 coreutils
       - name: Install dependencies (macOS)
-        # Same reasoning and ordering as the unit job: the venv must win for
-        # python3 (it has yaml/jsonschema) while Homebrew wins for everything
-        # else, and GITHUB_PATH is last-write-first.
+        # Same reasoning and ordering as the unit job.
+        #
+        # `bash` is not optional here. This job RUNS the installed binary, and
+        # on macOS that binary starts under /bin/bash, which is 3.2. ocprobe
+        # requires >= 4.3 and refuses to run, so without this the whole macOS leg
+        # fails on a property of the runner rather than of the package. The unit
+        # job installs bash for the same reason.
+        #
+        # GITHUB_PATH entries are prepended and the LAST one written ends up
+        # FIRST, so the venv is written last: it must win for python3 (it has
+        # yaml/jsonschema, Homebrew's does not) while Homebrew still wins for
+        # bash (the venv ships none). Reversing these two makes python3 lose
+        # yaml and the tool fail at import instead.
         if: runner.os == 'macOS'
         run: |
-          brew install jq sqlite3 coreutils
+          brew install jq sqlite3 coreutils bash
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --upgrade pip pyyaml jsonschema
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
           echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: Verify toolchain
+        # Which bash the installed binary will actually run under. Without this
+        # the failure mode is a confusing mid-assertion error from ocprobe.
+        run: |
+          echo "bash on PATH: $(command -v bash)"
+          bash --version | head -1
+          bver=$(bash -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"')
+          bmajor=${bver%%.*}; bminor=${bver##*.}
+          if [ "$bmajor" -lt 4 ] || { [ "$bmajor" -eq 4 ] && [ "$bminor" -lt 3 ]; }; then
+            echo "::error::the installed binary would run under bash $bver; need >= 4.3"
+            exit 1
+          fi
+          if ! python3 -c 'import yaml, jsonschema' 2>/dev/null; then
+            echo "::error::python3 on PATH cannot import yaml and jsonschema"
+            exit 1
+          fi
       - name: Build the release tarball exactly as the build job does
         run: bash scripts/ci/package-check.sh build
       - name: Verify the packaged file list
