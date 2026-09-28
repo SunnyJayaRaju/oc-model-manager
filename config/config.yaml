@@ -15,12 +15,9 @@ probe:
 
 catalog:
   cache_ttl_hours: 1
-  force_refresh: false
 
 scheduler:
-  enabled: false
   interval_seconds: 21600
-  run_at_load: false
 
 alerts:
   webhook_url: ""

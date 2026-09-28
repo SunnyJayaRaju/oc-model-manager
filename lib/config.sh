@@ -255,6 +255,15 @@ load_config() {
 		fi
 	done <<<"$config_vars"
 
+	# ---- Reserved keys ---------------------------------------------------------
+	# Accepted for backwards compatibility, read by nothing. Warn ONCE, naming
+	# the keys, when one is set to a non-default value -- silence would let an
+	# operator believe, say, `scheduler.enabled: false` disables the scheduler.
+	if [[ -n "${OCPROBE_RESERVED_IN_USE:-}" ]]; then
+		log_warn "these config keys have no effect and are ignored: ${OCPROBE_RESERVED_IN_USE}"
+		log_warn "  (they are kept in the schema so existing configs keep validating)"
+	fi
+
 	# ---- Integer config validation --------------------------------------------
 	# Every value below is interpolated UNQUOTED into an interpreter that
 	# assumes it is a plain positive integer:
@@ -346,12 +355,9 @@ probe:
 
 catalog:
   cache_ttl_hours: 1
-  force_refresh: false
 
 scheduler:
-  enabled: false
   interval_seconds: 21600
-  run_at_load: false
 
 alerts:
   webhook_url: ""
@@ -473,6 +479,21 @@ s("OCPROBE_ALLOW_MASS_REMOVE_ENV", get("safety.allow_mass_remove_env", "OCPROBE_
 s("OCPROBE_LOG_LEVEL", get("logging.level", "info"))
 s("OCPROBE_LOG_FORMAT", get("logging.format", "text"))
 print(f'OCPROBE_LOG_FILE_ENABLED={1 if get("logging.file_enabled", True) else 0}')
+
+# Reserved keys. These three are declared in config/schema.json and are still
+# accepted, so an existing config containing one keeps validating, but nothing in
+# lib/ or bin/ ever reads them. Report the ones set to a non-default value so
+# load_config can say so once, instead of leaving an operator to believe
+# `scheduler.enabled: false` is doing something. Only the emitter writes this
+# variable, and only from these three fixed paths, so it cannot be injected.
+reserved = [
+    name for name, path in (
+        ("catalog.force_refresh", ("catalog", "force_refresh")),
+        ("scheduler.enabled", ("scheduler", "enabled")),
+        ("scheduler.run_at_load", ("scheduler", "run_at_load")),
+    ) if get(".".join(path), False)
+]
+print('OCPROBE_RESERVED_IN_USE="%s"' % ",".join(reserved))
 PYEOF
 }
 

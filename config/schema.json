@@ -64,7 +64,8 @@
         },
         "force_refresh": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Reserved: accepted for backwards compatibility but has no effect. Nothing in ocprobe reads it."
         }
       },
       "required": []
@@ -74,7 +75,8 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Reserved: accepted for backwards compatibility but has no effect. Nothing in ocprobe reads it."
         },
         "interval_seconds": {
           "type": "integer",
@@ -84,7 +86,8 @@
         },
         "run_at_load": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Reserved: accepted for backwards compatibility but has no effect. Nothing in ocprobe reads it."
         }
       },
       "required": []
