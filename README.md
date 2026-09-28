@@ -242,6 +242,22 @@ logging:
 
 See `ocprobe config schema` for full schema.
 
+### Reserved keys
+
+Three keys are still accepted by the schema so that existing config files keep
+validating, but **nothing in ocprobe reads them**:
+
+| Key | Default | Status |
+|-----|---------|--------|
+| `catalog.force_refresh` | `false` | reserved, no effect |
+| `scheduler.enabled` | `false` | reserved, no effect |
+| `scheduler.run_at_load` | `false` | reserved, no effect |
+
+They are no longer written by `ocprobe config init`, and setting one to a
+non-default value logs a single warning on startup. To force a catalog refresh,
+use the `ocprobe probe --force-refresh` flag (or the `OCPROBE_FORCE_REFRESH`
+environment variable), which is the knob that actually works.
+
 ---
 
 ## Features
