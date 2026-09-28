@@ -130,6 +130,80 @@ jobs:
       - name: Run unit tests
         run: bats test/unit/
 
+  # The unit suite on the runner's own bash (5.x on ubuntu, Homebrew 5.x on
+  # macOS) proves nothing about the floor we advertise. README and ci.yml both
+  # claim "bash >= 4.3 (namerefs)", but nothing tested 4.3 -- ubuntu-latest is
+  # 5.x, and macOS only adds a *newer* bash than its own 3.2. So the documented
+  # minimum was untested, and it was wrong: building a real 4.3.30 and running
+  # the suite under it failed 13 tests (see the set -u fix in this PR).
+  #
+  # This job builds bash 4.3.30 from source, puts it first on PATH so bats
+  # re-execs through it, and runs the whole unit suite. It is the regression
+  # lock for that minimum.
+  test-bash43:
+    name: Unit Tests (bash 4.3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          # build-essential is for compiling bash; the rest is the same set the
+          # ubuntu unit job installs, so the two legs differ only in bash.
+          sudo apt-get install -y jq python3 python3-yaml python3-jsonschema \
+            sqlite3 coreutils build-essential curl
+      - name: Build bash 4.3.30
+        run: |
+          set -euo pipefail
+          # 4.3 is not packaged for any current distro, so build it. 4.3.30 is
+          # the last 4.3 release.
+          #
+          # The tarball is pinned by sha256: a moving download of an ancient
+          # shell that will be PATH-first for the whole test run is not
+          # something to take on trust.
+          ver=4.3.30
+          curl -fsSL -o bash.tar.gz "https://ftp.gnu.org/gnu/bash/bash-${ver}.tar.gz"
+          echo "317881019bbf2262fb814b7dd8e40632d13c3608d2f237800a8828fbb8a640dd  bash.tar.gz" | sha256sum -c -
+          tar xzf bash.tar.gz
+          cd "bash-${ver}"
+          # -std=gnu89 and the two -W flags are not cosmetic. 4.3 predates C99
+          # and uses K&R function definitions plus implicit ioctl/time
+          # declarations; a current gcc or clang compiles those as hard errors
+          # by default, so the stock flags fail to build. gnu89 puts them back
+          # to what 4.3 was written against.
+          ./configure --prefix="$HOME/bash43" --without-bash-malloc \
+            CFLAGS="-O1 -std=gnu89 -Wno-implicit-function-declaration -fcommon"
+          make -j"$(nproc)"
+          make install
+          # GITHUB_PATH entries are prepended, so this wins over /usr/bin/bash.
+          # bats re-execs through `#!/usr/bin/env bash`, so `bash` is the
+          # switch that matters.
+          echo "$HOME/bash43/bin" >> "$GITHUB_PATH"
+      - name: Verify toolchain
+        # Fail loudly rather than silently testing the wrong bash. If the build
+        # ever resolves to something else, this job would otherwise go green
+        # while proving nothing about 4.3.
+        run: |
+          echo "bash on PATH: $(command -v bash)"
+          bver=$(bash -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"')
+          echo "bash on PATH is: $bver"
+          if [ "$bver" != "4.3" ]; then
+            echo "::error::expected bash 4.3 on PATH, got $bver -- this job would prove nothing"
+            exit 1
+          fi
+          if ! python3 -c 'import yaml, jsonschema' 2>/dev/null; then
+            echo "::error::python3 on PATH cannot import yaml and jsonschema"
+            exit 1
+          fi
+      - name: Install bats
+        # Same pin as the other legs so the suites cannot drift apart.
+        run: |
+          git clone --depth 1 --branch v1.14.0 https://github.com/bats-core/bats-core.git /tmp/bats
+          cd /tmp/bats
+          sudo ./install.sh /usr/local
+      - name: Run unit tests
+        run: bats test/unit/
+
   test-integration:
     name: Integration Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -189,7 +263,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, test-unit, test-integration]
+    needs: [lint, test-unit, test-integration, test-bash43]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v7
