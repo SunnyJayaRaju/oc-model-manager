@@ -45,7 +45,13 @@ build: $(PACKAGE)
 
 $(PACKAGE): $(DIST_DIR)
 	@echo "Creating package..."
-	@cd dist && tar -c ocprobe-$(VERSION)/ | gzip -n > ocprobe-$(VERSION).tar.gz
+	# COPYFILE_DISABLE=1: on macOS, bsdtar synthesises an AppleDouble ._* file
+	# for every file it archives that carries an extended attribute, so the
+	# tarball grows one junk member per real file (35 of 70 for v3.1.3). They are
+	# never on disk -- `find -delete` finds nothing -- because they are created at
+	# archive time. The variable is meaningless to GNU tar, which is what the
+	# release build job runs. Enforced by test/unit/package_tarball_clean.bats.
+	@cd dist && COPYFILE_DISABLE=1 tar -c ocprobe-$(VERSION)/ | gzip -n > ocprobe-$(VERSION).tar.gz
 	@cd dist && sha256sum ocprobe-$(VERSION).tar.gz > ocprobe-$(VERSION).tar.gz.sha256
 	@echo "Package: $(PACKAGE)"
 

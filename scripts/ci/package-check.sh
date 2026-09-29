@@ -41,7 +41,14 @@ build() {
 		[ -e "$REPO_ROOT/$f" ] && cp "$REPO_ROOT/$f" "$WORK/dist/ocprobe-$VERSION/"
 	done
 	[ -d "$REPO_ROOT/docs" ] && cp -r "$REPO_ROOT/docs" "$WORK/dist/ocprobe-$VERSION/"
-	(cd "$WORK/dist" && tar -czf "$TARBALL" "ocprobe-$VERSION/")
+	# COPYFILE_DISABLE=1: on macOS, bsdtar synthesises an AppleDouble ._* file
+	# for every file it archives that carries an extended attribute, so a
+	# tarball built on a macOS runner carries one junk member per real file.
+	# This job runs on macos-latest, so without this the artifact it verifies is
+	# not the artifact the ubuntu build job publishes. Verified by
+	# verify_tarball below, which fails on any ._* member.
+	# The variable is meaningless to GNU tar, which is harmless.
+	(cd "$WORK/dist" && COPYFILE_DISABLE=1 tar -czf "$TARBALL" "ocprobe-$VERSION/")
 	note "built $TARBALL ($(wc -c <"$TARBALL" | tr -d ' ') bytes)"
 	# A release must not carry build residue; a stale .pyc from a local run is
 	# exactly the kind of thing that makes two builds of the same commit differ.
@@ -55,6 +62,41 @@ build() {
 # -------------------------------------------------------- verify-tarball -----
 verify_tarball() {
 	local missing=0 f rel
+	# No AppleDouble members. bsdtar creates these at archive time on macOS, one
+	# per archived file that has an extended attribute, and they are not on disk
+	# to be found and removed -- so this has to be asserted against the archive
+	# itself. A release is a public artifact: every download pays for the junk.
+	#
+	# Read it with python's tarfile, NOT with `tar -tzf`. On macOS, bsdtar
+	# interprets and hides AppleDouble members when listing, so `tar -tzf` reports
+	# 35 members for a 70-member archive and greps for `._` find nothing. A check
+	# written against `tar -tzf` would pass forever, which is a worse failure than
+	# having no check at all.
+	#
+	# If python3 is missing this dies rather than skipping: a guard that quietly
+	# stops guarding is how a bug like this comes back.
+	if ! command -v python3 >/dev/null 2>&1; then
+		die "cannot check for AppleDouble members: python3 not found"
+	fi
+	local ad
+	ad="$(
+		python3 - "$TARBALL" <<'PY' || die "could not read the tarball with python3"
+import sys
+import tarfile
+
+with tarfile.open(sys.argv[1]) as t:
+    names = t.getnames()
+for n in names:
+    if n.split("/")[-1].startswith("._") or "__MACOSX" in n.split("/"):
+        print(n)
+PY
+	)"
+	if [ -n "$ad" ]; then
+		printf '%s\n' "$ad" | head -20 | sed 's/^/    APPLEDOUBLE /'
+		note "the tarball carries AppleDouble ._* members; it was built on macOS"
+		note "without COPYFILE_DISABLE=1, or from a tar that ignores it"
+		die "the release tarball contains AppleDouble members (listed above)"
+	fi
 	# The file the whole exercise is about. It is not a .sh, so any narrowing of
 	# the copy list to shell scripts would drop it silently.
 	[ -f "$STAGE/lib/session_restore.py" ] || {

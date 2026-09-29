@@ -73,7 +73,9 @@ for f in VERSION CHANGELOG.md LICENSE README.md CONTRIBUTING.md; do
 	[ -e "$REPO_ROOT/$f" ] && cp "$REPO_ROOT/$f" "$BUILD/dist/ocprobe-$VERSION/"
 done
 [ -d "$REPO_ROOT/docs" ] && cp -r "$REPO_ROOT/docs" "$BUILD/dist/ocprobe-$VERSION/"
-(cd "$BUILD/dist" && tar -czf "ocprobe-$VERSION.tar.gz" "ocprobe-$VERSION/")
+# COPYFILE_DISABLE=1: on macOS, bsdtar synthesises an AppleDouble ._* file per
+# archived file that carries an extended attribute. Meaningless to GNU tar.
+(cd "$BUILD/dist" && COPYFILE_DISABLE=1 tar -czf "ocprobe-$VERSION.tar.gz" "ocprobe-$VERSION/")
 
 # The .sha256 asset in the same "<hash>  <name>" shape GitHub's release upload
 # produces, because that is what the updater parses.
