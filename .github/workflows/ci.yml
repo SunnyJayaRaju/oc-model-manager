@@ -37,6 +37,13 @@ jobs:
           done
       - name: Check version consistency (README badge vs VERSION)
         run: make version-check
+      # Catches a misspelled GITHUB_*/RUNNER_* built-in. Nothing else in this
+      # file would: a typo expands to the empty string rather than failing, so
+      # the symptom surfaces in a later step, on a code path (a tag push) that
+      # ordinary CI never takes. The one this replaces had been there since the
+      # homebrew job was added.
+      - name: Check workflow built-in env var names
+        run: bash scripts/ci/check-workflow-env.sh
 
   secret-scan:
     name: Secret Scan (gitleaks)
@@ -370,7 +377,13 @@ jobs:
           mkdir -p dist/ocprobe-$VERSION
           cp -r bin lib config docs VERSION CHANGELOG.md LICENSE README.md CONTRIBUTING.md dist/ocprobe-$VERSION/
           cd dist
-          tar -czf ocprobe-$VERSION.tar.gz ocprobe-$VERSION/
+          # COPYFILE_DISABLE=1 is belt-and-braces here: this job runs on
+          # ubuntu, where tar is GNU and never emits AppleDouble members. It is
+          # set anyway so that if this job is ever moved to a macOS runner the
+          # published artifact does not silently gain one ._* file per real
+          # file. The Package Check job, which does run on macos-latest, is what
+          # actually catches it.
+          COPYFILE_DISABLE=1 tar -czf ocprobe-$VERSION.tar.gz ocprobe-$VERSION/
           sha256sum ocprobe-$VERSION.tar.gz > ocprobe-$VERSION.tar.gz.sha256
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -428,7 +441,14 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           echo "TAG=${TAG}" >> "$GITHUB_ENV"
-          echo "REPO_SLUG=${GITHUBUB_REPOSITORY}" >> "$GITHUB_ENV"
+          # GITHUBUB_REPOSITORY was a typo for GITHUB_REPOSITORY, which does not
+          # exist. The step has no `set -u`, so the expansion was the empty
+          # string, and REPO_SLUG reached scripts/update-tap-formula.sh empty --
+          # where it trips `die "REPO_SLUG is required"`, a different step, in a
+          # job gated on a tag push. No tag has ever been created, so this line
+          # had never run. scripts/ci/check-workflow-env.sh now fails the Lint
+          # job on any GITHUB_*/RUNNER_* name that is not a real built-in.
+          echo "REPO_SLUG=${GITHUB_REPOSITORY}" >> "$GITHUB_ENV"
 
       - name: Checkout homebrew-ocprobe tap repo
         if: ${{ steps.check_token.outputs.has_token == 'true' }}
