@@ -84,15 +84,44 @@ print(len(tarfile.open(sys.argv[1]).getnames()))
 PY
 }
 
-# A staged tree, plus a real `._` file inside it, archived with plain tar.
-# Deterministic on every platform, unlike relying on xattrs.
-stage_polluted() { # $1 = tarball to write
-    local stage="$WORK/polluted"
-    mkdir -p "$stage/ocprobe-$VERSION/lib"
-    cp -r "$ROOT/lib/." "$stage/ocprobe-$VERSION/lib/"
-    cp "$ROOT/VERSION" "$stage/ocprobe-$VERSION/VERSION"
-    : >"$stage/ocprobe-$VERSION/._synthetic"
-    (cd "$stage" && tar -czf "$1" "ocprobe-$VERSION/")
+# A copy of the clean tarball with one AppleDouble member added, built with
+# python's tarfile. NOT built with tar, on purpose:
+#
+#   plain `tar -czf`                  drops a literal ._ file and substitutes the
+#                                     ones it synthesises from xattrs -- so on a
+#                                     fresh checkout, which has no xattrs, it
+#                                     yields a completely CLEAN archive.
+#   `COPYFILE_DISABLE=1 tar -czf`     keeps the literal ._ file, synthesises none
+#
+# So no tar invocation produces a polluted archive deterministically on every
+# platform. tarfile does, because it does not interpret the name. That is the
+# right thing to test anyway: the guard's job is to reject an archive that
+# contains such a member, not to reproduce bsdtar's synthesis rules.
+#
+# The clean tarball is the starting point so the result is otherwise complete --
+# a polluted archive that verify_tarball rejects for a MISSING file would pass
+# the test for entirely the wrong reason.
+add_appledouble_member() { # $1 = clean tarball, $2 = output tarball
+    # Built via a temporary name: src and dst are often the same path, and
+    # opening the output would truncate the input mid-read.
+    python3 - "$1" "$2" "$VERSION" <<'PY'
+import io
+import os
+import sys
+import tarfile
+
+src, dst, version = sys.argv[1], sys.argv[2], sys.argv[3]
+name = "%s/._synthetic" % version
+tmp = dst + ".tmp"
+with tarfile.open(src) as tin, tarfile.open(tmp, "w:gz") as tout:
+    for m in tin.getmembers():
+        f = tin.extractfile(m) if m.isreg() else None
+        tout.addfile(m, f)
+    info = tarfile.TarInfo(name)
+    info.size = 0
+    tout.addfile(info, io.BytesIO(b""))
+os.replace(tmp, dst)
+PY
 }
 
 @test "the release tarball contains no AppleDouble members" {
@@ -122,14 +151,13 @@ stage_polluted() { # $1 = tarball to write
 
 @test "the detector sees an AppleDouble member when there is one" {
     # Without this, "no AppleDouble members" is only meaningful if the detector
-    # can find one. The pollution is constructed, so this cannot pass by being
-    # handed an already-clean archive.
-    stage_polluted "$WORK/polluted.tar.gz"
+    # can find one.
+    add_appledouble_member "$TARBALL" "$WORK/polluted.tar.gz"
 
     run appledouble_members "$WORK/polluted.tar.gz"
 
     assert_failure
-    assert_output --partial "._"
+    assert_output --partial "._synthetic"
 }
 
 @test "verify-tarball accepts the clean tarball it just built" {
@@ -141,9 +169,9 @@ stage_polluted() { # $1 = tarball to write
 @test "verify-tarball REJECTS a tarball with AppleDouble members" {
     # The CI enforcement, as opposed to this file's own detector. A
     # verify_tarball check that never fires is indistinguishable from a correct
-    # one until the day the junk ships. Constructed pollution, so it runs
-    # everywhere rather than skipping on a machine without xattrs.
-    stage_polluted "$TARBALL"
+    # one until the day the junk ships. Built with tarfile, so it runs identically
+    # everywhere instead of depending on the host's xattrs.
+    add_appledouble_member "$TARBALL" "$TARBALL"
     rm -rf "$WORK/extract"
     mkdir -p "$WORK/extract"
     tar -xzf "$TARBALL" -C "$WORK/extract"
@@ -195,19 +223,17 @@ stage_polluted() { # $1 = tarball to write
     assert_success
 }
 
-@test "the Makefile pipeline is not fixed by a tar flag on the wrong side" {
-    # tar reads COPYFILE_DISABLE from its own environment, so `COPYFILE_DISABLE=1
-    # gzip` would not work. This asserts the variable is on the tar process, not
-    # merely somewhere in the pipeline.
+@test "COPYFILE_DISABLE=1 does not strip a file the tree really contains" {
+    # The flag suppresses bsdtar's *synthesis*; it does not remove files that are
+    # genuinely in the tree. A literal ._ file survives it, which is correct --
+    # and it is also the only portable way to get a polluted archive out of a
+    # tar invocation, since plain tar drops the literal file instead.
     local stage="$WORK/mk2"
     mkdir -p "$stage/ocprobe-$VERSION/lib"
     cp -r "$ROOT/lib/." "$stage/ocprobe-$VERSION/lib/"
     : >"$stage/ocprobe-$VERSION/._synthetic"
     (cd "$stage" && COPYFILE_DISABLE=1 tar -c "ocprobe-$VERSION/" | gzip -n >"$WORK/mk2.tar.gz")
 
-    # The literal ._ file is real data, not synthesised metadata, so it survives
-    # the flag. That is correct: the flag suppresses synthesis, it does not strip
-    # files a user actually put in the tree.
     run appledouble_count "$WORK/mk2.tar.gz"
 
     assert_output "1"
