@@ -464,6 +464,20 @@ jobs:
           # job on any GITHUB_*/RUNNER_* name that is not a real built-in.
           echo "REPO_SLUG=${GITHUB_REPOSITORY}" >> "$GITHUB_ENV"
 
+      - name: Check out this repo at the tag
+        # The step below needs scripts/update-tap-formula.sh, which lives in THIS
+        # repo, not in the tap. Without this step the only thing in the workspace
+        # was the tap, so the updater was invoked at a path that did not exist:
+        #
+        #     bash: scripts/update-tap-formula.sh: No such file or directory
+        #
+        # Checked out into `source/` so both trees exist at once -- the workspace
+        # root stays the tap, because that is what gets committed and pushed.
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
+          path: source
+
       - name: Checkout homebrew-ocprobe tap repo
         if: ${{ steps.check_token.outputs.has_token == 'true' }}
         uses: actions/checkout@v7
@@ -481,7 +495,14 @@ jobs:
         id: formula
         if: ${{ steps.check_token.outputs.has_token == 'true' }}
         run: |
-          bash scripts/update-tap-formula.sh | tee "$RUNNER_TEMP/formula.log"
+          # Without pipefail, `bash script | tee log` reports tee's exit status,
+          # not the script's. tee succeeds even when the script does not exist,
+          # so the missing-updater failure above produced a GREEN step and an
+          # empty log, changed=false, and a tap silently left on the previous
+          # release. With pipefail the pipeline's status is the script's.
+          # test/unit/workflow_step_exit_status.bats pins both halves of that.
+          set -o pipefail
+          bash source/scripts/update-tap-formula.sh | tee "$RUNNER_TEMP/formula.log"
           # changed=yes|no on its own line, so re-running for a tag the formula
           # already has is a no-op instead of an empty-commit failure.
           grep -q '^changed=yes$' "$RUNNER_TEMP/formula.log" && echo "changed=true" >> "$GITHUB_OUTPUT" || echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -512,10 +533,20 @@ jobs:
   #
   # Not in the unit suite by design: it needs the network, and it can only pass
   # after a release exists.
+  #
+  # `permissions: contents: read` and `GH_TOKEN` are both load-bearing, not
+  # hygiene. The first real run of this job (tag run 36687980784) had neither, so
+  # `gh` was unauthenticated, every call hit the anonymous rate limit, and the
+  # script's `|| true` turned each error into an empty string. It reported the
+  # tag, the release and the formula as all missing while all three existed and
+  # were correct. `contents: read` is the minimum this job needs; it must never
+  # be given write scopes to satisfy a read.
   verify-release:
     name: Verify Release
     runs-on: ubuntu-latest
     needs: homebrew
+    permissions:
+      contents: read
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v7
@@ -526,5 +557,10 @@ jobs:
           # the shape again, so a malformed tag fails there rather than producing
           # a set of URLs that all 404.
           TAG: ${{ github.ref_name }}
+          # `gh` reads GH_TOKEN; GITHUB_TOKEN is also set by the runner but is
+          # not inherited unless passed explicitly. Passed through `env:`, never
+          # interpolated into the `run:` body, for the same reason as
+          # HOMEBREW_TAP_TOKEN above: a secret inside a script body is executable.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           bash scripts/ci/verify-release.sh "${TAG#v}"

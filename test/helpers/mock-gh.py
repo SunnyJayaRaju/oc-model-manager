@@ -6,6 +6,24 @@ stub must too: a first version printed both, which made the script read a JSON
 blob where it expected a bare hash. Anything unhandled exits non-zero, so a test
 that drifts from the script's actual call shape fails loudly rather than passing
 against a mock that answers whatever it is asked.
+
+That rule extends to what real gh REFUSES to do. This mock used to implement
+`gh api --input - --jq EXPR` as a filter over the document on stdin, which real
+gh does not do at all:
+
+    $ echo '{}' | gh api --input - --jq .x
+    accepts 1 arg(s), received 0
+
+Because the mock obliged, 19 tests passed against a script that could never run
+in CI, and the real tag run (36687980784) failed with asset URLs permanently
+"<not found>". A mock that invents a capability the real tool lacks is worse than
+no mock: it converts an untested path into a tested-looking one. So that form is
+rejected here exactly as gh rejects it, which means any future reintroduction
+fails the suite instead of passing it.
+
+Fixture fields for error handling (see make-release-fixture.py):
+  api_error     an HTTP status to fail with, or null
+  api_error_on  endpoint substring the failure is limited to, or null for all
 """
 
 import json
@@ -27,22 +45,29 @@ def emit(*lines):
 if not rest:
     sys.exit(1)
 
-# gh api --input - --jq <expr>   (the JSON document arrives on stdin)
+# Real gh: `--input` is request-body input for a write endpoint and still
+# requires the endpoint itself, so this call shape is rejected, not honoured.
 if "--input" in rest:
-    doc = json.load(sys.stdin)
-    if "html_url" in expr:
-        emit(doc.get("html_url", ""))
-    elif "assets[]" in expr:
-        # select(.name=="<name>") -- take the quoted literal after the `==`.
-        want = expr.split('"')[1] if '"' in expr else ""
-        for a in doc.get("assets", []):
-            if a["name"] == want:
-                emit(a["browser_download_url"])
-    else:
-        emit(json.dumps(doc))
-    sys.exit(0)
+    sys.stderr.write("accepts 1 arg(s), received 0\n")
+    sys.exit(1)
 
 endpoint = rest[0]
+
+# A non-404 API failure. The whole point of the error handling under test is that
+# this is NOT reported as "does not exist", so the mock must be able to produce
+# it for any endpoint.
+err_status = fx.get("api_error")
+err_on = fx.get("api_error_on")
+if err_status and (err_on is None or err_on in endpoint):
+    if err_status == "404":
+        sys.stderr.write("gh: Not Found (HTTP 404)\n")
+    elif err_status == "403":
+        sys.stderr.write("gh: API rate limit exceeded (HTTP 403)\n")
+    elif err_status == "401":
+        sys.stderr.write("gh: Bad credentials (HTTP 401)\n")
+    else:
+        sys.stderr.write("gh: server error (HTTP %s)\n" % err_status)
+    sys.exit(1)
 
 if "/git/refs/tags/" in endpoint:
     if fx["tag_ref"] is None:
