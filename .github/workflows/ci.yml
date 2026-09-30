@@ -367,7 +367,21 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           VERSION="$(bash scripts/ci/check-tag-version.sh)"
+          # These two checks are what would catch a regression here, at this step,
+          # instead of three jobs later when the release title comes out wrong.
+          #
+          # `[[ =~ ]]` is anchored at BOTH ends, so a value with a confirmation
+          # line above the version cannot match. Two weaker forms were tried and
+          # both pass a multi-line value, so neither is used here:
+          #   grep -qxE '[0-9]+\.[0-9]+\.[0-9]+'  -> matches the *last* line
+          #   grep -c  '^VERSION='                 -> still counts 1
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            printf '::error::check-tag-version.sh stdout was not a bare version: [%s]\n' "$VERSION"
+            exit 1
+          }
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          # Read back: -x requires a whole line, so a multi-line write fails.
+          grep -qxE 'VERSION=[0-9]+\.[0-9]+\.[0-9]+' "$GITHUB_ENV"
           echo "validated tag against VERSION: $VERSION"
       - name: Generate man page
         run: |
