@@ -5,6 +5,159 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.3] - 2026-09-28
+
+A hardening release. Nothing here changes what `ocprobe` decides about your
+models; it changes what it refuses to do, what it can no longer silently get
+wrong, and what CI is now able to catch before you do.
+
+### Security
+
+- **`session restore` is now validated one statement at a time.** Restoring a
+  session dump previously ran each statement through a SQLite authorizer and
+  trusted that to be the only thing deciding what a dump may contain. Whether a
+  statement produces authorizer callbacks at all is a property of your sqlite
+  build, not of ocprobe, so a statement a build did not route to the authorizer
+  was never offered to it. Two concrete consequences are now closed:
+  - `INSERT INTO <table> DEFAULT VALUES` is a real INSERT on a table the
+    allowlist permits, so it was accepted and wrote an all-NULL row over real
+    data. A genuine backup never emits it, and it is now refused. A value that
+    merely *reads* "DEFAULT VALUES" is still restored normally.
+  - Every statement is now checked for a first keyword of `INSERT`, `REPLACE` or
+    `WITH` before sqlite sees it, after stripping a BOM, Unicode whitespace and
+    `--` / `/* */` comments. `REINDEX`, `ANALYZE` and `VACUUM` were already
+    denied on the builds tested; this no longer depends on that being true.
+  - Independently, a statement that runs without performing a single allowed
+    INSERT is refused: it restored nothing.
+  - A rejected dump leaves the database **byte-identical** — not merely
+    unchanged in row count. This is asserted in CI against the installed
+    package.
+
+- **`delete_session` validates its target before deleting.** The title
+  verification was subject to a pagination gap that could let a delete proceed
+  against the wrong row; it is now done against the database rather than
+  inferred from a paginated scan.
+
+- **`validate --apply` re-acquires the lock and re-checks the config hash
+  before writing.** A concurrent `ocprobe config edit` between discovery and
+  apply could previously be overwritten by a blacklist built against a different
+  config.
+
+- **The `session restore` module runs under `python3 -B`.** It is imported by
+  importlib, which made CPython try to write a `__pycache__` next to the module.
+  In a Homebrew install that directory is read-only, so this was a hard failure
+  rather than a cosmetic one.
+
+### Fixed
+
+- **The history lock now fails closed.** On lock timeout the write was skipped
+  but the caller could not tell "skipped for contention" from "recorded". A
+  sentinel now reaches the caller, and a contended record never runs its
+  callback unlocked.
+
+- **The streak cache no longer goes stale on a same-size rewrite.** It is keyed
+  on a generation counter alongside byte size, bumped on every write. If the bump
+  fails, that is now loud: previously both the temp write and the `mv` were
+  swallowed, so an unwritable state directory produced a successful-looking
+  record with a counter that never moved — reopening exactly the hole the
+  counter exists to close. Now it warns, drops the in-process cache, and reports
+  failure to the caller. A directory sitting where the sidecar belongs was the
+  case `mv ||` structurally could not catch, because `mv` *succeeds* by moving
+  the file inside it.
+
+- **Config integers are validated and read in base 10.** A leading zero made
+  bash read a value as octal, so `max_msg_count: 08` meant 0 and
+  `history_limit: 0755` meant 493. Values are canonicalised to base 10 and
+  range-checked before they reach SQL, arithmetic or XML contexts.
+
+- **An empty or truncated catalog response can no longer poison the cache.** A
+  floor guard drops a suspiciously small response rather than overwriting a
+  good cache with nothing.
+
+- **Three config keys were dead and said nothing.** `catalog.force_refresh`,
+  `scheduler.enabled` and `scheduler.run_at_load` were declared in the schema
+  and shipped in the generated config, but nothing ever read them — so
+  `scheduler.enabled: false` did not disable the scheduler and
+  `catalog.force_refresh: true` did not force a refresh. They are still accepted
+  (removing them from the schema would make existing configs fail validation),
+  now documented as having no effect, no longer written into new configs, and
+  they log a single warning when set to a non-default value. Use
+  `ocprobe probe --force-refresh`, which is the knob that works.
+
+- **A Homebrew release could publish a formula that could not install.** The tag
+  job fetched the published sha256 with `curl -sL`, which exits 0 on a 404 — so a
+  tag that was not really released produced a formula whose sha256 was an HTML
+  error page, and the job reported success. The updater now downloads the
+  tarball, cross-checks its hash against the published one, and verifies its own
+  edits landed. The token no longer reaches a `run:` body as an interpolated
+  expression.
+
+- **A release could be tagged with a version the source disagrees with.** The
+  build job adopted whatever tag was pushed and overwrote `VERSION` with it. A
+  tag must now match `^v[0-9]+\.[0-9]+\.[0-9]+$` *and* the `VERSION` file, and
+  the check runs before anything is packaged.
+- **The tap updater no longer assumes the formula has a `version` line.** A
+  Homebrew formula normally takes its version from the url, and `brew audit`
+  calls a `version` line that merely restates it redundant -- so the tap's
+  formula drops it, and the updater used to write the url and the sha256 and
+  *then* fail on the missing line. `url` and `sha256` are now the managed
+  fields; `version` is updated when present and not added when absent. Every
+  other check is unchanged: the tag pattern, `curl --fail`, the self-computed
+  sha256 cross-checked against the published `.sha256`, 64-hex validation, the
+  post-edit assertions and the idempotent no-op.
+
+- **The release -> tap update can now be rehearsed without releasing anything.**
+  A `workflow_dispatch` job builds the tarball the way the release job does,
+  serves it and its `.sha256` from a local http server, runs the real updater
+  against a copy of the formula, and prints the diff. It has no token, read-only
+  permissions, and no way to push; that is asserted by tests rather than merely
+  intended. Previously that path only ever ran on a real tag push, and only
+  ever ran for real once.
+
+### Performance
+
+- **`validate` at real catalog scale is no longer quadratic.** The consecutive-
+  failure streak was rebuilt by rescanning the history for every model. It is
+  now folded in place, which is the difference between a run that finishes and
+  one that does not at 900+ models — roughly **150x faster at 942 models**
+  (measured: the 4x-model scaling ratio is ~4x, not ~16x, and is pinned by a
+  test that fails above 8x).
+
+- **The compiled bash 4.3 used by CI is cached**, so the job that tests the
+  documented minimum shell no longer spends 3m20s rebuilding it on every run
+  (27s to build, 0s to restore; the sha256 pin and the "is it really 4.3"
+  assertion are both unchanged).
+
+### Changed
+
+- **macOS is a supported test target, on a real bash 4.3.** macOS ships bash 3.2
+  and the codebase needs 4.3. The unit and integration legs now run on both
+  platforms, and a separate leg runs the entire unit suite under a compiled
+  bash 4.3.30 — the minimum the README advertises, which until now was asserted
+  and never tested. Five array expansions aborted on 4.3 (expanding a
+  declared-but-empty array is an error there before 4.4); they are fixed, and
+  the suite is 314/314 on 3.2, 5.x and 4.3.30.
+
+- **CI now checks the release tarball and the installed copy.** Nothing had
+  ever looked inside the artifact, and the unit suite runs from the working
+  tree where every file is present by definition — so a package missing
+  `lib/session_restore.py` would have shipped a broken restore with CI green.
+  A new job builds the tarball the way the release job does, installs it in the
+  Homebrew layout, and runs version, doctor, a real restore and a
+  multi-statement-bypass rejection against the installed binary.
+
+- **The launchd bootstrap is now tested by mocking, on both platforms.**
+
+### Notes for users
+
+- No configuration file needs changing. The three reserved keys above keep
+  validating; leaving them in place now logs a warning naming them.
+- No database migration. Every change is to what ocprobe accepts and how it
+  reports, not to the shape of your data.
+- If you restore a session dump written by an older ocprobe, it still restores:
+  the round-trip test covers the escaping both current and older sqlite builds
+  produce for values containing newlines.
+
 ## [3.1.2] - 2026-09-26
 
 ### Fixed (found by a full-catalog `validate` run against 942 models)
