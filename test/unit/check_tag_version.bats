@@ -229,14 +229,132 @@ with_tag_and_root() { # $1 = tag, $2 = a tree with a different VERSION
     assert_output "1"
 }
 
-# ---- a dry run of the real command, both ways -----------------------------
-# The demonstration the task asks for, executed rather than asserted about.
-
-@test "dry run: the real tag passes" {
-    with_tag "v$CURRENT"
-    assert_success
-    echo "    RELEASE_TAG=v$CURRENT -> rc=0, version=$output"
-}
+  # ---- the stdout contract ---------------------------------------------------
+  # This is the whole reason the script was changed. The build job does
+  #     VERSION="$(bash scripts/ci/check-tag-version.sh)"
+  #     echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+  # and the script used to print its confirmation AND the version, both to
+  # stdout. $() captured two lines, GITHUB_ENV got a multi-line value, and the
+  # runner refused it:
+  #     ##[error]Unable to process file command 'env' successfully.
+  #     ##[error]Invalid format '3.1.3'
+  # That killed the v3.1.3 tag run (36679268678) at Build -> "Check the tag
+  # against VERSION", with no release produced.
+  #
+  # So the contract is now: on success, stdout is EXACTLY the version and
+  # nothing else. The tests below capture stdout with stderr discarded, which
+  # is the only way to state that precisely -- bats' `run` merges the two.
+  
+  @test "STDOUT CONTRACT: stdout is exactly the version and nothing else" {
+      # stderr is discarded, so any confirmation text written to stdout fails.
+      local out rc=0
+      out="$(env -u GITHUB_REF_NAME RELEASE_TAG="v$CURRENT" REPO_ROOT="$ROOT" \
+          bash "$SCRIPT" 2>/dev/null)" || rc=$?
+      [ "$rc" -eq 0 ] || {
+          echo "expected success, got rc=$rc" >&2
+          false
+      }
+      # Byte-exact: one line, no leading whitespace, no confirmation text.
+      [ "$out" = "$CURRENT" ] || {
+          printf 'stdout was NOT the bare version.\n  expected exactly: [%s]\n  got:             [%s]\n' \
+              "$CURRENT" "$out" >&2
+          false
+      }
+  }
+  
+  @test "STDOUT CONTRACT: stdout is a single line, with nothing after it" {
+      # Guards the exact shape that broke the runner: a multi-line value.
+      local out
+      out="$(env -u GITHUB_REF_NAME RELEASE_TAG="v$CURRENT" REPO_ROOT="$ROOT" \
+          bash "$SCRIPT" 2>/dev/null)"
+      local lines
+      lines="$(printf '%s' "$out" | grep -c '' || true)"
+      [ "$lines" -eq 1 ] || {
+          printf 'stdout should be one line, got %d:\n%s\n' "$lines" "$out" >&2
+          false
+      }
+  }
+  
+  @test "STDOUT CONTRACT: stdout survives being written to GITHUB_ENV" {
+      # The end-to-end version of the contract, using the real file format. A
+      # multi-line value is exactly what the runner rejected, so reproduce that
+      # rather than reasoning about it.
+      local envfile="$BATS_TEST_TMPDIR/github_env"
+      : >"$envfile"
+      local version rc=0
+      version="$(env -u GITHUB_REF_NAME RELEASE_TAG="v$CURRENT" REPO_ROOT="$ROOT" \
+          bash "$SCRIPT" 2>/dev/null)" || rc=$?
+      [ "$rc" -eq 0 ]
+      printf 'VERSION=%s\n' "$version" >>"$envfile"
+      # A well-formed GITHUB_ENV entry is NAME=VALUE on one line.
+      [ "$(wc -l <"$envfile" | tr -d ' ')" -eq 1 ] || {
+          echo "GITHUB_ENV would have received a multi-line value:" >&2
+          cat "$envfile" >&2
+          false
+      }
+      grep -qx "VERSION=$CURRENT" "$envfile" || {
+          echo "GITHUB_ENV entry is not 'VERSION=$CURRENT':" >&2
+          cat "$envfile" >&2
+          false
+      }
+  }
+  
+  @test "the confirmation still reaches a human, on stderr" {
+      # Redirecting stdout to stderr must not have silenced the check: a build
+      # log that says nothing about what it validated is worse than a bad one.
+      local out rc=0
+      out="$(env -u GITHUB_REF_NAME RELEASE_TAG="v$CURRENT" REPO_ROOT="$ROOT" \
+          bash "$SCRIPT" 2>&1 1>/dev/null)" || rc=$?
+      [ "$rc" -eq 0 ] || {
+          echo "expected success, got rc=$rc" >&2
+          false
+      }
+      grep -q "matches VERSION" <<<"$out" || {
+          echo "the confirmation is no longer printed anywhere:" >&2
+          printf '%s\n' "$out" >&2
+          false
+      }
+  }
+  
+  @test "--quiet is accepted and changes nothing" {
+      # Four call sites in this file still pass it. It is now redundant, not
+      # removed, so a caller that still passes it keeps working; this asserts
+      # it is genuinely a no-op rather than something that silences output.
+      local without with_flag
+      without="$(env -u GITHUB_REF_NAME RELEASE_TAG="v$CURRENT" REPO_ROOT="$ROOT" bash "$SCRIPT" 2>/dev/null)"
+      with_flag="$(env -u GITHUB_REF_NAME RELEASE_TAG="v$CURRENT" REPO_ROOT="$ROOT" bash "$SCRIPT" --quiet 2>/dev/null)"
+      [ "$without" = "$with_flag" ] || {
+          printf -- '--quiet changed stdout:\n  without: [%s]\n  with:    [%s]\n' \
+              "$without" "$with_flag" >&2
+          false
+      }
+      [ "$with_flag" = "$CURRENT" ]
+  }
+  
+  @test "a refusal still writes nothing to stdout" {
+      # On failure stdout must be empty too, so a caller that ignores the exit
+      # status gets an empty VERSION rather than a diagnostic sentence.
+      local out rc=0
+      out="$(env -u GITHUB_REF_NAME RELEASE_TAG="v99.99.99" REPO_ROOT="$ROOT" \
+          bash "$SCRIPT" 2>/dev/null)" || rc=$?
+      [ "$rc" -ne 0 ] || {
+          echo "a mismatched tag should have been refused" >&2
+          false
+      }
+      [ -z "$out" ] || {
+          printf 'a refusal wrote to stdout: [%s]\n' "$out" >&2
+          false
+      }
+  }
+  
+  # ---- a dry run of the real command, both ways -----------------------------
+  # The demonstration the task asks for, executed rather than asserted about.
+  
+  @test "dry run: the real tag passes" {
+      with_tag "v$CURRENT"
+      assert_success
+      echo "    RELEASE_TAG=v$CURRENT -> rc=0, version=$output"
+  }
 
 @test "dry run: a mismatched tag fails" {
     with_tag "v99.99.99"

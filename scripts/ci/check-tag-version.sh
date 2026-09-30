@@ -16,7 +16,31 @@
 # VERSION in the tree is that version. If they disagree, the tag is wrong (or
 # VERSION was not bumped), and the correct action is to refuse.
 #
+# ---- STDOUT CONTRACT -------------------------------------------------------
+# On success, stdout is EXACTLY the version and one trailing newline. Nothing
+# else, ever. On failure, stdout is empty.
+#
+# This is not a style preference. The build job consumes this script as a value:
+#
+#     VERSION="$(bash scripts/ci/check-tag-version.sh)"
+#     echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+#
+# and this script used to print its confirmation to stdout as well, so $()
+# captured two lines, $GITHUB_ENV received a multi-line value, and the runner
+# rejected it:
+#
+#     ##[error]Unable to process file command 'env' successfully.
+#     ##[error]Invalid format '3.1.3'
+#
+# That killed the v3.1.3 tag run (36679268678) at Build -> "Check the tag
+# against VERSION", with no release produced. All human-readable output
+# therefore goes to stderr, so a caller that captures stdout cannot pick up a
+# diagnostic by accident. A script used as a value provider must never write
+# anything but the value to stdout.
+#
 # Usage: check-tag-version.sh [--quiet]
+#   --quiet suppresses the confirmation on stderr. It does not affect stdout,
+#   which is the version either way.
 #   Reads the tag from $RELEASE_TAG, falling back to $GITHUB_REF_NAME.
 #   Exits 0 if the tag is well-formed and matches VERSION, 1 otherwise, with the
 #   reason on stderr.
@@ -27,7 +51,9 @@ TAG="${RELEASE_TAG:-${GITHUB_REF_NAME:-}}"
 QUIET=0
 [ "${1:-}" = "--quiet" ] && QUIET=1
 
-say() { [ "$QUIET" -eq 1 ] || printf '  %s\n' "$*"; }
+# Every message goes to stderr. Not because stderr is where messages belong in
+# general, but because stdout belongs to the caller here.
+say() { [ "$QUIET" -eq 1 ] || printf '  %s\n' "$*" >&2; }
 die() {
 	printf 'check-tag-version: %s\n' "$*" >&2
 	exit 1
@@ -61,4 +87,8 @@ if [ "$tag_version" != "$file_version" ]; then
 fi
 
 say "tag v${tag_version} matches VERSION ${file_version}"
+
+# The one and only thing this script writes to stdout. Nothing may be added
+# above this line that prints to stdout: see the STDOUT CONTRACT above, and
+# test/unit/check_tag_version.bats, which asserts it byte-exactly.
 printf '%s\n' "$tag_version"
