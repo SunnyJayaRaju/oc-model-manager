@@ -165,6 +165,78 @@ PY
     assert_success
 }
 
+@test "a step that calls source/.../script runs after the source checkout" {
+    # Ordering, not just presence. publish-release-to-tap.yml was first written
+    # with "Check out this repo's updater" placed AFTER "Update the formula" --
+    # reproducing the exact defect this branch exists to fix, in a brand new file,
+    # after having just diagnosed it. A presence check passes that; only an
+    # ordering check fails it.
+    run python3 - "$ROOT/.github/workflows" <<'PY'
+import pathlib, sys, yaml
+
+bad = []
+for wf in sorted(pathlib.Path(sys.argv[1]).glob("*.yml")):
+    d = yaml.safe_load(wf.read_text()) or {}
+    for jname, job in (d.get("jobs") or {}).items():
+        steps = job.get("steps") or []
+        # Index of each step that first creates a `source/` tree.
+        made = [
+            i
+            for i, s in enumerate(steps)
+            if str(s.get("uses", "")).startswith("actions/checkout")
+            and str((s.get("with") or {}).get("path", "")) == "source"
+        ]
+        if not made:
+            continue
+        first_src = min(made)
+        for i, s in enumerate(steps):
+            body = s.get("run") or ""
+            if "source/" in body and i < first_src:
+                bad.append(
+                    "%s:%s:%s (step %d uses source/ but the checkout is step %d)"
+                    % (wf.name, jname, s.get("name"), i, first_src)
+                )
+assert not bad, "source/ used before it is checked out:\n" + "\n".join(bad)
+PY
+    assert_success
+}
+
+@test "the manual catch-up workflow is dispatch-only and needs a tag input" {
+    # It pushes with a token. It must not be reachable by a tag push, a pull
+    # request, or a schedule -- only by a human naming a tag.
+    run python3 - "$ROOT/.github/workflows/publish-release-to-tap.yml" <<'PY'
+import sys, yaml
+
+d = yaml.safe_load(open(sys.argv[1]))
+on = d[True] if True in d else d["on"]
+assert set(on) == {"workflow_dispatch"}, on
+inp = on["workflow_dispatch"]["inputs"]
+assert inp["tag"]["required"] is True, inp
+assert inp["tag"]["type"] == "string", inp
+assert d["permissions"] == {"contents": "read"}, d["permissions"]
+for jname, job in d["jobs"].items():
+    assert job.get("permissions") == {"contents": "read"}, (jname, job.get("permissions"))
+PY
+    assert_success
+}
+
+@test "the manual catch-up workflow refuses a non-final release" {
+    # A draft's assets are not reliably downloadable, and a prerelease must never
+    # be what a tap serves. The guard is a step, so the test is that the step
+    # exists and checks both flags -- a comment would not do.
+    run python3 - "$ROOT/.github/workflows/publish-release-to-tap.yml" <<'PY'
+import sys, yaml
+
+d = yaml.safe_load(open(sys.argv[1]))
+job = next(iter(d["jobs"].values()))
+bodies = "\n".join(s.get("run") or "" for s in job["steps"])
+assert "draft" in bodies and "prerelease" in bodies, "no draft/prerelease guard"
+assert "no published release for" in bodies, "no missing-release guard"
+assert "^v[0-9]+\\.[0-9]+\\.[0-9]+$" in bodies, "tag input is not validated"
+PY
+    assert_success
+}
+
 @test "every job that calls gh passes a token and declares permissions" {
     # A gh call with no token is an anonymous call, and the anonymous rate limit
     # is what turned a passing release into three false absences.

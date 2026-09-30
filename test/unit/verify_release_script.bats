@@ -381,19 +381,28 @@ wfs = sorted(pathlib.Path(sys.argv[1]).glob("*.yml"))
 found, bad = [], []
 for wf in wfs:
     d = yaml.safe_load(wf.read_text()) or {}
+    on = d[True] if True in d else d.get("on")
+    triggers = set(on) if isinstance(on, dict) else {on}
+    # A dispatch-only workflow carries its gate in `on:`, not in the job's `if:`.
+    dispatch_only = triggers == {"workflow_dispatch"}
     for jname, job in (d.get("jobs") or {}).items():
         steps = job.get("steps") or []
         if not any("verify-release.sh" in (s.get("run") or "") for s in steps):
             continue
         found.append("%s:%s" % (wf.name, jname))
         cond = str(job.get("if") or "")
-        if "refs/tags/v" not in cond and "workflow_dispatch" not in cond:
-            bad.append("%s:%s gated on %r" % (wf.name, jname, cond))
+        if "refs/tags/v" in cond or dispatch_only:
+            continue
+        bad.append(
+            "%s:%s gated on %r, triggers %r" % (wf.name, jname, cond, sorted(triggers))
+        )
 assert found, "no CI job calls verify-release.sh at all"
 assert not bad, "ungated live-script invocation:\n" + "\n".join(bad)
 print("\n".join(found))
 PY
     assert_success
-    # The tag-gated job must still be there, not quietly deleted.
+    # Both the tag-gated job and the manual catch-up must be present, so neither
+    # can be quietly deleted.
     assert_output --partial "ci.yml:verify-release"
+    assert_output --partial "publish-release-to-tap.yml:publish"
 }

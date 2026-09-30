@@ -1,0 +1,180 @@
+name: Publish an existing release to the tap
+
+# ============================================================================
+# The catch-up path for a tag whose release is already published.
+#
+# ci.yml still owns the normal release: tag push -> Build -> Release -> Update
+# Homebrew Formula -> Verify Release. That path is correct as of 6077e43 and is
+# not changed by this file.
+#
+# This exists for exactly one situation: a release that is published, verified
+# and correct, but whose tap update did not land. v3.1.3 is that case. Its
+# "Update Homebrew Formula" job was green while having done nothing -- it ran
+# `bash scripts/update-tap-formula.sh | tee log` in a workspace holding only the
+# tap, so the script was not on disk, and the pipe reported tee's success rather
+# than the script's failure. The tap stayed on 3.1.2 while the workflow said
+# everything passed. The release itself was always fine: sha256 d7454c52...
+# 3dc24a, 36 members, 0 AppleDouble, ships lib/session_restore.py.
+#
+# The fix for that was to main's ci.yml, but the tag was already pushed, and
+# re-pushing a published tag to pick up a workflow change is not something worth
+# doing to a correct public release. So the remaining step -- update the tap --
+# is run here instead, by hand, naming the tag.
+#
+# This workflow does NOT create tags, does NOT create releases, and does NOT
+# move either. It only reads a release that already exists and updates the tap
+# formula to match.
+#
+# It is safe to re-run: scripts/update-tap-formula.sh reports changed=no when the
+# formula already points at the tag, and the commit step is then skipped rather
+# than making an empty commit.
+# ============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The published release to publish to the tap, e.g. v3.1.3"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish release to tap
+    runs-on: ubuntu-latest
+    # `contents: read` at workflow level. The job needs no more of THIS repo:
+    # everything it writes goes to the tap, with HOMEBREW_TAP_TOKEN, via a
+    # separate checkout. Granting a write scope here to satisfy a read would
+    # widen the blast radius of a workflow that can be triggered by hand.
+    permissions:
+      contents: read
+    env:
+      # Passed through env:, never interpolated into a run: body. A secret
+      # spliced into a shell script is executable.
+      TAG: ${{ inputs.tag }}
+      REPO_SLUG: ${{ github.repository }}
+      TAP_REPO: ${{ github.repository_owner }}/homebrew-ocprobe
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Validate the input
+        run: |
+          set -euo pipefail
+          # A free-text dispatch input is user input, and this workflow pushes
+          # with a token. Constrained to v<major>.<minor>.<patch> here, before
+          # anything is fetched, so no crafted string reaches a URL or a sed.
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag '$TAG' is not v<major>.<minor>.<patch>"
+            exit 1
+          fi
+          if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+            echo "::error::HOMEBREW_TAP_TOKEN is not set; cannot push the tap"
+            exit 1
+          fi
+          echo "tag '$TAG' looks well formed"
+
+      - name: Refuse to run unless the release is published and not a draft
+        run: |
+          set -euo pipefail
+          # A draft or prerelease must never reach the tap. A draft's assets are
+          # not reliably downloadable, so the failure would surface later as a
+          # confusing checksum error rather than as "this release is not ready".
+          gh api "repos/${REPO_SLUG}/releases/tags/${TAG}" >"$RUNNER_TEMP/release.json" ||
+            {
+              echo "::error::no published release for $TAG. Nothing to do."
+              exit 1
+            }
+          draft="$(gh api "repos/${REPO_SLUG}/releases/tags/${TAG}" --jq .draft)"
+          prerelease="$(gh api "repos/${REPO_SLUG}/releases/tags/${TAG}" --jq .prerelease)"
+          if [ "$draft" != "false" ] || [ "$prerelease" != "false" ]; then
+            echo "::error::$TAG is draft=$draft prerelease=$prerelease; refusing to publish a non-final release"
+            exit 1
+          fi
+          echo "$TAG is a published, non-draft, non-prerelease release"
+
+      - name: Recompute the tarball checksum from the published assets
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          BASE="https://github.com/${REPO_SLUG}/releases/download/${TAG}"
+          # Defense in depth. The formula's sha256 is only as trustworthy as the
+          # .sha256 next to it, so the tarball is fetched and hashed here and
+          # compared, rather than the published hash being copied. This is the
+          # same comparison scripts/update-tap-formula.sh makes before it edits
+          # anything; doing it first means a bad release is reported as a bad
+          # release and not as a bad formula.
+          curl --fail --location --silent --show-error -o "$RUNNER_TEMP/t.tar.gz" \
+            "$BASE/ocprobe-${VERSION}.tar.gz"
+          curl --fail --location --silent --show-error -o "$RUNNER_TEMP/t.sha256" \
+            "$BASE/ocprobe-${VERSION}.tar.gz.sha256"
+          computed="$(sha256sum "$RUNNER_TEMP/t.tar.gz" | cut -d' ' -f1)"
+          published="$(awk 'NR==1 {print $1}' "$RUNNER_TEMP/t.sha256" | tr 'A-F' 'a-f')"
+          if ! printf '%s' "$published" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "::error::published .sha256 is not 64 hex chars: '$published' (a 404 body, probably)"
+            exit 1
+          fi
+          if [ "$computed" != "$published" ]; then
+            echo "::error::checksum mismatch: published $published, downloaded $computed"
+            exit 1
+          fi
+          echo "recomputed sha256 $computed matches the published .sha256"
+          echo "COMPUTED_SHA=$computed" >> "$GITHUB_ENV"
+
+      - name: Check out the tap
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.TAP_REPO }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      # The updater script lives in THIS repo, so it has to be on disk before the
+      # step that calls it. It goes to source/ so the workspace root stays the
+      # tap, which is the tree that gets committed. Order matters: this checkout
+      # must precede "Update the formula", or that step runs a path that does not
+      # exist -- the original defect, reproduced.
+      - name: Check out this repo's updater
+        uses: actions/checkout@v7
+        with:
+          path: source
+
+      - name: Update the formula
+        id: formula
+        run: |
+          set -euo pipefail
+          bash source/scripts/update-tap-formula.sh | tee "$RUNNER_TEMP/formula.log"
+          # `bash ... | tee` reports tee's status unless pipefail is set. tee
+          # succeeds on a missing script, so without this a failure here would
+          # be reported as success and the tap left on the old version.
+          # test/unit/workflow_step_exit_status.bats pins both shapes.
+          grep -q '^changed=yes$' "$RUNNER_TEMP/formula.log" && echo "changed=true" >> "$GITHUB_OUTPUT" || echo "changed=false" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push
+        if: steps.formula.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add Formula/ocprobe.rb
+          # `source/` is a separate repository, not a subdirectory of this one,
+          # so `git add -A` would not sweep it up. `git add Formula/...` states
+          # the intent anyway: one file, one commit.
+          git commit -m "Update ocprobe to ${TAG}"
+          git push
+          echo "pushed ${TAG} to the tap"
+
+      - name: Confirm the tap is idle or report what changed
+        if: steps.formula.outputs.changed != 'true'
+        run: |
+          echo "the formula already pointed at ${TAG}; nothing to do (idempotent re-run)"
+
+      - name: Verify the published release matches the live tap
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The full verifier, not a spot check. It re-downloads the tarball,
+          # recomputes the checksum, reads the live formula from raw.githubusercontent
+          # and compares. If this passes, the thing a user installs is the thing
+          # that was released.
+          bash source/scripts/ci/verify-release.sh "${TAG#v}"
