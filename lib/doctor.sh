@@ -128,23 +128,49 @@ cmd_doctor() {
 	# Run in a subshell that always succeeds
 	(
 		# VERSION vs installed binary
+		#
+		# $OCPROBE_VERSION_FILE, never a bare `cat VERSION`. The binary resolves
+		# that variable to the file that actually belongs to the install --
+		# <root>/VERSION in a dev checkout, <root>/share/ocprobe/VERSION once
+		# installed -- and this used to ignore it and read a path relative to the
+		# CURRENT DIRECTORY instead. Two consequences, both seen on a real
+		# Homebrew install of v3.1.3:
+		#
+		#   - run from anywhere without a VERSION file: "VERSION file: unknown",
+		#     followed by a spurious
+		#       WARN  VERSION mismatch: file= binary=3.1.3
+		#     on every single `doctor` run, because the empty file value never
+		#     equals the binary's. Drift detection was reporting drift every time.
+		#   - run from a directory that happens to contain an unrelated file
+		#     named VERSION: that file's contents are compared against the
+		#     binary, so the check reports a mismatch that is not about ocprobe,
+		#     or -- if it happens to match -- silently passes a genuinely drifted
+		#     install.
+		#
+		# The variable is read ONCE here, so the value printed, the value compared
+		# and the value used for the local-tag lookup cannot disagree with each
+		# other. They were three separate `cat`s, and they already did.
 		local version_file_version
-		version_file_version="$(cat VERSION 2>/dev/null || echo 'unknown')"
+		version_file_version="$(cat "$OCPROBE_VERSION_FILE" 2>/dev/null || echo 'unknown')"
 		echo "  VERSION file: $version_file_version"
 		# Installed binary version
 		if command -v ocprobe >/dev/null 2>&1; then
 			local bin_version
 			bin_version=$(ocprobe version 2>/dev/null | awk '{print $NF}')
 			echo "  Installed ocprobe: $bin_version"
-			if [[ "$bin_version" != "$(cat VERSION 2>/dev/null)" ]]; then
-				log_warn "VERSION mismatch: file=$(cat VERSION 2>/dev/null) binary=$bin_version"
+			# Compared against the same value printed above, and only when that
+			# value is real. Comparing "unknown" against a real version was the
+			# spurious WARN above; skipping the comparison when the file genuinely
+			# is absent says so instead of inventing a finding.
+			if [[ "$version_file_version" != 'unknown' && "$bin_version" != "$version_file_version" ]]; then
+				log_warn "VERSION mismatch: file=$version_file_version binary=$bin_version"
 			fi
 		else
 			echo "  Installed ocprobe: NOT IN PATH"
 		fi
 		# Local tag check - skip in shallow clones or non-git dirs
 		if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
-			ver="$(cat VERSION 2>/dev/null || echo 'unknown')"
+			ver="$version_file_version"
 			if (git tag -l "v${ver}" 2>/dev/null || true) | grep -qx "v${ver}"; then
 				echo "  Local tag v${ver}: FOUND"
 			else
