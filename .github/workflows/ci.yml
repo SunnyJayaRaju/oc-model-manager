@@ -45,6 +45,14 @@ jobs:
       - name: Check workflow built-in env var names
         run: bash scripts/ci/check-workflow-env.sh
 
+      # A `run:` body that reads a secret-backed variable nothing in scope
+      # provides does not fail the workflow -- the shell expands it to the empty
+      # string, and the failure surfaces later, in another step, often on a code
+      # path ordinary CI never runs. That cost three rounds: GITHUBUB_REPOSITORY,
+      # a missing updater script, and HOMEBREW_TAP_TOKEN.
+      - name: Check workflow secret env passthrough
+        run: bash scripts/ci/check-workflow-secrets.sh
+
   secret-scan:
     name: Secret Scan (gitleaks)
     runs-on: ubuntu-latest

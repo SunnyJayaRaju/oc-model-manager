@@ -54,6 +54,14 @@ jobs:
     env:
       # Passed through env:, never interpolated into a run: body. A secret
       # spliced into a shell script is executable.
+      #
+      # HOMEBREW_TAP_TOKEN was missing here when this file first ran. It was used
+      # as a secret on the two actions/checkout steps and read as
+      # ${HOMEBREW_TAP_TOKEN:-} by the first step, but never provided by any
+      # env:, so the shell saw the empty string and the guard refused the run
+      # (36711062560). scripts/ci/check-workflow-secrets.sh now fails the Lint job
+      # for exactly that omission.
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
       TAG: ${{ inputs.tag }}
       REPO_SLUG: ${{ github.repository }}
       TAP_REPO: ${{ github.repository_owner }}/homebrew-ocprobe
