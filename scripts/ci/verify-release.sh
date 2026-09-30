@@ -102,34 +102,115 @@ for tool in "$GH" "$CURL" python3; do
 	command -v "$tool" >/dev/null 2>&1 || die_usage "required tool not found: $tool"
 done
 
+# --- the one way this script talks to the API ------------------------------
+# Every call goes through api_get. The previous version wrapped each call in
+# `2>/dev/null || true` and read the empty result as "does not exist", which
+# silently conflated two unrelated outcomes:
+#
+#   * the tag or release genuinely is absent   -- a real FAIL to report
+#   * the CALL ITSELF failed                    -- no auth, rate limit, network
+#
+# That conflation is why the first real run of this job (tag run 36687980784)
+# reported "no tag, no release, wrong formula" when all three were present and
+# correct: the Verify Release job passed no GH_TOKEN, so every call hit the
+# anonymous rate limit, and every error became an empty string. A verifier that
+# reports absence when it could not look is worse than no verifier, because it
+# is believed.
+#
+# api_get sets:
+#   API_STATUS  ok | absent (a genuine HTTP 404) | error (anything else)
+#   API_OUT     the response body; empty unless ok
+#   API_ERR     what gh said, verbatim
+API_STATUS=""
+API_OUT=""
+API_ERR=""
+api_get() { # $1 = endpoint, $2 = optional --jq expression
+	local endpoint="$1" expr="${2:-}" rc=0
+	API_OUT=""
+	API_ERR=""
+	# A separate `local` is not used for the assignment on purpose: `local x=$(...)`
+	# swallows the substitution's exit status, which is the one thing needed here.
+	if [ -n "$expr" ]; then
+		API_OUT="$("$GH" api "$endpoint" --jq "$expr" 2>"$WORK/err")" || rc=$?
+	else
+		API_OUT="$("$GH" api "$endpoint" 2>"$WORK/err")" || rc=$?
+	fi
+	if [ "$rc" -eq 0 ]; then
+		API_STATUS=ok
+		return 0
+	fi
+	API_ERR="$(cat "$WORK/err" 2>/dev/null || true)"
+	case "$API_ERR" in
+	*"HTTP 404"*) API_STATUS=absent ;;
+	*) API_STATUS=error ;;
+	esac
+	return 0
+}
+
+# Stop, loudly, on anything that is not a clean 404. Continuing past an auth
+# failure or a rate limit produces confident nonsense downstream, which is
+# precisely what this script exists to prevent.
+api_die() { # $1 = endpoint, $2 = what was being checked
+	printf 'verify-release: FAILED TO CHECK %s\n' "$2" >&2
+	printf 'verify-release: endpoint %s\n' "$1" >&2
+	[ -n "$API_ERR" ] && printf 'verify-release: gh reported: %s\n' "$API_ERR" >&2
+	cat >&2 <<-EOF
+		verify-release: this is an API error, not an absent object. The result is
+		unknown, so verification stops here rather than reporting anything.
+		If this is a rate limit, re-run the job. If it is an auth failure, this job
+		is missing GH_TOKEN.
+	EOF
+	exit 1
+}
+
+# api_get for a lookup where absence is itself the problem, because the caller
+# has already established that the parent object exists. Returns non-zero when
+# the value could not be obtained, so the caller can skip the rest.
+api_value() { # $1 = endpoint, $2 = jq, $3 = what
+	api_get "$1" "$2"
+	[ "$API_STATUS" = error ] && api_die "$1" "$3"
+	if [ "$API_STATUS" != ok ]; then
+		printf '  FAIL %s is absent (HTTP 404) at %s\n' "$3" "$1" >&2
+		bad "$3 is absent (HTTP 404)"
+		return 1
+	fi
+	return 0
+}
+
 # --- a. the tag exists, and its commit's VERSION is this version ------------
 step "a. tag $TAG exists and its target commit's VERSION reads $VERSION"
 
-tag_json="$("$GH" api "repos/$REPO_SLUG/git/refs/tags/$TAG" 2>/dev/null || true)"
-if [ -z "$tag_json" ]; then
-	bad "tag $TAG does not exist in $REPO_SLUG"
+api_get "repos/$REPO_SLUG/git/refs/tags/$TAG"
+[ "$API_STATUS" = error ] &&
+	api_die "repos/$REPO_SLUG/git/refs/tags/$TAG" "whether tag $TAG exists"
+if [ "$API_STATUS" = absent ]; then
+	bad "tag $TAG does not exist in $REPO_SLUG (HTTP 404)"
 else
 	ok "tag $TAG exists"
 	# An annotated tag's ref points at a tag object, whose `object.sha` is the tag
 	# object, not the commit. Peel it with type=commit so the VERSION read is
 	# against the commit the tag actually releases.
-	peeled="$("$GH" api "repos/$REPO_SLUG/git/refs/tags/$TAG" --jq '.object.type + " " + .object.sha' 2>/dev/null || true)"
-	type="${peeled%% *}"
-	sha="${peeled##* }"
-	note "  tag object type: $type  sha: $sha"
-	if [ "$type" = "tag" ]; then
-		sha="$("$GH" api "repos/$REPO_SLUG/git/tags/$sha" --jq '.object.sha' 2>/dev/null || true)"
-		note "  peeled to commit: $sha"
-	fi
-	[ -n "$sha" ] && ok "tag resolves to commit $sha" || bad "could not resolve $TAG to a commit"
+	if api_value "repos/$REPO_SLUG/git/refs/tags/$TAG" \
+		'.object.type + " " + .object.sha' "the tag ref for $TAG"; then
+		type="${API_OUT%% *}"
+		sha="${API_OUT##* }"
+		note "  tag object type: $type  sha: $sha"
+		if [ "$type" = "tag" ] &&
+			api_value "repos/$REPO_SLUG/git/tags/$sha" '.object.sha' "tag object $sha"; then
+			sha="$API_OUT"
+			note "  peeled to commit: $sha"
+		fi
+		ok "tag resolves to commit $sha"
 
-	if [ -n "$sha" ]; then
-		tag_version="$("$GH" api "repos/$REPO_SLUG/contents/VERSION?ref=$sha" --jq .content 2>/dev/null |
-			base64 -d 2>/dev/null | tr -d '[:space:]' || true)"
-		if [ "$tag_version" = "$VERSION" ]; then
-			ok "VERSION at $sha reads $tag_version"
-		else
-			bad "VERSION at $sha reads '${tag_version:-<empty>}', expected $VERSION"
+		if api_value "repos/$REPO_SLUG/contents/VERSION?ref=$sha" '.content' \
+			"VERSION at $sha"; then
+			tag_version="$(printf '%s' "$API_OUT" | base64 -d 2>/dev/null |
+				tr -d '[:space:]' || true)"
+			if [ "$tag_version" = "$VERSION" ]; then
+				ok "VERSION at $sha reads $tag_version"
+			else
+				bad "VERSION at $sha reads '${tag_version:-<empty>}', expected $VERSION"
+			fi
 		fi
 	fi
 fi
@@ -137,40 +218,83 @@ fi
 # --- b. the Release exists, with exactly the expected assets ----------------
 step "b. GitHub Release $TAG exists with the expected assets"
 
-rel_json="$("$GH" api "repos/$REPO_SLUG/releases/tags/$TAG" 2>/dev/null || true)"
+api_get "repos/$REPO_SLUG/releases/tags/$TAG"
+[ "$API_STATUS" = error ] &&
+	api_die "repos/$REPO_SLUG/releases/tags/$TAG" "whether Release $TAG exists"
 TARBALL_URL=""
 SHA_URL=""
-if [ -z "$rel_json" ]; then
-	bad "GitHub Release $TAG does not exist"
+if [ "$API_STATUS" = absent ]; then
+	bad "GitHub Release $TAG does not exist (HTTP 404)"
 else
 	ok "Release $TAG exists"
-	rel_url="$(printf '%s' "$rel_json" | "$GH" api --input - --jq .html_url 2>/dev/null ||
-		grep -o '"html_url": *"[^"]*"' <<<"$rel_json" | head -1 | cut -d'"' -f4 || true)"
-	note "  release URL: ${rel_url:-<unknown>}"
 
-	# Count tarball assets by exact name. Exactly one is required: two would mean
-	# the build produced something twice, and a `brew` formula pointing at a
-	# name that resolves ambiguously is not a release anyone can reason about.
-	tarball_count="$(printf '%s' "$rel_json" | grep -o '"name": *"ocprobe-[0-9.]*\.tar\.gz"' | sort -u | wc -l | tr -d ' ')"
-	all_tarballs="$(printf '%s' "$rel_json" | grep -o '"name": *"ocprobe-[0-9.]*\.tar\.gz"' | wc -l | tr -d ' ')"
+	# Everything below is read out of the response already fetched, with python's
+	# json module. It is NOT `gh api --input - --jq ...`: that form is request-body
+	# input for a write endpoint, not a filter over a fetched document, and real
+	# gh rejects it outright --
+	#
+	#     $ echo '{}' | gh api --input - --jq .x
+	#     accepts 1 arg(s), received 0
+	#
+	# The previous version used it anyway and a mock implemented it as a working
+	# filter, so 19 unit tests passed against code that could never run. The
+	# checks then degraded to a `grep -o '"name": ...'` fallback, which recovered
+	# the release URL and nothing else, leaving the asset URLs permanently
+	# "<not found>" on a perfectly good release.
+	#
+	# Parsed with json rather than grepped because a substring match over a JSON
+	# blob is exactly the kind of check that reports what it expects.
+	# The five values are read on separate lines, never eval'd: this data comes
+	# off the network, and an asset name is not something to hand to the shell.
+	rel_summary="$(printf '%s' "$API_OUT" | python3 -c '
+import json, sys
+
+r = json.load(sys.stdin)
+assets = r.get("assets") or []
+names = [a.get("name") or "" for a in assets]
+tarballs = [n for n in names if n.startswith("ocprobe-") and n.endswith(".tar.gz")]
+
+
+def url_for(want):
+    for a in assets:
+        if (a.get("name") or "") == want:
+            return a.get("browser_download_url") or ""
+    return ""
+
+
+print(r.get("html_url") or "")
+print(len(tarballs))
+print(len(set(tarballs)))
+print(url_for("ocprobe-%s.tar.gz" % sys.argv[1]))
+print(url_for("ocprobe-%s.tar.gz.sha256" % sys.argv[1]))
+' "$VERSION")"
+	{
+		read -r rel_url || true
+		read -r all_tarballs || true
+		read -r tarball_count || true
+		read -r TARBALL_URL || true
+		read -r SHA_URL || true
+	} <<<"$rel_summary"
+	rel_url="${rel_url:-}"
+	all_tarballs="${all_tarballs:-0}"
+	tarball_count="${tarball_count:-0}"
+	note "  release URL: ${rel_url:-<none reported>}"
+
+	# Exactly one tarball asset: two would mean the build produced something
+	# twice, and a `brew` formula pointing at a name that resolves ambiguously is
+	# not a release anyone can reason about.
 	if [ "$tarball_count" -eq 1 ] && [ "$all_tarballs" -eq 1 ]; then
 		ok "exactly one tarball asset: ocprobe-$VERSION.tar.gz"
 	else
 		bad "expected exactly 1 tarball asset ocprobe-$VERSION.tar.gz, found $all_tarballs total / $tarball_count distinct"
 	fi
 
-	if printf '%s' "$rel_json" | grep -q '"name": *"ocprobe-[0-9.]*\.tar\.gz\.sha256"'; then
+	if [ -n "$SHA_URL" ]; then
 		ok "a .sha256 asset is present"
 	else
 		bad "no ocprobe-$VERSION.tar.gz.sha256 asset"
 	fi
 
-	# Asset URLs. Use the API's own browser_download_url values rather than
-	# reconstructing release/download URLs.
-	TARBALL_URL="$(printf '%s' "$rel_json" |
-		"$GH" api --input - --jq '.assets[] | select(.name=="ocprobe-'"$VERSION"'.tar.gz") | .browser_download_url' 2>/dev/null | head -1 || true)"
-	SHA_URL="$(printf '%s' "$rel_json" |
-		"$GH" api --input - --jq '.assets[] | select(.name=="ocprobe-'"$VERSION"'.tar.gz.sha256") | .browser_download_url' 2>/dev/null | head -1 || true)"
 	note "  tarball asset URL: ${TARBALL_URL:-<not found>}"
 	note "  sha256 asset URL:  ${SHA_URL:-<not found>}"
 fi

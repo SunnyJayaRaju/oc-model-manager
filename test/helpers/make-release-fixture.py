@@ -13,11 +13,14 @@ Fixture knobs, via the environment:
   FX_RELEASE_MISSING    "1" -> the release request 404s
   FX_TARBALL_COUNT      number of tarball assets in the release (default 1)
   FX_NO_SHA_ASSET       "1" -> omit the .sha256 asset
+  FX_EMPTY_ASSET_URL    "1" -> the .sha256 asset exists but has no download URL
   FX_PUBLISHED_SHA      override the published hash (default: the real one)
   FX_APPLEDOUBLE        "1" -> add a ._* member to the tarball
   FX_NO_RESTORE         "1" -> omit lib/session_restore.py
   FX_FORMULA_URL        url line for the live formula
   FX_FORMULA_SHA        sha256 line for the live formula
+  FX_API_ERROR          HTTP status for a non-404 API failure (403/401/500/...)
+  FX_API_ERROR_ON       endpoint substring to fail on; all endpoints if unset
 """
 
 import hashlib
@@ -72,6 +75,10 @@ if os.environ.get("FX_NO_SHA_ASSET") != "1":
             % V,
         }
     )
+if os.environ.get("FX_EMPTY_ASSET_URL") == "1":
+    for a in assets:
+        if a["name"].endswith(".sha256"):
+            a["browser_download_url"] = ""
 if tarball_count > 1:
     assets.append(
         {
@@ -111,6 +118,8 @@ json.dump(
         "real_sha": real_sha,
         "published_sha": published,
         "tarball_path": tb,
+        "api_error": os.environ.get("FX_API_ERROR") or None,
+        "api_error_on": os.environ.get("FX_API_ERROR_ON") or None,
         "formula": (
             'class Ocprobe < Formula\n  desc "x"\n  url "%s"\n  sha256 "%s"\nend\n'
         )

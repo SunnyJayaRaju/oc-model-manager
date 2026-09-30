@@ -130,6 +130,143 @@ run_verify() {
     assert_output --partial "$(printf '0%.0s' {1..39})2"
 }
 
+# ---- D3: asset URLs must be read out of the response, not grepped ---------
+#
+# The script used `gh api --input - --jq ...`, which is request-body input for a
+# write endpoint, not a filter over a fetched document. Real gh rejects it. The
+# first real run of this job therefore read "<not found>" for both asset URLs on
+# a release that had both, and checks (c) and (d) could never pass.
+
+@test "both asset URLs are found on the release, so the tarball is actually checked" {
+    run_verify 3.1.3
+
+    assert_success
+    # The URLs must be real, not the placeholder the broken code produced.
+    assert_output --partial "tarball asset URL: https://example.invalid/ocprobe-3.1.3.tar.gz"
+    assert_output --partial "sha256 asset URL:  https://example.invalid/ocprobe-3.1.3.tar.gz.sha256"
+    # And they must actually have been followed, not merely printed.
+    refute_output --partial "asset URLs unavailable"
+    refute_output --partial "it was not downloaded"
+    assert_output --partial "downloaded tarball"
+    assert_output --partial "computed sha256"
+    assert_output --partial "published sha256 matches the tarball exactly"
+    # (d) only runs if (c) downloaded something, so these prove the chain.
+    assert_output --partial "zero AppleDouble"
+    assert_output --partial "contains lib/session_restore.py"
+}
+
+@test "an asset whose browser_download_url is empty is not silently accepted" {
+    # A release entry can carry a name and no URL. Counting the name would pass
+    # the "a .sha256 asset is present" check and then leave the URL empty, which
+    # is how a release ends up published but unverifiable.
+    FX_EMPTY_ASSET_URL=1 run_verify 3.1.3
+
+    assert_failure
+    assert_output --partial "cannot check checksums"
+    refute_output --partial "a .sha256 asset is present"
+}
+
+@test "the script never uses 'gh api --input -', which real gh refuses" {
+    # A static guard, because the mock now rejects that call shape the way gh
+    # does and a test would otherwise only catch a reintroduction indirectly.
+    # Comment lines are excluded: the script deliberately *names* the broken form
+    # in a comment explaining why it is not used, and a naive grep would match its
+    # own documentation.
+    run python3 - "$SCRIPT" <<'PY'
+import sys
+
+code = [
+    ln
+    for ln in open(sys.argv[1]).read().splitlines()
+    if ln.strip() and not ln.lstrip().startswith("#")
+]
+body = "\n".join(code)
+bad = [ln for ln in code if "--input" in ln and "api" in ln]
+assert not bad, "uses a call shape real gh rejects:\n" + "\n".join(bad)
+assert "gh api --input" not in body, body
+PY
+    assert_success
+}
+
+# ---- D2: absence vs "could not look" --------------------------------------
+#
+# The first real run of this job had no GH_TOKEN, so gh was unauthenticated, every
+# call hit the anonymous rate limit, and each `|| true` turned an error into an
+# empty string. The script then reported the tag, the release and the formula as
+# all missing while all three existed. These tests pin the distinction.
+
+@test "a 404 is reported as absence, which is a legitimate failure" {
+    FX_TAG_MISSING=1 run_verify 3.1.3
+
+    assert_failure
+    assert_output --partial "does not exist in SunnyJayaRaju/oc-model-manager (HTTP 404)"
+    # Absence is reported, not an error: the script must still get to a verdict.
+    assert_output --partial "verify-release: FAIL"
+}
+
+@test "a rate-limit error on the tag lookup is NOT reported as a missing tag" {
+    # This is the exact failure of tag run 36687980784. The subject is present;
+    # the check could not read it, so the script must say so and stop.
+    FX_API_ERROR=403 run_verify 3.1.3
+
+    assert_failure
+    refute_output --partial "does not exist"
+    assert_output --partial "FAILED TO CHECK whether tag v3.1.3 exists"
+    assert_output --partial "this is an API error, not an absent object"
+    # The reason has to be visible, or the operator has nothing to act on.
+    assert_output --partial "rate limit"
+}
+
+@test "a credentials error on the release lookup is NOT reported as a missing release" {
+    # Scoped to the release endpoint, so the tag lookup still succeeds and the
+    # failure is proven at the release step specifically. An unscoped error would
+    # stop the script at step (a) and never test what this claims to test.
+    FX_API_ERROR=401 FX_API_ERROR_ON="/releases/tags/" run_verify 3.1.3
+
+    assert_failure
+    # The tag checks must have run, proving the scoping worked.
+    assert_output --partial "tag v3.1.3 exists"
+    refute_output --partial "Release v3.1.3 does not exist"
+    assert_output --partial "FAILED TO CHECK whether Release v3.1.3 exists"
+    assert_output --partial "Bad credentials"
+    assert_output --partial "missing GH_TOKEN"
+}
+
+@test "a 500 on the release lookup is NOT reported as a missing release" {
+    FX_API_ERROR=500 run_verify 3.1.3
+
+    assert_failure
+    refute_output --partial "does not exist"
+    assert_output --partial "FAILED TO CHECK"
+    assert_output --partial "HTTP 500"
+}
+
+@test "an error on the VERSION read is not reported as a wrong VERSION" {
+    # The tag is fine, the release is fine, and one content read fails. Reporting
+    # "reads <empty>, expected 3.1.3" here would blame the release for a
+    # transport problem.
+    FX_API_ERROR=403 FX_API_ERROR_ON="/contents/VERSION" run_verify 3.1.3
+
+    assert_failure
+    refute_output --partial "expected 3.1.3"
+    assert_output --partial "FAILED TO CHECK"
+}
+
+@test "an API error stops the run instead of cascading into bogus later checks" {
+    # With the old `|| true`, one failure produced a tail of confident-sounding
+    # follow-on failures ("cannot check checksums", "was not downloaded") that all
+    # implied the release was at fault. The first error is the only thing said.
+    FX_API_ERROR=403 run_verify 3.1.3
+
+    assert_failure
+    refute_output --partial "cannot check checksums"
+    # "check(s) failed" is the verdict line, and is what must never be printed.
+    # Asserting on "verify-release: FAIL" instead would be self-defeating: that
+    # is a substring of the FAILED TO CHECK line, so the refute would have passed
+    # for the wrong reason.
+    refute_output --partial "check(s) failed"
+}
+
 # ---- each invariant must be able to fail ----------------------------------
 
 @test "a missing tag fails" {
@@ -230,15 +367,33 @@ run_verify() {
     }
 }
 
-@test "only the tag-gated CI job calls the live script" {
-    # The per-PR jobs must not. Count the jobs in ci.yml that invoke it.
-    local invocations
-    invocations="$(grep -c 'verify-release.sh' "$ROOT/.github/workflows/ci.yml" || true)"
-    [ "$invocations" -ge 1 ] || {
-        echo "no CI job calls verify-release.sh" >&2
-        false
-    }
-    run grep -B 12 'verify-release.sh' "$ROOT/.github/workflows/ci.yml"
-    # The invoking job must be gated on a tag push.
-    assert_output --partial "refs/tags/v"
+@test "every CI job that calls the live script is gated to an explicit release" {
+    # The per-PR jobs must not call it. This was a `grep -B 12` for
+    # "refs/tags/v", which passed only because the gate happened to sit within
+    # twelve lines above the call; growing a comment moved it out of range and
+    # the check failed for a reason that had nothing to do with what it claims to
+    # test. Read the jobs structurally instead, and accept the two gates that are
+    # legitimate: a tag push, or an explicit workflow_dispatch naming a tag.
+    run python3 - "$ROOT/.github/workflows" <<'PY'
+import pathlib, sys, yaml
+
+wfs = sorted(pathlib.Path(sys.argv[1]).glob("*.yml"))
+found, bad = [], []
+for wf in wfs:
+    d = yaml.safe_load(wf.read_text()) or {}
+    for jname, job in (d.get("jobs") or {}).items():
+        steps = job.get("steps") or []
+        if not any("verify-release.sh" in (s.get("run") or "") for s in steps):
+            continue
+        found.append("%s:%s" % (wf.name, jname))
+        cond = str(job.get("if") or "")
+        if "refs/tags/v" not in cond and "workflow_dispatch" not in cond:
+            bad.append("%s:%s gated on %r" % (wf.name, jname, cond))
+assert found, "no CI job calls verify-release.sh at all"
+assert not bad, "ungated live-script invocation:\n" + "\n".join(bad)
+print("\n".join(found))
+PY
+    assert_success
+    # The tag-gated job must still be there, not quietly deleted.
+    assert_output --partial "ci.yml:verify-release"
 }
