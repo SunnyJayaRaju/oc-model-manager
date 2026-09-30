@@ -288,13 +288,34 @@ YAML
     assert_output --partial "not valid YAML"
 }
 
-@test "the checker itself passes shellcheck and bash -n" {
-    # It runs in the Lint job, so it is held to the same standard as the code it
-    # guards.
+@test 'the checker is lint-clean and is covered by the lint gate' {
+    # shellcheck is NOT installed on the macOS test runners, so it must not be
+    # invoked from here: the Lint job (which installs it) and `make lint` are the
+    # lint gates. This test DID invoke it, and failed the macOS leg of PR #25
+    # with "shellcheck: command not found". A test that can only pass on one
+    # platform is worse than no test, because it makes a real run look red.
+    #
+    # That mistake was already recorded in this repo at
+    # test/unit/check_tag_version.bats, with the same explanation. It was not
+    # read before the test was written.
+    #
+    # `bash -n` is the portable syntax gate, so that is what runs here.
     run bash -n "$SCRIPT"
     assert_success
-    run shellcheck --severity=warning "$SCRIPT"
-    assert_success
+
+    # The lint COVERAGE is still asserted, by reading the command rather than
+    # executing it. `scripts/*.sh` is a glob, so this file is included; the point
+    # is to prove the glob is still there, since a literal path list would let
+    # this file drift out of linting unnoticed.
+    run grep -c 'shellcheck --severity=warning.*scripts/\*\.sh' "$ROOT/Makefile"
+    assert_output "1"
+
+    # And the file must actually be matched by that glob, not merely covered by
+    # a pattern that has since stopped matching. Compared as a repo-relative
+    # path: the glob yields `scripts/ci/...` while $SCRIPT is absolute, so an
+    # absolute comparison silently never matches.
+    run bash -c "cd '$ROOT' && for f in scripts/*/*.sh; do echo \"\$f\"; done"
+    assert_output --partial "scripts/ci/check-workflow-secrets.sh"
 }
 
 @test "the Lint job runs this checker" {

@@ -359,12 +359,15 @@ PY
     # If this ever regresses, every PR starts depending on github.com and a
     # release check that can only pass after a release would block every push.
     [ ! -e "$ROOT/test/unit/verify-release.sh" ] || false
-    run grep -nE "verify-release" "$ROOT/Makefile"
-    assert_failure
-    [ -z "$output" ] || {
-        echo "Makefile references verify-release: $output" >&2
-        false
-    }
+    # Comments are excluded, because the Makefile explains WHY these scripts are
+    # outside the unit suite and has to be able to name them. What must not exist
+    # is an invocation, so the assertion is on non-comment lines and the expected
+    # count is still zero -- this narrows what is being matched, not how strict
+    # it is. Matching prose in a comment is not the same defect as running the
+    # script, and a check that cannot tell them apart gets "fixed" by deleting
+    # the explanation.
+    run bash -c "grep -vE '^[[:space:]]*@?#' '$ROOT/Makefile' | grep -cE 'verify-release'"
+    assert_output "0"
 }
 
 @test "every CI job that calls the live script is gated to an explicit release" {

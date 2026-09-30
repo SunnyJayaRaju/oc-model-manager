@@ -26,13 +26,20 @@ jobs:
           curl -sL https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz | tar -xJ
           sudo mv shellcheck-v0.11.0/shellcheck /usr/local/bin/
       - name: Run shellcheck
-      # scripts/*.sh is linted too: update-tap-formula.sh is the only
-      # shell there and it rewrites a published sha256, so it is exactly
-      # the file that must not be left unlinted.
-        run: shellcheck --severity=warning bin/ocprobe bin/oc-model-manager bin/oc-model-audit.sh bin/oc-session-backup lib/*.sh scripts/*.sh
+        # scripts/*.sh is linted too: update-tap-formula.sh is the only
+        # shell there and it rewrites a published sha256, so it is exactly
+        # the file that must not be left unlinted.
+        #
+        # scripts/*/*.sh is NOT redundant with scripts/*.sh. A shell glob does not
+        # cross a directory boundary, so scripts/*.sh matched exactly one file and
+        # left all seven of scripts/ci/ unlinted -- including verify-release.sh.
+        # This job reported "clean" about scripts it had never looked at.
+        # test/unit/lint_coverage.bats fails if that gap returns.
+        run: |
+          shellcheck --severity=warning bin/ocprobe bin/oc-model-manager bin/oc-model-audit.sh bin/oc-session-backup lib/*.sh scripts/*.sh scripts/*/*.sh
       - name: Check bash syntax
         run: |
-          for f in bin/ocprobe bin/oc-model-manager bin/oc-model-audit.sh bin/oc-session-backup lib/*.sh scripts/*.sh; do
+          for f in bin/ocprobe bin/oc-model-manager bin/oc-model-audit.sh bin/oc-session-backup lib/*.sh scripts/*.sh scripts/*/*.sh; do
             bash -n "$f" || exit 1
           done
       - name: Check version consistency (README badge vs VERSION)
