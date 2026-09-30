@@ -26,9 +26,21 @@ help:
 
 lint:
 	@echo "Running shellcheck..."
-	@shellcheck --severity=warning bin/ocprobe lib/*.sh scripts/*.sh
+	@# This list is kept identical to the Lint job's in .github/workflows/ci.yml,
+	@# so that `make lint` locally and the CI gate check the same files. Two gaps
+	@# came from them drifting apart:
+	@#   - `scripts/*.sh` alone matched exactly ONE file. A shell glob does not
+	@#     cross a directory boundary, so all seven of scripts/ci/ were unlinted --
+	@#     including verify-release.sh -- and the gate reported "clean" about
+	@#     scripts it had never looked at.
+	@#   - bin/oc-model-audit.sh, bin/oc-model-manager and bin/oc-session-backup
+	@#     were in the CI list but not in this one, so a developer running
+	@#     `make lint` saw less than CI did.
+	@# test/unit/lint_coverage.bats fails if the two lists stop covering every
+	@# tracked shell script.
+	@shellcheck --severity=warning bin/ocprobe bin/oc-model-manager bin/oc-model-audit.sh bin/oc-session-backup lib/*.sh scripts/*.sh scripts/*/*.sh
 	@echo "Checking bash syntax..."
-	@for f in bin/ocprobe lib/*.sh scripts/*.sh; do bash -n "$$f" || exit 1; done
+	@for f in bin/ocprobe bin/oc-model-manager bin/oc-model-audit.sh bin/oc-session-backup lib/*.sh scripts/*.sh scripts/*/*.sh; do bash -n "$$f" || exit 1; done
 	@echo "Lint passed"
 
 test: test-unit test-integration
