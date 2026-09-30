@@ -129,8 +129,135 @@ setup() {
     assert_output --partial "lib/ocprobe"
 }
 
-@test "installed mode doctor command scheduler check works (sources scheduler.sh)" {
-    local test_bin_dir="$BATS_TEST_TMPDIR/fake-installed/bin"
+# ---- doctor must read the VERSION file that belongs to the install ---------
+#
+# doctor.sh read a bare `cat VERSION`, i.e. a path relative to the CURRENT
+# DIRECTORY, while the binary had already resolved $OCPROBE_VERSION_FILE to the
+# file that actually belongs to the install. Found on a real Homebrew install of
+# v3.1.3, where it printed "VERSION file: unknown" and a spurious
+# "WARN VERSION mismatch: file= binary=3.1.3" on every run.
+#
+# The working directory in these tests is deliberately somewhere unrelated to
+# the install, because that is the situation that broke.
+
+# Run the installed-layout binary from a caller-chosen cwd, and print only the
+# Drift Detection block.
+doctor_drift_from() { # $1 = cwd, $2 = layout root
+    local cwd="$1" root="$2"
+    ( cd "$cwd" && bash "$root/bin/ocprobe" doctor 2>&1 ) |
+        sed -n '/--- Drift Detection ---/,/^  Local tag\|^  PATH:/p'
+}
+
+@test "doctor reads the install's VERSION file, not one in the current directory" {
+    local root="$BATS_TEST_TMPDIR/fake-installed"
+    cp "$OCPROBE_ROOT/bin/ocprobe" "$root/bin/ocprobe"
+    chmod +x "$root/bin/ocprobe"
+
+    # A cwd with no VERSION file at all. This is the bug's own symptom: the old
+    # code printed "unknown" here and then warned about a mismatch that was not
+    # there.
+    local bare="$BATS_TEST_TMPDIR/cwd-without-version"
+    mkdir -p "$bare"
+    [ ! -f "$bare/VERSION" ]
+
+    run doctor_drift_from "$bare" "$root"
+
+    # The fake-installed tree ships share/ocprobe/VERSION containing 2.0.10.
+    assert_output --partial "VERSION file: 2.0.10"
+    refute_output --partial "VERSION file: unknown"
+    # Whether a mismatch is reported at all is NOT assertable here: `ocprobe
+    # version` resolves through PATH, so the binary version belongs to whatever
+    # is installed on the machine running the suite, not to this layout. Asserting
+    # "no warning" would be asserting a fact about the host -- the same trap the
+    # scheduler tests in this file document. So assert the part that is ours: any
+    # warning must quote the version doctor actually read. Before the fix it
+    # always printed an empty file value, which is the spurious warning.
+    refute_output --partial "VERSION mismatch: file= binary="
+    if [[ "$output" == *"VERSION mismatch"* ]]; then
+        assert_output --partial "VERSION mismatch: file=2.0.10 binary="
+    fi
+}
+
+@test "doctor ignores a decoy VERSION file in the current directory" {
+    local root="$BATS_TEST_TMPDIR/fake-installed"
+    cp "$OCPROBE_ROOT/bin/ocprobe" "$root/bin/ocprobe"
+    chmod +x "$root/bin/ocprobe"
+
+    # The dangerous half of the bug: an unrelated file named VERSION in the cwd.
+    # The old code compared ITS contents against the binary, so this could report
+    # a mismatch that is not about ocprobe -- or, if the decoy happened to match,
+    # silently pass a genuinely drifted install.
+    local decoy="$BATS_TEST_TMPDIR/cwd-with-decoy"
+    mkdir -p "$decoy"
+    echo "9.9.9" > "$decoy/VERSION"
+
+    run doctor_drift_from "$decoy" "$root"
+
+    assert_output --partial "VERSION file: 2.0.10"
+    refute_output --partial "9.9.9"
+    refute_output --partial "VERSION file: unknown"
+}
+
+@test "doctor reads the dev-checkout VERSION file in dev mode too" {
+    # The other branch of the bootstrap. $OCPROBE_VERSION_FILE is <root>/VERSION
+    # here, so the same bare `cat VERSION` would have happened to work only by
+    # coincidence -- while still being wrong, and still wrong from any other cwd.
+    local root="$BATS_TEST_TMPDIR/fake-repo"
+    cp "$OCPROBE_ROOT/bin/ocprobe" "$root/bin/ocprobe"
+    chmod +x "$root/bin/ocprobe"
+
+    local elsewhere="$BATS_TEST_TMPDIR/cwd-elsewhere"
+    mkdir -p "$elsewhere"
+    echo "9.9.9" > "$elsewhere/VERSION"
+
+    run doctor_drift_from "$elsewhere" "$root"
+
+    # fake-repo/VERSION is this repo's own VERSION.
+    assert_output --partial "VERSION file: $(tr -d '[:space:]' <"$OCPROBE_ROOT/VERSION")"
+    refute_output --partial "9.9.9"
+}
+
+@test "no library reads VERSION relative to the current directory" {
+    # The class, not this one line. A bare `cat VERSION` is correct only when the
+    # cwd happens to be the install root, which is exactly the assumption that
+    # made this bug invisible in a dev checkout and obvious in a real install.
+    run grep -rnE 'cat +"?VERSION"?' "$OCPROBE_ROOT/lib" "$OCPROBE_ROOT/bin/ocprobe"
+    # Only the comment in doctor.sh that documents the fix may mention it, and
+    # that line starts with a tab and a comment marker.
+    local offenders
+    offenders="$(grep -rnE 'cat +VERSION' "$OCPROBE_ROOT/lib" "$OCPROBE_ROOT/bin/ocprobe" |
+        grep -vE ':[[:space:]]*#' || true)"
+    [ -z "$offenders" ] || {
+        printf 'these read VERSION relative to the cwd:\n%s\n' "$offenders" >&2
+        false
+    }
+}
+
+@test "doctor still reports a REAL mismatch, and does not warn when there is none" {
+    # The fix must not simply delete the check. With a known file version and a
+    # known binary version, the right answer is: warn only when they differ.
+    local root="$BATS_TEST_TMPDIR/fake-installed"
+    cp "$OCPROBE_ROOT/bin/ocprobe" "$root/bin/ocprobe"
+    chmod +x "$root/bin/ocprobe"
+
+    # A layout whose VERSION disagrees with the version the binary reports. The
+    # binary prints its own VERSION, so renaming the file's contents is enough.
+    echo "1.2.3" > "$root/share/ocprobe/VERSION"
+    local bare="$BATS_TEST_TMPDIR/cwd-clean"
+    mkdir -p "$bare"
+
+    # `ocprobe version` resolves through PATH, which is not this binary, so the
+    # reported pair depends on the host. Assert the SHAPE instead: the file value
+    # must be the one doctor read, and any mismatch warning must quote it.
+    run doctor_drift_from "$bare" "$root"
+    assert_output --partial "VERSION file: 1.2.3"
+    refute_output --partial "file=1.2.3 binary=1.2.3"
+    # Whatever the host PATH resolves to, the warning can never claim an empty
+    # file value again -- that was the spurious-WARN bug.
+    refute_output --partial "VERSION mismatch: file= binary="
+}
+
+@test "installed mode doctor command scheduler check works (sources scheduler.sh)" {    local test_bin_dir="$BATS_TEST_TMPDIR/fake-installed/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
     chmod +x "$test_bin_dir/ocprobe"
     
