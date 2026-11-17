@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Release automation: every `actions/checkout` in a multi-checkout job now
+  names its own `path:`.** The v3.2.0 tag run's "Update Homebrew Formula" job
+  checked the release repo into `source/` and then checked out the tap with no
+  `path:`; the tap checkout deletes the working directory's contents first, so
+  `source/scripts/update-tap-formula.sh` was gone before the updater ran and
+  the job failed with exit 127. The homebrew job and
+  `publish-release-to-tap.yml` now use `source/` and `tap/` explicitly with
+  `working-directory: tap` on the steps that commit, both files run the same
+  step order, and `scripts/ci/check-workflow-checkout-paths.sh` fails Lint if
+  any job with two or more checkouts ever loses a `path:`. No user-visible
+  change: no release, tag or formula is altered.
+
 ## [3.2.0] - 2026-11-17
 
 ### Security

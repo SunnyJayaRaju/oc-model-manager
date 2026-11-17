@@ -60,6 +60,16 @@ jobs:
       - name: Check workflow secret env passthrough
         run: bash scripts/ci/check-workflow-secrets.sh
 
+      # A second actions/checkout in the same job deletes whatever the first
+      # one put in the workspace unless each checkout names its own `path:`.
+      # That is how the v3.2.0 tag run lost `source/scripts/update-tap-formula.sh`
+      # (run 44060706401, exit 127) -- the tap checkout, with no `path:`, ran
+      # after the source checkout and its clean removed `source/`. Static and
+      # heuristic like the two checks above: fail any job with two or more
+      # checkouts where any of them has no `path:`.
+      - name: Check workflow checkout paths
+        run: bash scripts/ci/check-workflow-checkout-paths.sh
+
   secret-scan:
     name: Secret Scan (gitleaks)
     runs-on: ubuntu-latest
@@ -481,13 +491,13 @@ jobs:
 
       - name: Check out this repo at the tag
         # The step below needs scripts/update-tap-formula.sh, which lives in THIS
-        # repo, not in the tap. Without this step the only thing in the workspace
-        # was the tap, so the updater was invoked at a path that did not exist:
-        #
-        #     bash: scripts/update-tap-formula.sh: No such file or directory
-        #
-        # Checked out into `source/` so both trees exist at once -- the workspace
-        # root stays the tap, because that is what gets committed and pushed.
+        # repo, not in the tap. Checked out into `source/` so both trees exist
+        # at once. Every checkout in this job names its own `path:`: a checkout
+        # without one deletes the working directory's contents first, so a
+        # second default checkout silently erases the first (the v3.2.0 tag run
+        # 44060706401 died with exit 127 exactly that way). The order of the
+        # steps no longer matters for safety; scripts/ci/check-workflow-
+        # checkout-paths.sh fails Lint if any multi-checkout job loses a path.
         uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
@@ -499,6 +509,9 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/homebrew-ocprobe
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # The tap is what gets committed and pushed, so its tree owns the
+          # step's working directory below. `source/` sits next to it.
+          path: tap
 
       # Replaces the inline shell that used
       #   SHA256=$(curl -sL "$URL.sha256" | cut -d' ' -f1)
@@ -509,6 +522,9 @@ jobs:
       - name: Update formula
         id: formula
         if: ${{ steps.check_token.outputs.has_token == 'true' }}
+        # The tap lives in `tap/`, the updater in `source/`; the script is
+        # invoked from the tap so its relative FORMULA path is the tap's.
+        working-directory: tap
         run: |
           # Without pipefail, `bash script | tee log` reports tee's exit status,
           # not the script's. tee succeeds even when the script does not exist,
@@ -524,6 +540,7 @@ jobs:
 
       - name: Commit and push
         if: ${{ steps.check_token.outputs.has_token == 'true' && steps.formula.outputs.changed == 'true' }}
+        working-directory: tap
         env:
           TAG: ${{ github.ref_name }}
         run: |
