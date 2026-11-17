@@ -266,13 +266,23 @@ cmd_session_cleanup() {
 	# before removing anything. Read it into _ so the tab-delimited line parses.
 	while IFS=$'\t' read -r sid _; do
 		[[ -n "$sid" ]] || continue
-		local sid_esc
-		sid_esc=$(sql_escape "$sid") || continue
 		# Only delete fresh probe sessions, using the configured fresh guard
 		# rather than a hardcoded hour, and never sessions younger than 15
 		# minutes (by time_updated): they may be mid-probe in a concurrent run.
-		if sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-			"SELECT 1 FROM ${table} WHERE id='${sid_esc}' AND time_created > (strftime('%s','now')-${OCPROBE_FRESH_GUARD_HOURS}*3600)*1000 AND time_updated <= (strftime('%s','now')-15*60)*1000 LIMIT 1;" 2>/dev/null | grep -q 1; then
+		# On 2.x the freshness check is a bound-parameter query (the id never
+		# touches SQL text); on 1.x it keeps the sql_escape legacy path.
+		local is_fresh=""
+		if oc_db_is_v2; then
+			is_fresh=$(_oc_db_query \
+				"SELECT 1 FROM session_v2 WHERE id = ? AND time_created > (strftime('%s','now') - ? * 3600) * 1000 AND time_updated <= (strftime('%s','now') - 15*60) * 1000 LIMIT 1;" \
+				"$sid" "$OCPROBE_FRESH_GUARD_HOURS") || continue
+		else
+			local sid_esc
+			sid_esc=$(sql_escape "$sid") || continue
+			is_fresh=$(sqlite3 -readonly "$OCPROBE_OPencode_DB" \
+				"SELECT 1 FROM ${table} WHERE id='${sid_esc}' AND time_created > (strftime('%s','now')-${OCPROBE_FRESH_GUARD_HOURS}*3600)*1000 AND time_updated <= (strftime('%s','now')-15*60)*1000 LIMIT 1;" 2>/dev/null) || continue
+		fi
+		if [[ -n "$is_fresh" ]]; then
 			if ((apply_mode)); then
 				if delete_session "$sid"; then
 					deleted=$((deleted + 1))

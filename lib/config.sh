@@ -430,7 +430,12 @@ EOF
 
 validate_config() {
 	local file="$1"
-	"$(oc_python)" - "$file" "$CONFIG_SCHEMA" <<'PYEOF'
+	local py
+	# oc_python_require, not oc_python: on a python without PyYAML/jsonschema
+	# the intended actionable message is printed ("make setup", pip install,
+	# OCPROBE_PYTHON) instead of an import traceback from the reader itself.
+	py=$(oc_python_require) || return 1
+	"$py" - "$file" "$CONFIG_SCHEMA" <<'PYEOF'
 import sys, yaml, json, jsonschema
 from pathlib import Path
 
@@ -455,7 +460,9 @@ PYEOF
 
 parse_config_yaml() {
 	local file="$1"
-	"$(oc_python)" - "$file" <<'PYEOF'
+	local py
+	py=$(oc_python_require) || return 1
+	"$py" - "$file" <<'PYEOF'
 import sys, yaml, os
 from pathlib import Path
 
