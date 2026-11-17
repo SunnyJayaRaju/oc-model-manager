@@ -33,7 +33,7 @@ validate_policy() {
 		return 1
 	}
 
-	python3 - "$policy_file" "$schema_file" <<'PY'
+	"$(oc_python)" - "$policy_file" "$schema_file" <<'PY'
 import sys, yaml, json, jsonschema
 
 policy_file = sys.argv[1]
@@ -95,7 +95,7 @@ load_policy() {
 	# Run validation in a single Python heredoc to avoid multiple parses
 	local result
 	result=$(
-		python3 - "$policy_file" "$OCPROBE_CONFIG_DIR/policy.schema.json" <<'PY'
+		"$(oc_python)" - "$policy_file" "$OCPROBE_CONFIG_DIR/policy.schema.json" <<'PY'
 import sys, yaml, json, jsonschema
 
 policy_file = sys.argv[1]
@@ -200,7 +200,7 @@ policy_effective_auto_apply() {
 	[[ "${OCPROBE_POLICY_ENABLED:-0}" -eq 1 ]] || return 1
 	[[ -n "${OCPROBE_POLICY_FILE:-}" ]] || return 1
 
-	python3 - "$OCPROBE_POLICY_FILE" "$provider_id" <<'PY'
+	"$(oc_python)" - "$OCPROBE_POLICY_FILE" "$provider_id" <<'PY'
 import sys, yaml
 policy_file, provider_id = sys.argv[1], sys.argv[2]
 with open(policy_file) as f:
@@ -270,7 +270,7 @@ policy_write_never_remove_file() {
 	local out="$OCPROBE_RUN_DIR/policy-never_remove.txt"
 	: >"$out"
 	[[ "${OCPROBE_POLICY_ENABLED:-0}" -eq 1 && -n "${OCPROBE_POLICY_FILE:-}" ]] || return 0
-	python3 - "$OCPROBE_POLICY_FILE" "$out" <<'PY'
+	"$(oc_python)" - "$OCPROBE_POLICY_FILE" "$out" <<'PY'
 import sys, yaml
 policy_file, out_file = sys.argv[1], sys.argv[2]
 with open(policy_file) as f:
@@ -293,7 +293,7 @@ apply_policy_new_filter() {
 	[[ -s "$new_file" ]] || return 0
 
 	local kept_file="${new_file}.kept"
-	python3 - "$OCPROBE_POLICY_FILE" "$new_file" "$kept_file" "$excluded_file" <<'PY'
+	"$(oc_python)" - "$OCPROBE_POLICY_FILE" "$new_file" "$kept_file" "$excluded_file" <<'PY'
 import sys, yaml, fnmatch
 
 policy_file, new_file, kept_file, excluded_file = sys.argv[1:5]

@@ -48,3 +48,4 @@ __pycache__/
 
 # Local release rehearsal scratch (scripts/ci/rehearsal.sh)
 .rehearsal/
+.venv/

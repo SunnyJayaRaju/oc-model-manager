@@ -23,11 +23,19 @@ cmd_doctor() {
 		all_ok=0
 	fi
 
-	# 2. Python 3
-	if command -v python3 >/dev/null; then
+	# 2. Python 3 (must be able to read ocm's own YAML config)
+	local py
+	py=$(oc_python) || true
+	if [[ -n "$py" ]]; then
 		local py_version
-		py_version=$(python3 --version 2>&1)
-		log_info "python3: OK ($py_version)"
+		py_version=$("$py" --version 2>&1)
+		if "$py" -c 'import yaml, jsonschema' >/dev/null 2>&1; then
+			log_info "python: OK ($py, PyYAML+jsonschema importable)"
+		else
+			log_error "python: $py is missing PyYAML/jsonschema (needed to read ocm's own config)"
+			log_error "  fix: 'make setup' in a checkout, or: $py -m pip install PyYAML jsonschema"
+			all_ok=0
+		fi
 	else
 		log_error "python3: NOT FOUND"
 		all_ok=0

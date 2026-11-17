@@ -63,6 +63,44 @@ fi
 : "${OCPROBE_AUDIT_DIR:=}"
 : "${OCPROBE_DB_FILE:=$HOME/.local/share/opencode/opencode.db}"
 
+# ---- Python resolution -------------------------------------------------------
+# ocm needs a Python with PyYAML and jsonschema to read its own config (YAML)
+# and validate it (jsonschema). A system interpreter often lacks both, so the
+# resolver prefers, in order: $OCPROBE_PYTHON, the project-local .venv created
+# by 'make setup' (a checkout root only), then plain python3. Stdlib-only
+# helpers (lib/jsonc.py, lib/session_restore.py) do not need this and keep
+# using python3 directly.
+oc_python() {
+	local venv="${OCPROBE_ROOT:-}/.venv/bin/python3"
+	if [[ -n "${OCPROBE_PYTHON:-}" ]] && command -v "$OCPROBE_PYTHON" >/dev/null 2>&1; then
+		printf '%s\n' "$OCPROBE_PYTHON"
+		return 0
+	fi
+	if [[ -x "$venv" ]]; then
+		printf '%s\n' "$venv"
+		return 0
+	fi
+	command -v python3
+}
+
+# Like oc_python, but refuses to hand back an interpreter that cannot import
+# the two modules ocm's config layer needs, and prints the fix.
+oc_python_require() {
+	local py
+	py=$(oc_python) || {
+		log_error "no python3 in PATH — ocm needs Python 3 to read its configuration"
+		return 1
+	}
+	if ! "$py" -c 'import yaml, jsonschema' 2>/dev/null; then
+		log_error "python ($py) is missing PyYAML/jsonschema, which ocm needs to read its own config"
+		log_error "fix: run 'make setup' in a checkout (creates ./.venv), or install the modules into $py:"
+		log_error "  $py -m pip install PyYAML jsonschema"
+		log_error "or point OCPROBE_PYTHON at an interpreter that has both modules"
+		return 1
+	fi
+	printf '%s\n' "$py"
+}
+
 # ---- Runtime State ---------------------------------------------------------
 : "${OCPROBE_STAMP:=}"
 : "${OCPROBE_RUN_DIR:=}"
@@ -113,7 +151,7 @@ validate_positive_int() {
 validate_model_name() {
 	local model="$1"
 	# Allow provider/model, provider/model:variant, and kilo/~provider/model
-	[[ "$model" =~ ^[a-zA-Z0-9_./:~:-]+$ ]] || return 1
+	[[ "$model" =~ ^[a-zA-Z0-9_./:~@:-]+$ ]] || return 1
 	# Must have at least one slash
 	[[ "$model" == */* ]] || return 1
 	return 0
