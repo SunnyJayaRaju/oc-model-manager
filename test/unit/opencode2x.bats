@@ -636,6 +636,9 @@ EOF
   local db
   create_v2_db
   db="$OCPROBE_OPencode_DB"
+  # cmd_session_restore calls load_config, which resets OCPROBE_OPencode_DB
+  # from the ocm config yaml — point that config at the fixture DB.
+  v2_load_config_fixtures
   local f="$OCPROBE_RUN_DIR/legacy.sql"
   printf 'INSERT INTO session VALUES (1);\n' >"$f"
   run cmd_session_restore "$f"
