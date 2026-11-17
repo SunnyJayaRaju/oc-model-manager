@@ -24,6 +24,13 @@ EOF
 	export OCPROBE_RUN_DIR="/tmp/test_run"
 	mkdir -p "$OCPROBE_STATE_DIR" "$OCPROBE_RUN_DIR"
 
+	# Pin generation 1: apply_blacklist writes model lists on 1.x and refuses on 2.x.
+	local mock_dir
+	mock_dir=$(mktemp -d "$BATS_TEST_TMPDIR/mock-XXXXXX")
+	printf '#!/usr/bin/env bash\ncase "$1" in --version) echo "opencode 1.7.11";; esac\n' >"$mock_dir/opencode"
+	chmod +x "$mock_dir/opencode"
+	export PATH="$mock_dir:$PATH"
+
 	cat >"$OCPROBE_OPencode_CONFIG" <<EOF
 {
   "provider": {

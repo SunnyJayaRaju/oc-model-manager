@@ -390,21 +390,30 @@ EOF
 
     # 30 fresh sessions spread over all three prefixes. The old CLI-based
     # listing paginated at 100 rows, so this is also the regression guard for
-    # "cleanup can only see what the CLI shows".
+    # "cleanup can only see what the CLI shows". They are aged 20 minutes so
+    # they are older than the 15-minute minimum age guard.
     for i in $(seq 1 30); do
         case $((i % 3)) in
         0) t="ocprobe-probe-s$i" ;;
         1) t="ocmm-probe-s$i" ;;
         2) t="ocprobe-validate-s$i" ;;
         esac
-        sqlite3 "$db" "INSERT INTO session VALUES ('ses_s$i','$t',$now_ms,$now_ms);
-                        INSERT INTO message VALUES ($i,'ses_s$i',$now_ms);" 2>/dev/null
+        ts=$(( now_ms - 20 * 60 * 1000 ))
+        sqlite3 "$db" "INSERT INTO session VALUES ('ses_s$i','$t',$ts,$ts);
+                        INSERT INTO message VALUES ($i,'ses_s$i',$ts);" 2>/dev/null
     done
 
     : >"$BATS_TEST_TMPDIR/deleted.txt"
     setup_session_delete_recorder "$BATS_TEST_TMPDIR/deleted.txt"
 
+    # dry run by default: the pending set is reported, nothing is deleted
     run cmd_session_cleanup
+    assert_success
+    assert_output --partial "dry-run complete: 30 probe session(s) would be deleted"
+    run cat "$BATS_TEST_TMPDIR/deleted.txt"
+    assert_output ""
+
+    run cmd_session_cleanup --apply
     assert_success
     assert_output --partial "cleaned 30 probe session(s)"
 
@@ -419,15 +428,20 @@ EOF
     local db now_ms
     db=$(make_session_db)
     now_ms=$(( $(date +%s) * 1000 ))
-    sqlite3 "$db" "INSERT INTO session VALUES ('ses_probe1','ocprobe-probe-x',$now_ms,$now_ms);
-                    INSERT INTO message VALUES (1,'ses_probe1',$now_ms);
-                    INSERT INTO session VALUES ('ses_real','My real conversation',$now_ms,$now_ms);
-                    INSERT INTO message VALUES (2,'ses_real',$now_ms);" 2>/dev/null
+    ts=$(( now_ms - 20 * 60 * 1000 ))
+    sqlite3 "$db" "INSERT INTO session VALUES ('ses_probe1','ocprobe-probe-x',$ts,$ts);
+                    INSERT INTO message VALUES (1,'ses_probe1',$ts);
+                    INSERT INTO session VALUES ('ses_real','My real conversation',$ts,$ts);
+                    INSERT INTO message VALUES (2,'ses_real',$ts);" 2>/dev/null
 
     : >"$BATS_TEST_TMPDIR/deleted.txt"
     setup_session_delete_recorder "$BATS_TEST_TMPDIR/deleted.txt"
 
     run cmd_session_cleanup
+    assert_success
+    run cat "$BATS_TEST_TMPDIR/deleted.txt"
+    assert_output ""
+    run cmd_session_cleanup --apply
     assert_success
     run cat "$BATS_TEST_TMPDIR/deleted.txt"
     assert_output --partial "ses_probe1"
@@ -447,7 +461,7 @@ EOF
     : >"$BATS_TEST_TMPDIR/deleted.txt"
     setup_session_delete_recorder "$BATS_TEST_TMPDIR/deleted.txt"
 
-    run cmd_session_cleanup
+    run cmd_session_cleanup --apply
     assert_success
     assert_output --partial "cleaned 0 probe session(s)"
     run cat "$BATS_TEST_TMPDIR/deleted.txt"
