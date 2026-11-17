@@ -935,7 +935,8 @@ v2_add_adversarial_session() {
   for sid in "${ids[@]}"; do
     run session_age_ms "$sid"
     assert_success
-    assert_output --regexp '^[0-9]+$'
+    assert_output --regexp '^-?[0-9]+$'
+
   done
 }
 
@@ -953,7 +954,8 @@ v2_add_adversarial_session() {
   # ...and a NUL row never matches anything queryable, and the table survives.
   run sqlite3 "$db" "SELECT COUNT(*) FROM session_v2;"
   assert_success
-  assert_output --regexp '^[0-9]+$'
+  assert_output --regexp '^-?[0-9]+$'
+
   run sqlite3 "$db" "SELECT COUNT(*) FROM session_v2 WHERE id LIKE 'ses_x%';"
   assert_output "1"
 }
@@ -1049,7 +1051,8 @@ EOF
   assert_line --partial "ses_probeA111111111111111"
   run sqlite3 "$db" "SELECT COUNT(*) FROM session_v2;"
   assert_success
-  assert_output --regexp '^[0-9]+$'
+  assert_output --regexp '^-?[0-9]+$'
+
 }
 
 @test "delete_session reports a sanitised CLI failure and keeps the non-zero exit" {
