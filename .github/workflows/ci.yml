@@ -363,7 +363,7 @@ jobs:
         run: bash scripts/ci/package-check.sh show
       - name: Upload the package for inspection
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: package-check-${{ matrix.os }}
           path: "${{ runner.temp }}/pkgcheck/"
@@ -425,7 +425,7 @@ jobs:
           COPYFILE_DISABLE=1 tar -czf ocprobe-$VERSION.tar.gz ocprobe-$VERSION/
           sha256sum ocprobe-$VERSION.tar.gz > ocprobe-$VERSION.tar.gz.sha256
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ocprobe-release
           path: dist/
