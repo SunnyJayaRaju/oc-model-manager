@@ -94,7 +94,7 @@ EOF
 @test "worker validates model name" {
   local worker_file="$OCPROBE_RUN_DIR/worker.sh"
   write_worker "$worker_file"
-  run "$worker_file" "invalid@model" "TEST" "10" "prompt"
+  run "$worker_file" "invalid model!" "TEST" "10" "prompt"
   assert_failure
   assert_output --partial "INVALID_MODEL"
 }
