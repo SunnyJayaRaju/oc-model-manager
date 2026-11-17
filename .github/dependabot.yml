@@ -7,3 +7,13 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # One grouped PR for every action bump. The release path pins and verifies
+    # its actions end to end, so individual bump PRs only add noise; the group
+    # is still evaluated like any change (CI plus the rehearsal for majors).
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
