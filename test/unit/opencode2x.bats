@@ -893,3 +893,218 @@ EOF
   run grep -Eni "TODO|FIXME|TBD|PLACEHOLDER|XXX" "$OCPROBE_ROOT/README.md"
   assert_failure
 }
+
+# ---- F7: adversarial values on both SQL paths ---------------------------------
+#
+# The 2.x queries run through lib/db_query.py with bound parameters; the 1.x
+# queries keep sql_escape + string interpolation. For every hostile id below
+# the requirement is the same on BOTH paths: the lookup either finds exactly
+# its own row or safely finds nothing — the query shape never changes, and no
+# error text from the SQL layer reaches the caller's stdout.
+
+# Insert a v2 session row (plus its one user message) with an arbitrary id,
+# bound, so ids no sqlite3 CLI argument could carry (NUL) can be used.
+v2_add_adversarial_session() {
+  local sid="$1"
+  local db="$OCPROBE_OPencode_DB"
+  python3 -B "$OCPROBE_ROOT/test/helpers/adversarial_rows.py" "$db" "$sid"
+}
+
+@test "adversarial ids on the bound 2.x path: quote, semicolon, newline, unicode, very long" {
+  local db
+  create_v2_db
+  db="$OCPROBE_OPencode_DB"
+  local ids=(
+    "ses_it's-a-quote"
+    'ses_semi;coloned'
+    $'ses_new\nline'
+    'ses_uni-😎-日本'
+    "ses_$(printf 'x%.0s' {1..2000})"
+  )
+  local sid
+  for sid in "${ids[@]}"; do
+    run v2_add_adversarial_session "$sid"
+    assert_success
+  done
+  for sid in "${ids[@]}"; do
+    run get_session_title "$sid"
+    assert_success
+    assert_output --partial "ocprobe-probe"
+  done
+  # The age lookup answers for the same rows without any SQL error.
+  for sid in "${ids[@]}"; do
+    run session_age_ms "$sid"
+    assert_success
+    assert_output --regexp '^[0-9]+$'
+  done
+}
+
+@test "a NUL byte in an id is inert: no match, no changed query, table intact" {
+  local db
+  create_v2_db
+  db="$OCPROBE_OPencode_DB"
+  # bash variables cannot hold NUL; the row is built python-side with an id
+  # carrying the classic injection attempt after the NUL, to prove it is inert.
+  python3 -B "$OCPROBE_ROOT/test/helpers/adversarial_rows.py" --nul "$db"
+  # A lookup whose value bash truncated at the NUL matches no row. An absent
+  # row is an empty result, not an error, for get_session_title.
+  run get_session_title "ses_x"
+  assert_output ""
+  # ...and a NUL row never matches anything queryable, and the table survives.
+  run sqlite3 "$db" "SELECT COUNT(*) FROM session_v2;"
+  assert_success
+  assert_output --regexp '^[0-9]+$'
+  run sqlite3 "$db" "SELECT COUNT(*) FROM session_v2 WHERE id LIKE 'ses_x%';"
+  assert_output "1"
+}
+
+@test "malformed JSON in session_message.data is handled, not fatal" {
+  local db
+  create_v2_db
+  db="$OCPROBE_OPencode_DB"
+  local ts
+  ts=$(now_ms)
+  local sid="ses_badjson11111111111111"
+  sqlite3 "$db" "INSERT INTO session_v2 (id, project_id, slug, directory, version, title, time_created, time_updated) VALUES ('$sid', 'proj_adv', 'adv', '/tmp/adv', '1', 'ocprobe-probe', $ts, $ts);"
+  sqlite3 "$db" "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES ('adv_bad1', '$sid', 'user', 1, $ts, $ts, 'not-json{{');"
+  sqlite3 "$db" "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES ('adv_bad2', '$sid', 'assistant', 2, $ts, $ts, '{\"content\":[{\"type\":\"tool\"}]}broken');"
+  run session_has_tool_calls "$sid"
+  assert_failure
+  run session_first_user_text "$sid"
+  assert_success
+  assert_output ""
+  # delete_session fails closed: no prompt match -> refusal, nothing deleted.
+  run delete_session "$sid"
+  assert_failure
+  assert_output --partial "not a configured probe prompt"
+  run sqlite3 "$db" "SELECT COUNT(*) FROM session_v2 WHERE id='$sid';"
+  assert_output "1"
+}
+
+@test "NULL columns on the bound 2.x path come back as the documented empties" {
+  local db
+  create_v2_db
+  db="$OCPROBE_OPencode_DB"
+  local ts
+  ts=$(now_ms)
+  local sid="ses_nullcols1111111111111"
+  sqlite3 "$db" "INSERT INTO session_v2 (id, project_id, slug, directory, version, title, parent_id, time_created, time_updated) VALUES ('$sid', 'proj_adv', 'adv', '/tmp/adv', '1', NULL, NULL, $ts, $ts);"
+  run get_session_title "$sid"
+  assert_success
+  assert_output "$sid"$'\t'
+  run session_in_tree "$sid"
+  assert_failure
+}
+
+@test "adversarial ids on the legacy 1.x path: sql_escape keeps them safe" {
+  local legacy="$OCPROBE_RUN_DIR/legacy-adv.db"
+  rm -f "$legacy"
+  sqlite3 "$legacy" <<'EOF'
+CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, time_created INTEGER, time_updated INTEGER);
+CREATE TABLE message (id INTEGER PRIMARY KEY, session_id TEXT, time_created INTEGER);
+EOF
+  local ts=1000
+  sqlite3 "$legacy" "INSERT INTO session (id, title, time_created, time_updated) VALUES ('ses_it''s-a-quote', 'ocprobe-probe', $ts, $ts);"
+  sqlite3 "$legacy" "INSERT INTO session (id, title, time_created, time_updated) VALUES ('ses_semi;coloned', 'ocprobe-probe', $ts, $ts);"
+  sqlite3 "$legacy" "INSERT INTO session (id, title, time_created, time_updated) VALUES ('ses_uni-日本', 'ocprobe-probe', $ts, $ts);"
+  OCPROBE_OPencode_DB="$legacy"
+  # Quote and semicolon are escaped, not executed: the rows are found.
+  run get_session_title "ses_it's-a-quote"
+  assert_success
+  assert_output --partial "ocprobe-probe"
+  run get_session_title 'ses_semi;coloned'
+  assert_success
+  assert_output --partial "ocprobe-probe"
+  run get_session_title "ses_uni-日本"
+  assert_success
+  assert_output --partial "ocprobe-probe"
+  # sql_escape rejects newline and over-long ids: the lookup answers
+  # "not present" instead of erroring.
+  run get_session_title $'ses_new\nline'
+  assert_failure
+  run get_session_title "ses_$(printf 'x%.0s' {1..2000})"
+  assert_failure
+  # A NUL row is not reachable and breaks nothing (truncated lookup value);
+  # an absent row is an empty result, not an error.
+  python3 -B "$OCPROBE_ROOT/test/helpers/adversarial_rows.py" --nul "$legacy"
+  run get_session_title "ses_x"
+  assert_output ""
+  run sqlite3 "$legacy" "SELECT COUNT(*) FROM session;"
+  assert_output "4"
+}
+
+@test "list_probe_sessions_since (v2) survives hostile titles and prompts" {
+  local db
+  create_v2_db
+  db="$OCPROBE_OPencode_DB"
+  fixtures_v2_add_rows # one clean session, still listed
+  local ts
+  ts=$(now_ms)
+  sqlite3 "$db" <<EOF
+INSERT INTO session_v2 (id, project_id, slug, directory, version, title, time_created, time_updated)
+VALUES ('ses_hostileTitle1111', 'proj_adv', 'adv', '/tmp/adv', '1', 'ocprobe-probe''; DROP TABLE session_v2;--', $ts, $ts);
+EOF
+  run list_probe_sessions_since 0
+  assert_success
+  assert_line --partial "ses_probeA111111111111111"
+  run sqlite3 "$db" "SELECT COUNT(*) FROM session_v2;"
+  assert_success
+  assert_output --regexp '^[0-9]+$'
+}
+
+@test "delete_session reports a sanitised CLI failure and keeps the non-zero exit" {
+  local db
+  create_v2_db
+  db="$OCPROBE_OPencode_DB"
+  fixtures_v2_add_rows
+  local mock="$BATS_TEST_TMPDIR/fail-mock"
+  mkdir -p "$mock"
+  cat >"$mock/opencode" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  session)
+    case "$2" in
+      delete)
+        echo "cannot delete ses_other88888888888888: database is locked while writing /Users/someone/private/opencode.db" >&2
+        echo "second line with ses_secret9999999999999 in it" >&2
+        exit 3
+        ;;
+    esac
+    ;;
+esac
+EOF
+  chmod +x "$mock/opencode"
+  PATH="$mock:$PATH" run delete_session "ses_probeA111111111111111"
+  assert_failure
+  assert_output --partial "opencode session delete failed for ses_probeA111111111111111"
+  assert_output --partial "exit 3"
+  # Sanitisation: no other id, no path, nothing from later CLI lines.
+  refute_output --partial "ses_other88888888888888"
+  refute_output --partial "ses_secret9999999999999"
+  refute_output --partial "/Users/someone/private"
+  assert_output --partial "<id>"
+  assert_output --partial "<path>"
+  # The row was NOT deleted.
+  run sqlite3 "$db" "SELECT COUNT(*) FROM session_v2 WHERE id='ses_probeA111111111111111';"
+  assert_output "1"
+}
+
+@test "delete_session CLI failure with an empty stderr still fails with a reason" {
+  local db
+  create_v2_db
+  db="$OCPROBE_OPencode_DB"
+  fixtures_v2_add_rows
+  local mock="$BATS_TEST_TMPDIR/silent-fail-mock"
+  mkdir -p "$mock"
+  cat >"$mock/opencode" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  session) case "$2" in delete) exit 1 ;; esac ;;
+esac
+EOF
+  chmod +x "$mock/opencode"
+  PATH="$mock:$PATH" run delete_session "ses_probeA111111111111111"
+  assert_failure
+  assert_output --partial "failed for ses_probeA111111111111111"
+  assert_output --partial "no message"
+}

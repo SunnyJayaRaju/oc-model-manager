@@ -20,30 +20,49 @@ oc_db_is_v2() {
 		2>/dev/null | grep -q 1
 }
 
-# The table holding live session rows for this database generation.
-_oc_session_table() {
-	if oc_db_is_v2; then
-		echo session_v2
-	else
-		echo session
-	fi
+# ---- Bound-parameter SQL runner (OpenCode 2.x paths) ------------------------
+# Every 2.x session query runs through this instead of string-interpolated
+# `sqlite3 -readonly` SQL: values reach SQL as bound parameters (argv via jq
+# as JSON on stdin) and the database is opened read-only by lib/db_query.py,
+# so a session id can never change the shape of a query, whatever it contains.
+# The legacy 1.x path keeps sql_escape; both carry the same adversarial tests.
+#
+# Usage: _oc_db_query <sql> [param ...]
+# Prints rows, columns tab-separated (NULL prints empty). Returns non-zero
+# when the database is missing, no python3 exists, or the query fails.
+# Note: bash cannot pass an embedded NUL byte through an argument list, so a
+# parameter holding one arrives truncated - a lookup with such a value simply
+# matches no row (no stored id can contain one; delete_session's format gate
+# rejects it first anyway).
+_oc_db_query() {
+	local sql="$1"
+	shift
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
+	local py
+	py=$(oc_python) || return 1
+	local params
+	params=$(jq -cn --args '$ARGS.positional' -- "$@") || return 1
+	printf '%s\n' "$params" | "$py" -B "${BASH_SOURCE%/*}/db_query.py" "$OCPROBE_OPencode_DB" "$sql"
 }
 
 # Get session age in milliseconds
 session_age_ms() {
 	local sid="$1"
-	local sid_escaped
-	sid_escaped=$(sql_escape "$sid") || return 1
-
 	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
 
-	local table
-	table=$(_oc_session_table)
-
 	local age_ms
-	age_ms=$(sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT (strftime('%s','now')*1000) - time_created FROM ${table} WHERE id='${sid_escaped}' LIMIT 1;" \
-		2>/dev/null) || return 1
+	if oc_db_is_v2; then
+		# Bound parameters on every 2.x path; the table is the fixed 2.x name.
+		age_ms=$(_oc_db_query \
+			"SELECT (strftime('%s','now')*1000) - time_created FROM session_v2 WHERE id = ? LIMIT 1;" \
+			"$sid") || return 1
+	else
+		local sid_escaped
+		sid_escaped=$(sql_escape "$sid") || return 1
+		age_ms=$(sqlite3 -readonly "$OCPROBE_OPencode_DB" \
+			"SELECT (strftime('%s','now')*1000) - time_created FROM session WHERE id='${sid_escaped}' LIMIT 1;" \
+			2>/dev/null) || return 1
+	fi
 
 	[[ -n "$age_ms" ]] || return 1
 	echo "$age_ms"
@@ -57,10 +76,9 @@ session_age_ms() {
 session_has_legacy_row() {
 	local sid="$1"
 	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
-	local sid_esc
-	sid_esc=$(sql_escape "$sid") || return 1
-	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT 1 FROM session WHERE id='${sid_esc}' LIMIT 1;" 2>/dev/null | grep -q 1
+	local hit
+	hit=$(_oc_db_query "SELECT 1 FROM session WHERE id = ? LIMIT 1;" "$sid") || return 1
+	[[ -n "$hit" ]]
 }
 
 # True when <sid> sits in a session tree: it has a parent, or another session
@@ -70,10 +88,11 @@ session_has_legacy_row() {
 session_in_tree() {
 	local sid="$1"
 	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
-	local sid_esc
-	sid_esc=$(sql_escape "$sid") || return 1
-	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT 1 FROM session_v2 WHERE parent_id='${sid_esc}' OR (id='${sid_esc}' AND parent_id IS NOT NULL) LIMIT 1;" 2>/dev/null | grep -q 1
+	local hit
+	hit=$(_oc_db_query \
+		"SELECT 1 FROM session_v2 WHERE parent_id = ? OR (id = ? AND parent_id IS NOT NULL) LIMIT 1;" \
+		"$sid" "$sid") || return 1
+	[[ -n "$hit" ]]
 }
 
 # True when <sid> contains tool calls. Probe sessions are pure text: one
@@ -84,12 +103,12 @@ session_in_tree() {
 session_has_tool_calls() {
 	local sid="$1"
 	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
-	local sid_esc
-	sid_esc=$(sql_escape "$sid") || return 1
-	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT 1 FROM session_message WHERE session_id='${sid_esc}' AND json_valid(data) AND EXISTS (SELECT 1 FROM json_each(data, '\$.content') WHERE json_extract(value, '\$.type') = 'tool') LIMIT 1;" 2>/dev/null | grep -q 1 && return 0
-	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT 1 FROM session_part WHERE session_id='${sid_esc}' AND type='tool' LIMIT 1;" 2>/dev/null | grep -q 1
+	local hit
+	hit=$(_oc_db_query \
+		"SELECT 1 FROM session_message WHERE session_id = ? AND json_valid(data) AND EXISTS (SELECT 1 FROM json_each(data, '\$.content') WHERE json_extract(value, '\$.type') = 'tool') LIMIT 1;" \
+		"$sid") && [[ -n "$hit" ]] && return 0
+	hit=$(_oc_db_query "SELECT 1 FROM session_part WHERE session_id = ? AND type = 'tool' LIMIT 1;" "$sid") || return 1
+	[[ -n "$hit" ]]
 }
 
 # Text of the first user message of <sid> (empty when there is none or it
@@ -98,21 +117,25 @@ session_has_tool_calls() {
 session_first_user_text() {
 	local sid="$1"
 	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
-	local sid_esc
-	sid_esc=$(sql_escape "$sid") || return 1
-	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT COALESCE(json_extract(data, '\$.text'), '') FROM session_message WHERE session_id='${sid_esc}' AND type='user' AND json_valid(data) ORDER BY seq LIMIT 1;" 2>/dev/null
+	_oc_db_query \
+		"SELECT COALESCE(json_extract(data, '\$.text'), '') FROM session_message WHERE session_id = ? AND type = 'user' AND json_valid(data) ORDER BY seq LIMIT 1;" \
+		"$sid"
 }
 
 # Number of messages belonging to <sid> in the live table.
 session_message_count() {
 	local sid="$1"
 	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
-	local sid_esc table
-	sid_esc=$(sql_escape "$sid") || return 1
-	table=$(_oc_session_table)
-	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT (SELECT COUNT(*) FROM ${table} WHERE id='${sid_esc}') + (SELECT COUNT(*) FROM session_message WHERE session_id='${sid_esc}');" 2>/dev/null
+	if oc_db_is_v2; then
+		_oc_db_query \
+			"SELECT (SELECT COUNT(*) FROM session_v2 WHERE id = ?) + (SELECT COUNT(*) FROM session_message WHERE session_id = ?);" \
+			"$sid" "$sid"
+	else
+		local sid_esc
+		sid_esc=$(sql_escape "$sid") || return 1
+		sqlite3 -readonly "$OCPROBE_OPencode_DB" \
+			"SELECT (SELECT COUNT(*) FROM session WHERE id='${sid_esc}') + (SELECT COUNT(*) FROM message WHERE session_id='${sid_esc}');" 2>/dev/null
+	fi
 }
 
 # Delete session
@@ -153,12 +176,12 @@ delete_session() {
 	title="${row#*$'\t'}"
 
 	case "$title" in
-	"${OCPROBE_PROBE_TITLE_PREFIX}"* | "${OCPROBE_PROBE_TITLE_PREFIX_LEGACY}"* | "$validate_title_prefix"*)
-		;;
-	*)
-		log_error "delete_session: refusing to delete $sid — title '$title' is not a probe session"
-		return 1
-		;;
+		"${OCPROBE_PROBE_TITLE_PREFIX}"* | "${OCPROBE_PROBE_TITLE_PREFIX_LEGACY}"* | "$validate_title_prefix"*)
+			;;
+		*)
+			log_error "delete_session: refusing to delete $sid — title '$title' is not a probe session"
+			return 1
+			;;
 	esac
 
 	# (c) Generation gates. On a 2.x database a CLI delete removes only the
@@ -183,11 +206,11 @@ delete_session() {
 		local first_text
 		first_text=$(session_first_user_text "$sid")
 		case "$first_text" in
-		"$OCPROBE_PROBE_PROMPT" | "$OCPROBE_VALIDATE_PROBE_PROMPT") ;;
-		*)
-			log_error "delete_session: refusing to delete $sid — its first user message is not a configured probe prompt"
-			return 1
-			;;
+			"$OCPROBE_PROBE_PROMPT" | "$OCPROBE_VALIDATE_PROBE_PROMPT") ;;
+			*)
+				log_error "delete_session: refusing to delete $sid — its first user message is not a configured probe prompt"
+				return 1
+				;;
 		esac
 		local msg_count
 		msg_count=$(session_message_count "$sid")
@@ -197,7 +220,23 @@ delete_session() {
 		fi
 	fi
 
-	opencode session delete "$sid" >/dev/null 2>&1
+	# (d) Delete through the CLI. The CLI's exit code and stderr are captured:
+	# on failure the caller sees a short sanitised reason (the CLI's message
+	# can name other sessions or filesystem paths — every id but this one,
+	# whose shape gate (a) already validated, is masked, paths are masked,
+	# and the line is capped) and the non-zero exit propagates.
+	local rc=0 err
+	err=$(opencode session delete "$sid" 2>&1) || rc=$?
+	if ((rc != 0)); then
+		local reason
+		reason=$(printf '%s\n' "$err" | head -n 1 | sed -E \
+			-e "s/${sid}/__SELF__/g" \
+			-e 's/ses_[A-Za-z0-9_-]+/<id>/g' \
+			-e "s/__SELF__/${sid}/g" \
+			-e 's/(^|[[:space:]])\/[A-Za-z0-9_./@:+~-]+/\1<path>/g' | cut -c1-160)
+		log_error "delete_session: opencode session delete failed for $sid (exit $rc): ${reason:-no message}"
+		return 1
+	fi
 }
 
 # List all sessions with titles
@@ -209,12 +248,15 @@ delete_session() {
 get_session_title() {
 	local sid="$1"
 	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
-	local sid_esc table
-	sid_esc=$(sql_escape "$sid") || return 1
-	table=$(_oc_session_table)
-	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT id || char(9) || COALESCE(title, '') FROM ${table} WHERE id='${sid_esc}' LIMIT 1;" \
-		2>/dev/null
+	if oc_db_is_v2; then
+		_oc_db_query "SELECT id || char(9) || COALESCE(title, '') FROM session_v2 WHERE id = ? LIMIT 1;" "$sid"
+	else
+		local sid_esc
+		sid_esc=$(sql_escape "$sid") || return 1
+		sqlite3 -readonly "$OCPROBE_OPencode_DB" \
+			"SELECT id || char(9) || COALESCE(title, '') FROM session WHERE id='${sid_esc}' LIMIT 1;" \
+			2>/dev/null
+	fi
 }
 
 # All session ids currently in the DB (complete, unpaginated).
@@ -251,12 +293,12 @@ list_probe_sessions_since() {
 	[[ "$since_ms" =~ ^[0-9]+$ ]] || return 0
 
 	local p1 p2 p3 age_hours max_msgs
-	p1=$(sql_escape "${OCPROBE_PROBE_TITLE_PREFIX:-ocprobe-probe}")
-	p2=$(sql_escape "${OCPROBE_PROBE_TITLE_PREFIX_LEGACY:-ocmm-probe}")
+	p1="${OCPROBE_PROBE_TITLE_PREFIX:-ocprobe-probe}"
+	p2="${OCPROBE_PROBE_TITLE_PREFIX_LEGACY:-ocmm-probe}"
 	# The validate worker titles its sessions "ocprobe-validate", which matched
 	# neither prefix above — so validate runs deleted almost nothing and leaked a
 	# session per probed model (842 observed). Keep all three in sync here.
-	p3=$(sql_escape "${OCPROBE_VALIDATE_TITLE_PREFIX:-ocprobe-validate}")
+	p3="${OCPROBE_VALIDATE_TITLE_PREFIX:-ocprobe-validate}"
 	age_hours="${OCPROBE_AGE_GUARD_HOURS:-24}"
 	max_msgs="${OCPROBE_MAX_MSG_COUNT:-4}"
 	[[ "$age_hours" =~ ^[0-9]+$ ]] || age_hours=24
@@ -268,30 +310,32 @@ list_probe_sessions_since() {
 		# delete unsafe (legacy row, session tree, tool calls, prompt
 		# mismatch) is applied here so the candidate list only ever contains
 		# rows delete_session would accept — delete_session still re-checks
-		# all of them independently.
+		# all of them independently. Every value in the query (title
+		# prefixes, probe prompts, the since bound, the age and message
+		# ceilings) is a bound parameter; none of it is interpolated.
 		local p4 p5
-		p4=$(sql_escape "${OCPROBE_PROBE_PROMPT:-Reply with exactly: OK}")
-		p5=$(sql_escape "${OCPROBE_VALIDATE_PROBE_PROMPT:-Reply with exactly: OK}")
-		sqlite3 -readonly "$OCPROBE_OPencode_DB" <<PY
+		p4="${OCPROBE_PROBE_PROMPT:-Reply with exactly: OK}"
+		p5="${OCPROBE_VALIDATE_PROBE_PROMPT:-Reply with exactly: OK}"
+		_oc_db_query "
 SELECT s.id || char(9) || COALESCE(s.title, '')
 FROM session_v2 s
-WHERE s.time_created >= ${since_ms}
-  AND s.time_created >  (strftime('%s','now') - ${age_hours}*3600) * 1000
-  AND (s.title LIKE '${p1}%' OR s.title LIKE '${p2}%' OR s.title LIKE '${p3}%')
-  AND (SELECT COUNT(*) FROM session_message m WHERE m.session_id = s.id) <= ${max_msgs}
+WHERE s.time_created >= ?
+  AND s.time_created >  (strftime('%s','now') - ? * 3600) * 1000
+  AND (s.title LIKE ? || '%' OR s.title LIKE ? || '%' OR s.title LIKE ? || '%')
+  AND (SELECT COUNT(*) FROM session_message m WHERE m.session_id = s.id) <= ?
   AND (SELECT COALESCE(json_extract(m.data, '\$.text'), '') FROM session_message m
-       WHERE m.session_id = s.id AND m.type = 'user' AND json_valid(m.data)
-       ORDER BY m.seq LIMIT 1) IN ('${p4}', '${p5}')
+	   WHERE m.session_id = s.id AND m.type = 'user' AND json_valid(m.data)
+	   ORDER BY m.seq LIMIT 1) IN (?, ?)
   AND s.parent_id IS NULL
   AND NOT EXISTS (SELECT 1 FROM session_v2 c WHERE c.parent_id = s.id)
   AND NOT EXISTS (SELECT 1 FROM session l WHERE l.id = s.id)
   AND NOT EXISTS (SELECT 1 FROM session_message m
-                  WHERE m.session_id = s.id AND m.type = 'assistant' AND json_valid(m.data)
-                    AND EXISTS (SELECT 1 FROM json_each(m.data, '\$.content')
-                                WHERE json_extract(value, '\$.type') = 'tool'))
+				  WHERE m.session_id = s.id AND m.type = 'assistant' AND json_valid(m.data)
+					AND EXISTS (SELECT 1 FROM json_each(m.data, '\$.content')
+								WHERE json_extract(value, '\$.type') = 'tool'))
   AND NOT EXISTS (SELECT 1 FROM session_part sp WHERE sp.session_id = s.id AND sp.type = 'tool')
-ORDER BY s.time_created;
-PY
+ORDER BY s.time_created;" \
+			"$since_ms" "$age_hours" "$p1" "$p2" "$p3" "$max_msgs" "$p4" "$p5"
 		return 0
 	fi
 
