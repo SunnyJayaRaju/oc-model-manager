@@ -10,6 +10,18 @@ DEFAULT_CONFIG_DIR="$HOME/.config/ocprobe"
 DEFAULT_CONFIG_FILE="$DEFAULT_CONFIG_DIR/config.yaml"
 DEFAULT_STATE_DIR="$HOME/.local/state/ocprobe"
 
+# OpenCode's own config. When the built-in default .json is absent and a
+# .jsonc sits next to it, the .jsonc is managed instead (see
+# resolve_opencode_config_file below); an explicitly configured path is
+# always used exactly as written.
+DEFAULT_OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
+
+# Reading and editing OpenCode's config file (.json and .jsonc) lives in
+# opencodecfg.sh; every consumer of config.sh needs it.
+OC_CFG_DIR="${BASH_SOURCE[0]%/*}"
+# shellcheck disable=SC1091  # sourced from the same directory by construction
+[[ -f "$OC_CFG_DIR/opencodecfg.sh" ]] && source "$OC_CFG_DIR/opencodecfg.sh"
+
 # ---- Config Schema (embedded for validation) -------------------------------
 read -r -d '' CONFIG_SCHEMA <<'SCHEMA' || true
 # yaml-language-server: $schema=https://json-schema.org/draft/2020-12/schema
@@ -200,6 +212,30 @@ SCHEMA
 : "${OCPROBE_LOG_FORMAT:=text}"
 : "${OCPROBE_LOG_FILE_ENABLED:=1}"
 
+# ---- OpenCode config discovery ---------------------------------------------
+# OpenCode itself reads opencode.jsonc in preference to opencode.json, so ocm
+# manages the same file OpenCode would read. Resolution order:
+#   1. an explicit opencode.config_path (operator-configured) — used as written
+#   2. the built-in default .json, unless absent while a .jsonc exists
+#   3. the built-in default .json
+# A .jsonc must never cause a plain .json to be created or written next to it.
+resolve_opencode_config_file() {
+	local wanted="${OCPROBE_OPencode_CONFIG:-$DEFAULT_OPENCODE_CONFIG}"
+	wanted="${wanted/#\~/$HOME}"
+	if [[ "$wanted" != "$DEFAULT_OPENCODE_CONFIG" ]]; then
+		printf '%s\n' "$wanted"
+		return 0
+	fi
+	if [[ ! -f "$wanted" ]]; then
+		local jsonc="${wanted%.json}.jsonc"
+		[[ -f "$jsonc" ]] && {
+			printf '%s\n' "$jsonc"
+			return 0
+		}
+	fi
+	printf '%s\n' "$wanted"
+}
+
 # ---- Load Configuration -----------------------------------------------------
 load_config() {
 	local config_file="${OCPROBE_CONFIG_OVERRIDE:-$DEFAULT_CONFIG_FILE}"
@@ -254,6 +290,10 @@ load_config() {
 			log_warn "Ignoring unexpected config output line: $line"
 		fi
 	done <<<"$config_vars"
+
+	# ---- OpenCode config discovery (explicit path > .jsonc > .json) -----------
+	OCPROBE_OPencode_CONFIG="$(resolve_opencode_config_file)"
+	export OCPROBE_OPencode_CONFIG
 
 	# ---- Reserved keys ---------------------------------------------------------
 	# Accepted for backwards compatibility, read by nothing. Warn ONCE, naming
@@ -390,7 +430,7 @@ EOF
 
 validate_config() {
 	local file="$1"
-	python3 - "$file" "$CONFIG_SCHEMA" <<'PYEOF'
+	"$(oc_python)" - "$file" "$CONFIG_SCHEMA" <<'PYEOF'
 import sys, yaml, json, jsonschema
 from pathlib import Path
 
@@ -415,7 +455,7 @@ PYEOF
 
 parse_config_yaml() {
 	local file="$1"
-	python3 - "$file" <<'PYEOF'
+	"$(oc_python)" - "$file" <<'PYEOF'
 import sys, yaml, os
 from pathlib import Path
 
