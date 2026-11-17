@@ -9,8 +9,16 @@ set -euo pipefail
 # ---- List Sessions ----------------------------------------------------------
 cmd_session_list() {
 	load_config
-	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT s.id, s.title, (SELECT COUNT(*) FROM message m WHERE m.session_id=s.id) AS msgs, datetime(s.time_updated/1000,'unixepoch','localtime') FROM session s ORDER BY s.time_updated DESC;"
+	if oc_db_is_v2; then
+		# OpenCode 2.x reads only session_v2 rows; message counts come from
+		# session_message. Legacy rows on a 2.x database are invisible to the
+		# UI, so listing them would only confuse.
+		sqlite3 -readonly "$OCPROBE_OPencode_DB" \
+			"SELECT s.id, s.title, (SELECT COUNT(*) FROM session_message m WHERE m.session_id=s.id) AS msgs, datetime(s.time_updated/1000,'unixepoch','localtime') FROM session_v2 s ORDER BY s.time_updated DESC;"
+	else
+		sqlite3 -readonly "$OCPROBE_OPencode_DB" \
+			"SELECT s.id, s.title, (SELECT COUNT(*) FROM message m WHERE m.session_id=s.id) AS msgs, datetime(s.time_updated/1000,'unixepoch','localtime') FROM session s ORDER BY s.time_updated DESC;"
+	fi
 }
 
 # ---- In-place sed variant ----------------------------------------------------
@@ -30,6 +38,10 @@ else
 fi
 
 # ---- Backup Session ---------------------------------------------------------
+# On OpenCode 2.x the backup is OpenCode's own export (a JSON document its
+# import understands), never a SQL INSERT dump: the 2.x UI reads only
+# session_v2 rows, so SQL inserts into the legacy tables would be invisible
+# to it. On 1.x the SQL dump path stays exactly as it was.
 cmd_session_backup() {
 	local sid="${1:-}"
 	[[ -n "$sid" ]] || {
@@ -46,6 +58,33 @@ cmd_session_backup() {
 	local backup_dir="${OCPROBE_SESSION_BACKUP_DIR:-$HOME/.local/share/opencode/session-backups}"
 	backup_dir="${backup_dir/#\~/$HOME}"
 	mkdir -p "$backup_dir"
+
+	if oc_db_is_v2; then
+		local srv="${OCPROBE_OPENCODE_SERVER:-}"
+		if [[ -z "$srv" ]]; then
+			# `opencode session export` without --server may connect to a
+			# different background service than the database the operator is
+			# looking at, so the export could silently hold the wrong rows.
+			# Require the server explicitly, exactly like restore.
+			log_error "backing up on OpenCode 2.x requires the server that owns this database: set OCPROBE_OPENCODE_SERVER=<url> (e.g. http://127.0.0.1:4096) and re-run"
+			return 1
+		fi
+		local out
+		out="$backup_dir/${sid}-$(date +%Y%m%d-%H%M%S).json"
+		if ! opencode session export "$sid" --server "$srv" >"$out"; then
+			log_error "export failed for $sid (is OCPROBE_OPENCODE_SERVER serving this database?)"
+			rm -f "$out"
+			return 1
+		fi
+		if ! grep -q "\"$sid\"" "$out"; then
+			log_error "export for $sid does not contain the session (wrong server or missing session)"
+			rm -f "$out"
+			return 1
+		fi
+		log_info "backed up $sid -> $out (OpenCode export, $(wc -c <"$out" | tr -d ' ') bytes)"
+		echo "$out"
+		return 0
+	fi
 
 	local out
 	out="$backup_dir/${sid}-$(date +%Y%m%d-%H%M%S).sql"
@@ -90,6 +129,33 @@ cmd_session_restore() {
 	}
 
 	load_config
+
+	# OpenCode 2.x: restore runs through OpenCode's own import, which writes
+	# through a server — this machine's database file is never touched
+	# directly. The server must be given explicitly (OCPROBE_OPENCODE_SERVER),
+	# because importing through the wrong server would write the session into
+	# a different database than the one the operator is looking at. A legacy
+	# .sql dump is refused: the 2.x UI never reads rows inserted into the
+	# legacy tables.
+	if oc_db_is_v2; then
+		case "$file" in
+			*.sql)
+				log_error "refusing to restore $file on OpenCode 2.x: .sql dumps are the 1.x format; the 2.x UI never reads rows inserted into the legacy tables"
+				return 1
+				;;
+		esac
+		local srv="${OCPROBE_OPENCODE_SERVER:-}"
+		if [[ -z "$srv" ]]; then
+			log_error "restoring on OpenCode 2.x requires the server that owns this database: set OCPROBE_OPENCODE_SERVER=<url> (e.g. http://127.0.0.1:4096) and re-run"
+			return 1
+		fi
+		if ! opencode session import "$file" --server "$srv"; then
+			log_error "import failed — this machine's database file was not touched"
+			return 1
+		fi
+		log_info "restored from $file (imported through $srv)"
+		return 0
+	fi
 
 	# Back up the live database BEFORE writing to it. backup_opencode_config()
 	# backs up opencode.json (and cmd_session does not source validate.sh), so use
@@ -154,14 +220,33 @@ cmd_session_restore() {
 }
 
 # ---- Cleanup Probe Sessions (standalone) -----------------------------------
+# Dry-run by default: prints what would be deleted and changes nothing.
+# `--apply` performs the deletes; any delete failure makes the command exit
+# non-zero. Sessions younger than 15 minutes are never listed: they may be
+# mid-probe in a concurrent run.
 cmd_session_cleanup() {
+	local apply_mode=0
+	case "${1:-}" in
+		--apply | -y) apply_mode=1 ;;
+		"") ;;
+		*)
+			log_error "usage: ocprobe session cleanup [--apply]"
+			return 1
+			;;
+	esac
+
 	load_config
 	acquire_lock
 	trap 'release_lock' EXIT INT TERM
 
-	log_info "Cleaning probe sessions (probe + validate)..."
+	if ((apply_mode)); then
+		log_info "Cleaning probe sessions (probe + validate)..."
+	else
+		log_info "DRY-RUN: probe sessions that would be deleted (pass --apply to delete them):"
+	fi
 
-	local deleted=0 sid
+	local deleted=0 failed=0 sid table
+	if oc_db_is_v2; then table=session_v2; else table=session; fi
 	# Reuse the DB-backed listing rather than `opencode session list`, which
 	# paginates at 100 rows — on a large run the CLI view hides most of the
 	# sessions the run just created, so cleanup deleted only what it could see
@@ -181,20 +266,44 @@ cmd_session_cleanup() {
 	# before removing anything. Read it into _ so the tab-delimited line parses.
 	while IFS=$'\t' read -r sid _; do
 		[[ -n "$sid" ]] || continue
-		local sid_esc
-		sid_esc=$(sql_escape "$sid") || continue
 		# Only delete fresh probe sessions, using the configured fresh guard
-		# rather than a hardcoded hour.
-		if sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-			"SELECT 1 FROM session WHERE id='${sid_esc}' AND time_created > (strftime('%s','now')-${OCPROBE_FRESH_GUARD_HOURS}*3600)*1000 LIMIT 1;" 2>/dev/null | grep -q 1; then
-			delete_session "$sid" && {
+		# rather than a hardcoded hour, and never sessions younger than 15
+		# minutes (by time_updated): they may be mid-probe in a concurrent run.
+		# On 2.x the freshness check is a bound-parameter query (the id never
+		# touches SQL text); on 1.x it keeps the sql_escape legacy path.
+		local is_fresh=""
+		if oc_db_is_v2; then
+			is_fresh=$(_oc_db_query \
+				"SELECT 1 FROM session_v2 WHERE id = ? AND time_created > (strftime('%s','now') - ? * 3600) * 1000 AND time_updated <= (strftime('%s','now') - 15*60) * 1000 LIMIT 1;" \
+				"$sid" "$OCPROBE_FRESH_GUARD_HOURS") || continue
+		else
+			local sid_esc
+			sid_esc=$(sql_escape "$sid") || continue
+			is_fresh=$(sqlite3 -readonly "$OCPROBE_OPencode_DB" \
+				"SELECT 1 FROM ${table} WHERE id='${sid_esc}' AND time_created > (strftime('%s','now')-${OCPROBE_FRESH_GUARD_HOURS}*3600)*1000 AND time_updated <= (strftime('%s','now')-15*60)*1000 LIMIT 1;" 2>/dev/null) || continue
+		fi
+		if [[ -n "$is_fresh" ]]; then
+			if ((apply_mode)); then
+				if delete_session "$sid"; then
+					deleted=$((deleted + 1))
+					log_info "deleted probe session $sid"
+				else
+					failed=$((failed + 1))
+					log_error "could not delete probe session $sid"
+				fi
+			else
 				deleted=$((deleted + 1))
-				log_info "deleted probe session $sid"
-			}
+				log_info "  would delete: $sid"
+			fi
 		fi
 	done < <(list_probe_sessions_since 0)
 
-	log_info "cleaned $deleted probe session(s)"
+	if ((apply_mode)); then
+		log_info "cleaned $deleted probe session(s)"
+		((failed == 0)) || return 1
+	else
+		log_info "dry-run complete: $deleted probe session(s) would be deleted; nothing was changed"
+	fi
 }
 
 # ---- Command Dispatcher -----------------------------------------------------
@@ -203,14 +312,14 @@ cmd_session() {
 	shift || true
 
 	case "$subcmd" in
-	list) cmd_session_list "$@" ;;
-	backup) cmd_session_backup "$@" ;;
-	restore) cmd_session_restore "$@" ;;
-	cleanup) cmd_session_cleanup "$@" ;;
-	*)
-		log_error "Unknown session command: $subcmd"
-		echo "Usage: ocprobe session [list|backup|restore|cleanup]"
-		return 1
-		;;
+		list) cmd_session_list "$@" ;;
+		backup) cmd_session_backup "$@" ;;
+		restore) cmd_session_restore "$@" ;;
+		cleanup) cmd_session_cleanup "$@" ;;
+		*)
+			log_error "Unknown session command: $subcmd"
+			echo "Usage: ocprobe session [list|backup|restore|cleanup]"
+			return 1
+			;;
 	esac
 }

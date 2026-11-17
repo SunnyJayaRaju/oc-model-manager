@@ -8,21 +8,134 @@ set -euo pipefail
 
 # ---- Session Queries --------------------------------------------------------
 
+# True when the managed database has the OpenCode 2.x session schema
+# (session_v2 + session_message + session_part). Session code branches on
+# this: on a 2.x database the live rows are in session_v2, on a 1.x database
+# in session. A missing or unreadable database answers "no" (legacy), so a
+# caller that only reads keeps working; the file checks still guard writes.
+oc_db_is_v2() {
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
+	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
+		"SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_v2' LIMIT 1;" \
+		2>/dev/null | grep -q 1
+}
+
+# ---- Bound-parameter SQL runner (OpenCode 2.x paths) ------------------------
+# Every 2.x session query runs through this instead of string-interpolated
+# `sqlite3 -readonly` SQL: values reach SQL as bound parameters (argv via jq
+# as JSON on stdin) and the database is opened read-only by lib/db_query.py,
+# so a session id can never change the shape of a query, whatever it contains.
+# The legacy 1.x path keeps sql_escape; both carry the same adversarial tests.
+#
+# Usage: _oc_db_query <sql> [param ...]
+# Prints rows, columns tab-separated (NULL prints empty). Returns non-zero
+# when the database is missing, no python3 exists, or the query fails.
+# Note: bash cannot pass an embedded NUL byte through an argument list, so a
+# parameter holding one arrives truncated - a lookup with such a value simply
+# matches no row (no stored id can contain one; delete_session's format gate
+# rejects it first anyway).
+_oc_db_query() {
+	local sql="$1"
+	shift
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
+	local py
+	py=$(oc_python) || return 1
+	local params
+	params=$(jq -cn --args '$ARGS.positional' -- "$@") || return 1
+	printf '%s\n' "$params" | "$py" -B "${BASH_SOURCE%/*}/db_query.py" "$OCPROBE_OPencode_DB" "$sql"
+}
+
 # Get session age in milliseconds
 session_age_ms() {
 	local sid="$1"
-	local sid_escaped
-	sid_escaped=$(sql_escape "$sid") || return 1
-
 	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
 
 	local age_ms
-	age_ms=$(sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT (strftime('%s','now')*1000) - time_created FROM session WHERE id='${sid_escaped}' LIMIT 1;" \
-		2>/dev/null) || return 1
+	if oc_db_is_v2; then
+		# Bound parameters on every 2.x path; the table is the fixed 2.x name.
+		age_ms=$(_oc_db_query \
+			"SELECT (strftime('%s','now')*1000) - time_created FROM session_v2 WHERE id = ? LIMIT 1;" \
+			"$sid") || return 1
+	else
+		local sid_escaped
+		sid_escaped=$(sql_escape "$sid") || return 1
+		age_ms=$(sqlite3 -readonly "$OCPROBE_OPencode_DB" \
+			"SELECT (strftime('%s','now')*1000) - time_created FROM session WHERE id='${sid_escaped}' LIMIT 1;" \
+			2>/dev/null) || return 1
+	fi
 
 	[[ -n "$age_ms" ]] || return 1
 	echo "$age_ms"
+}
+
+# True when <sid> also has a row in the LEGACY session table. On a 2.x
+# database a CLI delete removes only the v2 row (verified on 2.3.0), so a
+# session backed by a legacy row can only be hidden, never removed — the
+# guarded delete must refuse those ids. On 1.x the legacy table IS the live
+# one and this gate must not apply. A missing legacy table answers "no".
+session_has_legacy_row() {
+	local sid="$1"
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
+	local hit
+	hit=$(_oc_db_query "SELECT 1 FROM session WHERE id = ? LIMIT 1;" "$sid") || return 1
+	[[ -n "$hit" ]]
+}
+
+# True when <sid> sits in a session tree: it has a parent, or another session
+# names it as parent. Tree members are deleted whole through OpenCode, never
+# one row at a time. Only meaningful on a 2.x database (the legacy table has
+# the same parent_id column, but the CLI delete there removes the real row).
+session_in_tree() {
+	local sid="$1"
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
+	local hit
+	hit=$(_oc_db_query \
+		"SELECT 1 FROM session_v2 WHERE parent_id = ? OR (id = ? AND parent_id IS NOT NULL) LIMIT 1;" \
+		"$sid" "$sid") || return 1
+	[[ -n "$hit" ]]
+}
+
+# True when <sid> contains tool calls. Probe sessions are pure text: one
+# user prompt, one assistant answer. A tool call means a working session.
+# Checked in the message JSON (where 2.3.0 stores content items of type
+# "tool"; verified against real sessions) and in session_part (the schema
+# keeps a typed part table even though 2.3.0 leaves it empty).
+session_has_tool_calls() {
+	local sid="$1"
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
+	local hit
+	hit=$(_oc_db_query \
+		"SELECT 1 FROM session_message WHERE session_id = ? AND json_valid(data) AND EXISTS (SELECT 1 FROM json_each(data, '\$.content') WHERE json_extract(value, '\$.type') = 'tool') LIMIT 1;" \
+		"$sid") && [[ -n "$hit" ]] && return 0
+	hit=$(_oc_db_query "SELECT 1 FROM session_part WHERE session_id = ? AND type = 'tool' LIMIT 1;" "$sid") || return 1
+	[[ -n "$hit" ]]
+}
+
+# Text of the first user message of <sid> (empty when there is none or it
+# does not parse). The exact probe-prompt match in delete_session compares
+# this against the configured probe prompts.
+session_first_user_text() {
+	local sid="$1"
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
+	_oc_db_query \
+		"SELECT COALESCE(json_extract(data, '\$.text'), '') FROM session_message WHERE session_id = ? AND type = 'user' AND json_valid(data) ORDER BY seq LIMIT 1;" \
+		"$sid"
+}
+
+# Number of messages belonging to <sid> in the live table.
+session_message_count() {
+	local sid="$1"
+	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
+	if oc_db_is_v2; then
+		_oc_db_query \
+			"SELECT (SELECT COUNT(*) FROM session_v2 WHERE id = ?) + (SELECT COUNT(*) FROM session_message WHERE session_id = ?);" \
+			"$sid" "$sid"
+	else
+		local sid_esc
+		sid_esc=$(sql_escape "$sid") || return 1
+		sqlite3 -readonly "$OCPROBE_OPencode_DB" \
+			"SELECT (SELECT COUNT(*) FROM session WHERE id='${sid_esc}') + (SELECT COUNT(*) FROM message WHERE session_id='${sid_esc}');" 2>/dev/null
+	fi
 }
 
 # Delete session
@@ -63,15 +176,67 @@ delete_session() {
 	title="${row#*$'\t'}"
 
 	case "$title" in
-	"${OCPROBE_PROBE_TITLE_PREFIX}"* | "${OCPROBE_PROBE_TITLE_PREFIX_LEGACY}"* | "$validate_title_prefix"*)
-		;;
-	*)
-		log_error "delete_session: refusing to delete $sid — title '$title' is not a probe session"
-		return 1
-		;;
+		"${OCPROBE_PROBE_TITLE_PREFIX}"* | "${OCPROBE_PROBE_TITLE_PREFIX_LEGACY}"* | "$validate_title_prefix"*)
+			;;
+		*)
+			log_error "delete_session: refusing to delete $sid — title '$title' is not a probe session"
+			return 1
+			;;
 	esac
 
-	opencode session delete "$sid" >/dev/null 2>&1
+	# (c) Generation gates. On a 2.x database a CLI delete removes only the
+	# v2 row, so any of the conditions below makes a delete unsafe and the
+	# session is left alone: a legacy row would survive as a ghost, a tree
+	# member must be deleted whole, tool calls or a long conversation mean it
+	# is a working session, and the first user message must be exactly a
+	# probe prompt. On 1.x none of these apply (there is no session_v2).
+	if oc_db_is_v2; then
+		if session_has_legacy_row "$sid"; then
+			log_error "delete_session: refusing to delete $sid — a legacy (v1) row also exists and a CLI delete would leave it behind"
+			return 1
+		fi
+		if session_in_tree "$sid"; then
+			log_error "delete_session: refusing to delete $sid — it has a parent or child session; delete the tree through OpenCode instead"
+			return 1
+		fi
+		if session_has_tool_calls "$sid"; then
+			log_error "delete_session: refusing to delete $sid — it contains tool calls, so it is a working session, not a probe"
+			return 1
+		fi
+		local first_text
+		first_text=$(session_first_user_text "$sid")
+		case "$first_text" in
+			"$OCPROBE_PROBE_PROMPT" | "$OCPROBE_VALIDATE_PROBE_PROMPT") ;;
+			*)
+				log_error "delete_session: refusing to delete $sid — its first user message is not a configured probe prompt"
+				return 1
+				;;
+		esac
+		local msg_count
+		msg_count=$(session_message_count "$sid")
+		if [[ "$msg_count" =~ ^[0-9]+$ ]] && ((msg_count > ${OCPROBE_MAX_MSG_COUNT:-4})); then
+			log_error "delete_session: refusing to delete $sid — $msg_count messages exceeds the probe message ceiling ($OCPROBE_MAX_MSG_COUNT)"
+			return 1
+		fi
+	fi
+
+	# (d) Delete through the CLI. The CLI's exit code and stderr are captured:
+	# on failure the caller sees a short sanitised reason (the CLI's message
+	# can name other sessions or filesystem paths — every id but this one,
+	# whose shape gate (a) already validated, is masked, paths are masked,
+	# and the line is capped) and the non-zero exit propagates.
+	local rc=0 err
+	err=$(opencode session delete "$sid" 2>&1) || rc=$?
+	if ((rc != 0)); then
+		local reason
+		reason=$(printf '%s\n' "$err" | head -n 1 | sed -E \
+			-e "s/${sid}/__SELF__/g" \
+			-e 's/ses_[A-Za-z0-9_-]+/<id>/g' \
+			-e "s/__SELF__/${sid}/g" \
+			-e 's/(^|[[:space:]])\/[A-Za-z0-9_./@:+~-]+/\1<path>/g' | cut -c1-160)
+		log_error "delete_session: opencode session delete failed for $sid (exit $rc): ${reason:-no message}"
+		return 1
+	fi
 }
 
 # List all sessions with titles
@@ -83,11 +248,15 @@ delete_session() {
 get_session_title() {
 	local sid="$1"
 	[[ -f "$OCPROBE_OPencode_DB" ]] || return 1
-	local sid_esc
-	sid_esc=$(sql_escape "$sid") || return 1
-	sqlite3 -readonly "$OCPROBE_OPencode_DB" \
-		"SELECT id || char(9) || COALESCE(title, '') FROM session WHERE id='${sid_esc}' LIMIT 1;" \
-		2>/dev/null
+	if oc_db_is_v2; then
+		_oc_db_query "SELECT id || char(9) || COALESCE(title, '') FROM session_v2 WHERE id = ? LIMIT 1;" "$sid"
+	else
+		local sid_esc
+		sid_esc=$(sql_escape "$sid") || return 1
+		sqlite3 -readonly "$OCPROBE_OPencode_DB" \
+			"SELECT id || char(9) || COALESCE(title, '') FROM session WHERE id='${sid_esc}' LIMIT 1;" \
+			2>/dev/null
+	fi
 }
 
 # All session ids currently in the DB (complete, unpaginated).
@@ -95,7 +264,16 @@ get_session_title() {
 # safety baseline: on a busy history it silently omits pre-existing sessions.
 list_all_session_ids() {
 	[[ -f "$OCPROBE_OPencode_DB" ]] || return 0
-	sqlite3 -readonly "$OCPROBE_OPencode_DB" "SELECT id FROM session;" 2>/dev/null || true
+	if oc_db_is_v2; then
+		# Both tables: the safety baseline must cover v2 rows AND any legacy
+		# ghosts still sitting in the old table.
+		{
+			sqlite3 -readonly "$OCPROBE_OPencode_DB" "SELECT id FROM session_v2;" 2>/dev/null || true
+			sqlite3 -readonly "$OCPROBE_OPencode_DB" "SELECT id FROM session;" 2>/dev/null || true
+		} | sort -u
+	else
+		sqlite3 -readonly "$OCPROBE_OPencode_DB" "SELECT id FROM session;" 2>/dev/null || true
+	fi
 }
 
 # Enumerate probe sessions created at/after <epoch_ms> that are safe to delete.
@@ -115,16 +293,51 @@ list_probe_sessions_since() {
 	[[ "$since_ms" =~ ^[0-9]+$ ]] || return 0
 
 	local p1 p2 p3 age_hours max_msgs
-	p1=$(sql_escape "${OCPROBE_PROBE_TITLE_PREFIX:-ocprobe-probe}")
-	p2=$(sql_escape "${OCPROBE_PROBE_TITLE_PREFIX_LEGACY:-ocmm-probe}")
+	p1="${OCPROBE_PROBE_TITLE_PREFIX:-ocprobe-probe}"
+	p2="${OCPROBE_PROBE_TITLE_PREFIX_LEGACY:-ocmm-probe}"
 	# The validate worker titles its sessions "ocprobe-validate", which matched
 	# neither prefix above — so validate runs deleted almost nothing and leaked a
 	# session per probed model (842 observed). Keep all three in sync here.
-	p3=$(sql_escape "${OCPROBE_VALIDATE_TITLE_PREFIX:-ocprobe-validate}")
+	p3="${OCPROBE_VALIDATE_TITLE_PREFIX:-ocprobe-validate}"
 	age_hours="${OCPROBE_AGE_GUARD_HOURS:-24}"
 	max_msgs="${OCPROBE_MAX_MSG_COUNT:-4}"
 	[[ "$age_hours" =~ ^[0-9]+$ ]] || age_hours=24
 	[[ "$max_msgs" =~ ^[0-9]+$ ]] || max_msgs=4
+
+	if oc_db_is_v2; then
+		# OpenCode 2.x: live probe sessions are rows in session_v2; message
+		# counts come from session_message. Every exclusion that makes a
+		# delete unsafe (legacy row, session tree, tool calls, prompt
+		# mismatch) is applied here so the candidate list only ever contains
+		# rows delete_session would accept — delete_session still re-checks
+		# all of them independently. Every value in the query (title
+		# prefixes, probe prompts, the since bound, the age and message
+		# ceilings) is a bound parameter; none of it is interpolated.
+		local p4 p5
+		p4="${OCPROBE_PROBE_PROMPT:-Reply with exactly: OK}"
+		p5="${OCPROBE_VALIDATE_PROBE_PROMPT:-Reply with exactly: OK}"
+		_oc_db_query "
+SELECT s.id || char(9) || COALESCE(s.title, '')
+FROM session_v2 s
+WHERE s.time_created >= ?
+  AND s.time_created >  (strftime('%s','now') - ? * 3600) * 1000
+  AND (s.title LIKE ? || '%' OR s.title LIKE ? || '%' OR s.title LIKE ? || '%')
+  AND (SELECT COUNT(*) FROM session_message m WHERE m.session_id = s.id) <= ?
+  AND (SELECT COALESCE(json_extract(m.data, '\$.text'), '') FROM session_message m
+	   WHERE m.session_id = s.id AND m.type = 'user' AND json_valid(m.data)
+	   ORDER BY m.seq LIMIT 1) IN (?, ?)
+  AND s.parent_id IS NULL
+  AND NOT EXISTS (SELECT 1 FROM session_v2 c WHERE c.parent_id = s.id)
+  AND NOT EXISTS (SELECT 1 FROM session l WHERE l.id = s.id)
+  AND NOT EXISTS (SELECT 1 FROM session_message m
+				  WHERE m.session_id = s.id AND m.type = 'assistant' AND json_valid(m.data)
+					AND EXISTS (SELECT 1 FROM json_each(m.data, '\$.content')
+								WHERE json_extract(value, '\$.type') = 'tool'))
+  AND NOT EXISTS (SELECT 1 FROM session_part sp WHERE sp.session_id = s.id AND sp.type = 'tool')
+ORDER BY s.time_created;" \
+			"$since_ms" "$age_hours" "$p1" "$p2" "$p3" "$max_msgs" "$p4" "$p5"
+		return 0
+	fi
 
 	sqlite3 -readonly "$OCPROBE_OPencode_DB" <<PY
 SELECT s.id || char(9) || COALESCE(s.title, '')
@@ -231,6 +444,6 @@ get_active_graveyard() {
 	[[ -f "$OCPROBE_STATE_DIR/graveyard.jsonl" ]] || return 0
 
 	awk -F'\t' -v c="$cutoff_ms" '
-    NF >= 2 && $1 >= c { print $2 }
+	NF >= 2 && $1 >= c { print $2 }
   ' "$OCPROBE_STATE_DIR/graveyard.jsonl" 2>/dev/null | sort -u
 }

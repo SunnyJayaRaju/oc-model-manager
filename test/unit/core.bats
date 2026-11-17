@@ -69,7 +69,7 @@ teardown() {
 }
 
 @test "validate_model_name rejects invalid chars" {
-  run validate_model_name "openai/gpt@4"
+  run validate_model_name "openai/gpt 4"
   assert_failure
 }
 

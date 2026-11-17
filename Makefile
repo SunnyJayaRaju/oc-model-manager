@@ -6,7 +6,7 @@ VERSION := $(shell cat VERSION)
 DIST_DIR := dist/ocprobe-$(VERSION)
 PACKAGE := dist/ocprobe-$(VERSION).tar.gz
 
-.PHONY: all lint test test-unit test-integration build package install uninstall clean help man drift-check
+.PHONY: all lint test test-unit test-integration build package install uninstall clean help man drift-check setup
 
 all: lint test build
 
@@ -43,15 +43,51 @@ lint:
 	@for f in bin/ocprobe bin/oc-model-manager bin/oc-model-audit.sh bin/oc-session-backup lib/*.sh scripts/*.sh scripts/*/*.sh; do bash -n "$$f" || exit 1; done
 	@echo "Lint passed"
 
+## Create the project-local virtualenv used by `make test`. Honors
+## OCPROBE_PYTHON: when set, it is validated (yaml + jsonschema importable)
+## and no venv is created.
+setup:
+	@if [ -n "$${OCPROBE_PYTHON:-}" ]; then \
+		if "$${OCPROBE_PYTHON}" -c 'import yaml, jsonschema' >/dev/null 2>&1; then \
+			echo "OCPROBE_PYTHON=$${OCPROBE_PYTHON} set -- skipping .venv creation"; \
+		else \
+			echo "OCPROBE_PYTHON=$${OCPROBE_PYTHON} cannot import yaml/jsonschema -- run 'bash bin/ocprobe doctor' for install steps" >&2; \
+			exit 1; \
+		fi; \
+	elif [ -x .venv/bin/python3 ] && .venv/bin/python3 -c 'import yaml, jsonschema' >/dev/null 2>&1; then \
+		echo ".venv already ready (PyYAML + jsonschema importable)"; \
+	else \
+		python3 -m venv .venv; \
+		.venv/bin/python3 -m pip install --quiet --upgrade pip; \
+		.venv/bin/python3 -m pip install --quiet PyYAML jsonschema; \
+		echo "created .venv with PyYAML + jsonschema"; \
+	fi
+
+# Test heredocs invoke `python3` directly and need PyYAML + jsonschema. Put an
+# interpreter that has them first on PATH: explicit OCPROBE_PYTHON, else the
+# .venv `setup` created, else the system python (CI installs the modules there).
+
 test: test-unit test-integration
 
-test-unit:
+test-unit: setup
 	@echo "Running unit tests..."
-	@bats test/unit/
+	@if [ -n "$${OCPROBE_PYTHON:-}" ] && p=$$(command -v "$${OCPROBE_PYTHON}" 2>/dev/null); then \
+		PATH="$$(dirname "$$p"):$$PATH" bats test/unit/; \
+	elif [ -x .venv/bin/python3 ]; then \
+		PATH="$$(pwd)/.venv/bin:$$PATH" bats test/unit/; \
+	else \
+		bats test/unit/; \
+	fi
 
-test-integration:
+test-integration: setup
 	@echo "Running integration tests..."
-	@bats test/integration/
+	@if [ -n "$${OCPROBE_PYTHON:-}" ] && p=$$(command -v "$${OCPROBE_PYTHON}" 2>/dev/null); then \
+		PATH="$$(dirname "$$p"):$$PATH" bats test/integration/; \
+	elif [ -x .venv/bin/python3 ]; then \
+		PATH="$$(pwd)/.venv/bin:$$PATH" bats test/integration/; \
+	else \
+		bats test/integration/; \
+	fi
 
 build: $(PACKAGE)
 

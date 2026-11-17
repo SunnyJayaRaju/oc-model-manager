@@ -18,45 +18,110 @@ write_worker() {
 set -u
 m="$1"; src="$2"; secs="$3"; prompt="$4"
 # Validate model name
-[[ "$m" =~ ^[a-zA-Z0-9_./:~:-]+$ ]] || { echo "INVALID_MODEL: $m" >&2; exit 1; }
+[[ "$m" =~ ^[a-zA-Z0-9_./:~@:-]+$ ]] || { echo "INVALID_MODEL: $m" >&2; exit 1; }
 # Validate timeout
 [[ "$secs" =~ ^[0-9]+$ ]] && [[ "$secs" -gt 0 ]] || { echo "INVALID_TIMEOUT" >&2; exit 1; }
 t0=$(python3 -c 'import time; print(int(time.time() * 1000))')
-# Portable timeout with --format json for sessionID capture
+# The old isolation flag was removed in OpenCode 2.x (2.3.0 rejects it and
+# prints usage without ever calling the model), so the plain run format is
+# used on every generation. --format json exists on both.
 if command -v timeout >/dev/null 2>&1; then
-  res=$(timeout "$secs" opencode run --pure --title ocprobe-probe --format json </dev/null -m "$m" "$prompt" 2>&1); rc=$?
+  res=$(timeout "$secs" opencode run --title ocprobe-probe --format json </dev/null -m "$m" "$prompt" 2>&1); rc=$?
 else
-  res=$(perl -e 'alarm $ARGV[0]; exec @ARGV[1..$#ARGV] or exit 127' "$secs" opencode run --pure --title ocprobe-probe --format json </dev/null -m "$m" "$prompt" 2>&1); rc=$?
+  res=$(perl -e 'alarm $ARGV[0]; exec @ARGV[1..$#ARGV] or exit 127' "$secs" opencode run --title ocprobe-probe --format json </dev/null -m "$m" "$prompt" 2>&1); rc=$?
 fi
 t1=$(python3 -c 'import time; print(int(time.time() * 1000))')
 
-# Extract sessionID from JSON output (first line with sessionID)
+# Session id for the guarded per-probe cleanup (printed on stderr; every
+# observed 2.x event carries one).
 session_id=$(printf '%s' "$res" | grep -o '"sessionID":"[^"]*"' | head -1 | sed 's/"sessionID":"\([^"]*\)"/\1/')
 printf 'SESSION_ID:%s\n' "$session_id" >&2
 
-# More robust status detection with structured output handling
-# Parse JSON events from opencode --format json output
-# Each line is a JSON event; look for status event or error event
-st=UNCLEAR
-while IFS= read -r line; do
-  [[ -n "$line" ]] || continue
-  # Try to extract status from status events
-  if printf '%s' "$line" | grep -q '"type":"status"'; then
-    st=$(printf '%s' "$line" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status","UNCLEAR"))' 2>/dev/null)
-    [[ -n "$st" ]] && break
-  # Try to extract error type from error events
-  elif printf '%s' "$line" | grep -q '"type":"error"'; then
-    err_type=$(printf '%s' "$line" | python3 -c 'import sys,json; d=json.load(sys.stdin); err=d.get("error",{}); print(err.get("data",{}).get("message",""))' 2>/dev/null)
-    if printf '%s' "$err_type" | grep -qi 'No payment method'; then st=PAYWALLED; break
-    elif printf '%s' "$err_type" | grep -qi 'end of life\|Gone'; then st=EOL; break
-    elif printf '%s' "$err_type" | grep -q '404'; then st=NOTFOUND; break
-    elif printf '%s' "$err_type" | grep -qi 'Error'; then st=BROKEN; break
-    else st=ERROR; break
-    fi
-  fi
-done <<<"$res"
+# Classify from the event stream in one python pass.
+# Observed shapes (opencode 2.3.0, --format json, captured fixtures):
+#   success: {"type":"step_start"...}, {"type":"text","part":{"type":"text","text":"OK"}}, {"type":"step_finish"...}; exit 0
+#   failure: one line {"type":"error","sessionID":"...","error":{"type":"provider.no-route","message":"Model unavailable: <id>"}}; exit 1
+# 2.x emits no "status" events; 1.x may still emit them and the string
+# fallback below keeps working either way.
+cls=$(printf '%s' "$res" | python3 -c '
+import json, sys
+rc = int(sys.argv[1])
+text = ""
+err_type = ""
+err_msg = ""
+status_ev = ""
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        continue
+    if not isinstance(ev, dict):
+        continue
+    t = ev.get("type")
+    if t == "error":
+        err = ev.get("error") or {}
+        if isinstance(err, dict):
+            err_type = str(err.get("type") or "")
+            err_msg = str(err.get("message") or "")
+        else:
+            err_msg = str(err)
+    elif t == "text":
+        part = ev.get("part") or {}
+        if isinstance(part, dict):
+            text = str(part.get("text") or "")
+    elif t == "status":
+        status_ev = str(ev.get("status") or "")
 
-# If no status from JSON events, fall back to string matching on full output
+msg = (err_type + " " + err_msg).lower()
+status = ""
+if rc == 0 and text.strip():
+    status = "WORKS"
+elif status_ev:
+    status = status_ev
+elif err_type or err_msg:
+    if (err_type == "provider.no-route"
+            or "Model unavailable:" in err_msg
+            or "404" in msg
+            or "not found" in msg):
+        status = "NOTFOUND"
+    elif ("no payment method" in msg
+            or "requires more credits" in msg
+            or "insufficient credits" in msg
+            or "not enough credit" in msg
+            or "not enough balance" in msg
+            or "can only afford" in msg
+            or "payment required" in msg
+            or "billing" in msg
+            or "quota exceeded" in msg
+            or "quota insufficient" in msg
+            or "402" in msg):
+        status = "PAYWALLED"
+    elif ("end of life" in msg
+            or err_msg.startswith("Gone")):
+        status = "EOL"
+    elif ("invalid_api_key" in msg
+            or "unauthorized" in msg
+            or "forbidden" in msg
+            or "authentication failed" in msg
+            or "auth failed" in msg):
+        status = "AUTH_ERROR"
+    else:
+        status = "ERROR"
+elif rc != 0:
+    if rc in (124, 137, 142):
+        status = "TIMEOUT"
+    else:
+        status = "ERROR"
+print(status)
+' "$rc") || cls=""
+st="$cls"
+[[ -n "$st" ]] || st=UNCLEAR
+
+# Fallback string matching for shapes the event parser could not read
+# (non-JSON output, older versions). Same rules as before this rewrite.
 if [[ "$st" == "UNCLEAR" ]]; then
   if   printf '%s' "$res" | grep -qi 'No payment method'; then st=PAYWALLED
   elif printf '%s' "$res" | grep -qi 'end of life\|^Gone'; then st=EOL
@@ -75,13 +140,19 @@ WORKER
 # ---- Catalog Operations -----------------------------------------------------
 
 # Get whitelisted models from opencode config
+# The config may be opencode.json or opencode.jsonc; oc_config_read returns
+# pure JSON for either (see lib/opencodecfg.sh).
 list_whitelist() {
+	local jpy
+	jpy="$(oc_jsonc_py)"
 	# shellcheck disable=SC2154
-	python3 - "$OCPROBE_OPencode_CONFIG" <<'PY'
-import json,sys,os
+	python3 -B - "$OCPROBE_OPencode_CONFIG" "${jpy%/*}" <<'PY'
+import json, os, sys
+sys.path.insert(0, sys.argv[2])
+import jsonc
 try:
-    cfg=json.load(open(os.path.expanduser(sys.argv[1])))
-except (json.JSONDecodeError, OSError) as e:
+    cfg = jsonc.parse_jsonc(jsonc.load_text(os.path.expanduser(sys.argv[1])))[0]
+except (jsonc.JsoncError, OSError) as e:
     print(f"Error loading config: {e}", file=sys.stderr)
     sys.exit(1)
 for pid,p in sorted((cfg.get("provider") or {}).items()):
@@ -170,7 +241,7 @@ PY
 	log_info "      Full catalog: $full_count models"
 
 	# Validate format
-	if ! grep -qE '^[a-zA-Z0-9_./:~:-]+/[a-zA-Z0-9_./:~:-]+$' "$OCPROBE_RUN_DIR/catalog.txt"; then
+	if ! grep -qE '^[a-zA-Z0-9_./:~@:-]+/[a-zA-Z0-9_./:~@:-]+$' "$OCPROBE_RUN_DIR/catalog.txt"; then
 		log_warn "Catalog format unexpected, proceeding anyway"
 	fi
 }
@@ -238,11 +309,22 @@ probe_model() {
 
 		# shellcheck disable=SC2016
 		bash -c '"$1" "$2" "$3" "$4" "$5"; echo $? >> "$6"' \
-			_ "$worker" "$model" "$label" "$secs" "$OCPROBE_PROBE_PROMPT" "$exit_file" >>"$OCPROBE_RESULTS_FILE"
+			_ "$worker" "$model" "$label" "$secs" "$OCPROBE_PROBE_PROMPT" "$exit_file" 2>"$OCPROBE_RUN_DIR/.worker-stderr" >>"$OCPROBE_RESULTS_FILE"
+		local probe_sid
+		probe_sid=$(sed -n 's/^SESSION_ID://p' "$OCPROBE_RUN_DIR/.worker-stderr" | head -1)
+		rm -f "$OCPROBE_RUN_DIR/.worker-stderr"
 
 		local ec
 		ec=$(cat "$exit_file" 2>/dev/null || echo "1")
 		rm -f "$worker" "$exit_file"
+
+		# The probe leaves a titled session behind; delete it through the guarded
+		# path immediately so probes do not pile up. A failure here is not fatal:
+		# the next cleanup pass will find it by title, prompt and id format.
+		if [[ -n "$probe_sid" ]]; then
+			delete_session "$probe_sid" ||
+				log_debug "probe session $probe_sid not deletable yet (kept for the next cleanup pass)"
+		fi
 
 		if [[ "$ec" -eq 0 ]]; then
 			return 0
@@ -472,6 +554,111 @@ is_confirmed_dead() {
 }
 
 # ---- Apply Changes ----------------------------------------------------------
+# Shared parsing of what this run wants to write: reads the probe results and
+# the dead list, prints two files (adds.txt, rems.txt) of provider/model ids.
+collect_pending_changes() {
+	local res_p="$1" dead_p="$2" adds_p="$3" rems_p="$4"
+	: >"$adds_p"
+	: >"$rems_p"
+	awk -F'\t' '$1=="NEW"&&$3=="WORKS"{print $2}' "$res_p" >"$adds_p"
+	while IFS= read -r mid; do
+		[[ -n "$mid" ]] && printf '%s\n' "$mid" >>"$rems_p"
+	done <"$dead_p"
+}
+
+apply_changes_plain() {
+	local adds_p="$OCPROBE_RUN_DIR/apply-adds.txt" rems_p="$OCPROBE_RUN_DIR/apply-rems.txt"
+	collect_pending_changes "$OCPROBE_RESULTS_FILE" "$OCPROBE_RUN_DIR/dead.txt" "$adds_p" "$rems_p"
+	python3 - "$OCPROBE_OPencode_CONFIG" "$adds_p" "$rems_p" "$OCPROBE_RUN_DIR/removed.txt" <<'PY'
+import json,os,sys
+cfg_p,adds_p,rems_p,out_p=sys.argv[1],sys.argv[2],sys.argv[3],sys.argv[4]
+cfg=json.load(open(cfg_p)); prov=cfg.setdefault("provider",{})
+adds=[l.strip() for l in open(adds_p) if l.strip()]
+rems=[l.strip() for l in open(rems_p) if l.strip()]
+for mid in adds:
+    pid,m=mid.split("/",1)
+    wl=prov.setdefault(pid,{}).setdefault("whitelist",[])
+    if m not in wl: wl.append(m)
+for mid in rems:
+    pid,m=mid.split("/",1)
+    wl=prov.get(pid,{}).get("whitelist",[])
+    if m in wl:
+        wl.remove(m)
+        with open(out_p,"a") as f: f.write(mid+"\n")
+for pid in prov:
+    if "whitelist" in prov[pid]:
+        prov[pid]["whitelist"]=sorted(set(prov[pid]["whitelist"]))
+tmp=cfg_p+".tmp"; json.dump(cfg,open(tmp,"w"),indent=2)
+os.replace(tmp,cfg_p)
+PY
+}
+
+# .jsonc variant of apply_changes: every whitelist that changes is replaced in
+# place, everything else — comments included — is left byte-identical.
+# Providers whose whitelist array does not exist yet refuse the whole write:
+# creating keys inside a commented file needs a human, and the refusal prints
+# the exact lines to add.
+apply_changes_jsonc() {
+	local cfg_p="$OCPROBE_OPencode_CONFIG"
+	local adds_p="$OCPROBE_RUN_DIR/apply-adds.txt" rems_p="$OCPROBE_RUN_DIR/apply-rems.txt"
+	collect_pending_changes "$OCPROBE_RESULTS_FILE" "$OCPROBE_RUN_DIR/dead.txt" "$adds_p" "$rems_p"
+	local jpy
+	jpy="$(oc_jsonc_py)"
+	python3 -B - "$cfg_p" "$adds_p" "$rems_p" "$OCPROBE_RUN_DIR/removed.txt" "${jpy%/*}" <<'PY'
+import json, os, sys
+sys.path.insert(0, sys.argv[5])
+import jsonc
+cfg_p, adds_p, rems_p, out_p = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+adds = [l.strip() for l in open(adds_p) if l.strip()]
+rems = [l.strip() for l in open(rems_p) if l.strip()]
+text = jsonc.load_text(cfg_p)
+cfg, masked = jsonc.parse_jsonc(text)
+providers = cfg.get("provider") or {}
+touched = {}
+for mid in adds + rems:
+    touched.setdefault(mid.split("/", 1)[0], True)
+new_values, spans = {}, {}
+for pid in sorted(touched):
+    dotted = "provider.%s.whitelist" % pid
+    current = list((providers.get(pid) or {}).get("whitelist") or [])
+    merged = set(current)
+    for mid in adds:
+        if mid.split("/", 1)[0] == pid:
+            merged.add(mid.split("/", 1)[1])
+    for mid in rems:
+        if mid.split("/", 1)[0] == pid:
+            m = mid.split("/", 1)[1]
+            if m in merged:
+                merged.discard(m)
+                with open(out_p, "a") as f:
+                    f.write(mid + "\n")
+    new_values[pid] = sorted(merged)
+# Locate every span BEFORE writing anything, so one missing whitelist refuses
+# the whole run instead of leaving a half-applied config behind.
+try:
+    for pid in sorted(touched):
+        spans[pid] = jsonc.find_array_span(masked, "provider.%s.whitelist" % pid)
+except jsonc.JsoncError as e:
+    sys.stderr.write(
+        "refusing to edit %s: %s\nadd by hand inside the provider object, e.g.:\n"
+        '    "whitelist": ["%s"]\n'
+        % (cfg_p, e, next(iter(touched)))
+    )
+    sys.exit(3)
+changed = {pid: v for pid, v in new_values.items()
+           if v != list((providers.get(pid) or {}).get("whitelist") or [])}
+for pid in sorted(changed, key=lambda p: -spans[p][0]):
+    start, end = spans[pid]
+    text = text[:start] + json.dumps(new_values[pid]) + text[end:]
+final, _ = jsonc.parse_jsonc(text)
+tmp = cfg_p + ".tmp"
+with open(tmp, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+    f.write(text)
+os.replace(tmp, cfg_p)
+print("patched %d whitelist(s) in %s" % (len(changed), cfg_p))
+PY
+}
+
 apply_changes() {
 	local dead_n=$REPORT_DEAD_N
 	local wl_count=$REPORT_WL_COUNT
@@ -487,6 +674,26 @@ apply_changes() {
 	if [[ $pending -eq 0 ]]; then
 		log_info "[6/7] Nothing to apply"
 		return 0
+	fi
+
+	# Dry-run: report what would change and write nothing.
+	if [[ $OCPROBE_DRY_RUN -eq 1 ]]; then
+		log_info "DRY-RUN: nothing was written. Pending changes:"
+		[[ ${#REPORT_ADDS[@]} -gt 0 ]] && printf '  would add to whitelist: %s\n' "${REPORT_ADDS[@]}"
+		[[ -s "$OCPROBE_RUN_DIR/dead.txt" ]] && sed 's/^/  would remove from whitelist: /' "$OCPROBE_RUN_DIR/dead.txt"
+		if [[ "$(oc_generation)" != "1" ]]; then
+			log_warn "DRY-RUN note: OpenCode 2.x does not honour these keys; a real apply would refuse. Nothing was changed."
+		fi
+		return 1
+	fi
+
+	# OpenCode 2.x builds its model catalog without reading per-model provider
+	# keys (verified on 2.3.0: no whitelist/blacklist/disabled/policies key
+	# changes the server's model list). Writing one would report success while
+	# changing nothing, so refuse instead of writing an inert key.
+	if [[ "$(oc_generation)" != "1" ]]; then
+		log_error "this OpenCode version does not honour provider model lists; nothing was changed (per-model hiding is not supported on OpenCode 2.x)"
+		return 1
 	fi
 
 	# Determine if we can skip confirmation based on auto_apply
@@ -540,35 +747,18 @@ apply_changes() {
 	cp "$OCPROBE_OPencode_CONFIG" "$OCPROBE_OPencode_CONFIG.ocprobe-backup-$OCPROBE_STAMP"
 	log_info "[7/7] Applying (backup: $(basename "$OCPROBE_OPencode_CONFIG").ocprobe-backup-$OCPROBE_STAMP)"
 
-	# Apply with Python
-	python3 - "$OCPROBE_OPencode_CONFIG" "$OCPROBE_RESULTS_FILE" "$OCPROBE_RUN_DIR/dead.txt" "$OCPROBE_RUN_DIR/removed.txt" <<'PY'
-import json,sys,os
-cfg_p,res_p,dead_p,out_p=sys.argv[1],sys.argv[2],sys.argv[3],sys.argv[4]
-cfg=json.load(open(cfg_p)); prov=cfg.setdefault("provider",{})
-adds=[];rems=[]
-for line in open(res_p):
-    p=line.rstrip("\n").split("\t")
-    if len(p)<3: continue
-    if p[0]=="NEW" and p[2]=="WORKS": adds.append(p[1])
-for line in open(dead_p):
-    mid=line.strip()
-    if mid: rems.append(mid)
-for mid in adds:
-    pid,m=mid.split("/",1)
-    wl=prov.setdefault(pid,{}).setdefault("whitelist",[])
-    if m not in wl: wl.append(m)
-for mid in rems:
-    pid,m=mid.split("/",1)
-    wl=prov.get(pid,{}).get("whitelist",[])
-    if m in wl:
-        wl.remove(m)
-        with open(out_p,"a") as f: f.write(mid+"\n")
-for pid in prov:
-    if "whitelist" in prov[pid]:
-        prov[pid]["whitelist"]=sorted(set(prov[pid]["whitelist"]))
-tmp=cfg_p+".tmp"; json.dump(cfg,open(tmp,"w"),indent=2)
-os.replace(tmp,cfg_p)
-PY
+	# Apply with Python.
+	# Plain .json is rewritten whole (ocm owns the formatting). A .jsonc is
+	# patched span-by-span: re-serialising it would destroy hand-written
+	# comments, so every target array is located first and only the spans of
+	# whitelists that actually change are replaced. If any whitelist does not
+	# exist yet, the whole write is refused — a half-applied config is worse
+	# than none.
+	if oc_config_is_jsonc "$OCPROBE_OPencode_CONFIG"; then
+		apply_changes_jsonc || return 1
+	else
+		apply_changes_plain
+	fi
 
 	# Record removals in graveyard
 	local ts_ms

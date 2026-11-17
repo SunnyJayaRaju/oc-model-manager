@@ -1,0 +1,9 @@
+# Keep the automation on this repository current: only the GitHub Actions
+# versions are watched. The Homebrew formula lives in the separate tap
+# repository and is updated by the release pipeline, not by Dependabot.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

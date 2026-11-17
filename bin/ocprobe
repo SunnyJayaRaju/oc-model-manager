@@ -95,8 +95,20 @@ EXAMPLES:
   ocprobe validate --provider openrouter  # Validate single provider
   ocprobe validate restore         # Restore from last backup
   ocprobe scheduler install        # Install launchd timer (macOS)
-  ocprobe session backup ses_abc   # Backup session to SQL
+  ocprobe session backup ses_abc   # Backup session (.sql on 1.x; JSON via OCPROBE_OPENCODE_SERVER on 2.x)
   ocprobe doctor                   # Health check
+
+SESSION BACKUP AND RESTORE:
+  OpenCode 1.x: backup writes a .sql dump (session/message/part/todo rows);
+    restore = ocprobe session restore <file.sql>. A copy of the database is
+    taken first, and the dump is executed per statement inside SQLite: only
+    plain INSERTs into those four tables are allowed; ATTACH, DROP, DELETE,
+    UPDATE, ALTER, CREATE, PRAGMA, other functions and all reads are refused,
+    and the whole file is one transaction.
+  OpenCode 2.x: backup = `opencode session export` (JSON), restore =
+    `opencode session import`, both against the server that owns the
+    database, which must be named in OCPROBE_OPENCODE_SERVER. .sql dumps are
+    refused on 2.x: that UI never reads rows inserted into the legacy tables.
 
 CONFIGURATION:
   See ocprobe config schema for full options.
@@ -129,7 +141,7 @@ parse_global_flags() {
   OCPROBE_ASSUME_YES=0
   OCPROBE_JSON_OUTPUT=0
   OCPROBE_VERBOSE=0
-  OCPROBE_DRY_RUN=0
+  : "${OCPROBE_DRY_RUN:=0}"
   : "${OCPROBE_CONFIG_OVERRIDE:=}"
   OCPROBE_REMAINING_ARGS=()
 

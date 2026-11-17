@@ -614,24 +614,29 @@ for provider_id, creds in sorted(auth.items()):
 PY
 }
 
-# Get full model list for a provider from opencode models command
+# List the models of one provider that are visible to `opencode models`.
+# OpenCode 2.x rejects a positional provider argument ("Unexpected positional
+# argument: ..."), so the full catalog is fetched and filtered here; on 1.x the
+# result is identical to the old per-provider call.
 get_provider_models() {
 	local provider_id="$1"
-	opencode models "$provider_id" 2>/dev/null | sort -u
+	opencode models 2>/dev/null | awk -v p="$provider_id" 'index($0, p "/") == 1' | sort -u
 }
 
-# Get current blacklist for a provider from opencode.json
+# Get current blacklist for a provider from opencode.json (or .jsonc)
 get_current_blacklist() {
 	local provider_id="$1"
-	python3 - "$OCPROBE_OPencode_CONFIG" "$provider_id" <<'PY'
-import json, sys, os
+	local jpy
+	jpy="$(oc_jsonc_py)"
+	python3 -B - "$OCPROBE_OPencode_CONFIG" "$provider_id" "${jpy%/*}" <<'PY'
+import sys, os
+sys.path.insert(0, sys.argv[3])
+import jsonc
 try:
-    with open(os.path.expanduser(sys.argv[1])) as f:
-        cfg = json.load(f)
-except (json.JSONDecodeError, OSError) as e:
+    cfg = jsonc.parse_jsonc(jsonc.load_text(os.path.expanduser(sys.argv[1])))[0]
+except (jsonc.JsoncError, OSError) as e:
     print(f"Error loading config: {e}", file=sys.stderr)
     sys.exit(1)
-
 provider = sys.argv[2]
 bl = cfg.get("provider", {}).get(provider, {}).get("blacklist", [])
 for m in sorted(bl):
@@ -654,46 +659,108 @@ write_validate_worker() {
 set -u
 m="$1"; src="$2"; secs="$3"; prompt="$4"
 # Validate model name
-[[ "$m" =~ ^[a-zA-Z0-9_./:~:-]+$ ]] || { echo "INVALID_MODEL: $m" >&2; exit 1; }
+[[ "$m" =~ ^[a-zA-Z0-9_./:~@:-]+$ ]] || { echo "INVALID_MODEL: $m" >&2; exit 1; }
 # Validate timeout
 [[ "$secs" =~ ^[0-9]+$ ]] && [[ "$secs" -gt 0 ]] || { echo "INVALID_TIMEOUT" >&2; exit 1; }
 t0=$(python3 -c 'import time; print(int(time.time() * 1000))')
-# Portable timeout with --format json for sessionID capture
+# The old isolation flag was removed in OpenCode 2.x (2.3.0 rejects it and
+# prints usage without ever calling the model), so the plain run format is
+# used on every generation. --format json exists on both.
 if command -v timeout >/dev/null 2>&1; then
-  res=$(timeout "$secs" opencode run --pure --title ocprobe-validate --format json </dev/null -m "$m" "$prompt" 2>&1); rc=$?
+  res=$(timeout "$secs" opencode run --title ocprobe-validate --format json </dev/null -m "$m" "$prompt" 2>&1); rc=$?
 else
-  res=$(perl -e 'alarm $ARGV[0]; exec @ARGV[1..$#ARGV] or exit 127' "$secs" opencode run --pure --title ocprobe-validate --format json </dev/null -m "$m" "$prompt" 2>&1); rc=$?
+  res=$(perl -e 'alarm $ARGV[0]; exec @ARGV[1..$#ARGV] or exit 127' "$secs" opencode run --title ocprobe-validate --format json </dev/null -m "$m" "$prompt" 2>&1); rc=$?
 fi
 t1=$(python3 -c 'import time; print(int(time.time() * 1000))')
 
-# Parse JSON events from opencode --format json output
-# Each line is a JSON event; look for status event or error event
-st=UNCLEAR
-err_msg=""
-while IFS= read -r line; do
-  [[ -n "$line" ]] || continue
-  # Try to extract status from status events
-  if printf '%s' "$line" | grep -q '"type":"status"'; then
-    st=$(printf '%s' "$line" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status","UNCLEAR"))' 2>/dev/null)
-    [[ -n "$st" ]] && break
-  # Try to extract error type from error events
-  elif printf '%s' "$line" | grep -q '"type":"error"'; then
-    err_type=$(printf '%s' "$line" | python3 -c 'import sys,json; d=json.load(sys.stdin); err=d.get("error",{}); print(err.get("data",{}).get("message",""))' 2>/dev/null)
-    err_msg="$err_type"
-    # Credit/quota limits are an ACCOUNT condition, not model death. opencode sends
-    # the model's default max output tokens (e.g. 16384, hardcoded from model
-    # metadata — no config knob lowers it), so on a free or credit-limited key every
-    # paid model returns 402 "requires more credits ... can only afford 102" even
-    # though the model works. Must map to BILLING_ERROR, never to ERROR/NOT_FOUND,
-    # or a free-tier key would blacklist every paid model it cannot afford.
-    if printf '%s' "$err_type" | grep -Eqi 'no payment method|requires more credits|insufficient credits|not enough credit|not enough balance|can only afford|payment required|billing|quota (exceeded|insufficient)|402'; then st=PAYWALLED; break
-    elif printf '%s' "$err_type" | grep -qi 'end of life\|^Gone'; then st=EOL; break
-    elif printf '%s' "$err_type" | grep -q '404'; then st=NOTFOUND; break
-    elif printf '%s' "$err_type" | grep -qi 'Error'; then st=BROKEN; break
-    else st=ERROR; break
-    fi
-  fi
-done <<<"$res"
+# Session id for the guarded per-probe cleanup (printed on stderr).
+session_id=$(printf '%s' "$res" | grep -o '"sessionID":"[^"]*"' | head -1 | sed 's/"sessionID":"\([^"]*\)"/\1/')
+printf 'SESSION_ID:%s\n' "$session_id" >&2
+
+# Classify from the event stream in one python pass (observed 2.3.0 shapes:
+# success = step_start/text(part.text)/step_finish, exit 0; failure = one
+# {"type":"error",...,"error":{"type":...,"message":...}} line, exit 1; no
+# "status" events on 2.x). Prints STATUS<TAB>ERRMSG so the bash mapping and
+# the auth detection below keep working unchanged.
+cls=$(printf '%s' "$res" | python3 -c '
+import json, sys
+rc = int(sys.argv[1])
+text = ""
+err_type = ""
+err_msg = ""
+status_ev = ""
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        continue
+    if not isinstance(ev, dict):
+        continue
+    t = ev.get("type")
+    if t == "error":
+        err = ev.get("error") or {}
+        if isinstance(err, dict):
+            err_type = str(err.get("type") or "")
+            err_msg = str(err.get("message") or "")
+            if not err_msg and isinstance(err.get("data"), dict):
+                err_msg = str(err["data"].get("message") or "")
+            if not err_msg:
+                err_msg = str(err.get("name") or "")
+        else:
+            err_msg = str(err)
+    elif t == "text":
+        part = ev.get("part") or {}
+        if isinstance(part, dict):
+            text = str(part.get("text") or "")
+    elif t == "status":
+        status_ev = str(ev.get("status") or "")
+
+msg = (err_type + " " + err_msg).lower()
+status = ""
+if rc == 0 and text.strip():
+    status = "WORKS"
+elif status_ev:
+    status = status_ev
+elif err_type or err_msg:
+    if (err_type == "provider.no-route"
+            or "Model unavailable:" in err_msg
+            or "404" in msg
+            or "not found" in msg):
+        status = "NOTFOUND"
+    elif ("no payment method" in msg
+            or "requires more credits" in msg
+            or "insufficient credits" in msg
+            or "not enough credit" in msg
+            or "not enough balance" in msg
+            or "can only afford" in msg
+            or "payment required" in msg
+            or "billing" in msg
+            or "quota exceeded" in msg
+            or "quota insufficient" in msg
+            or "402" in msg):
+        status = "PAYWALLED"
+    elif ("end of life" in msg
+            or err_msg.startswith("Gone")):
+        status = "EOL"
+    elif ("invalid_api_key" in msg
+            or "unauthorized" in msg
+            or "forbidden" in msg
+            or "authentication failed" in msg
+            or "auth failed" in msg):
+        status = "AUTH_ERROR"
+    else:
+        status = "ERROR"
+elif rc in (124, 137, 142):
+    status = "TIMEOUT"
+print(status + "\t" + err_msg)
+' "$rc") || cls=""
+st="${cls%%$'\t'*}"
+err_msg="${cls#*$'\t'}"
+[[ "$err_msg" == "$cls" ]] && err_msg=""
+[[ -n "$st" ]] || st=UNCLEAR
 
 # If no status from JSON events, fall back to string matching on full output
 if [[ "$st" == "UNCLEAR" ]]; then
@@ -715,6 +782,7 @@ case "$st" in
   PAYWALLED) v=BILLING_ERROR ;;
   EOL|NOTFOUND) v=NOT_FOUND ;;
   BROKEN|ERROR) v=ERROR ;;
+  AUTH_ERROR) v=AUTH_ERROR ;;
   TIMEOUT) v=TIMEOUT ;;
   *) v=UNCLEAR ;;
 esac
@@ -758,9 +826,13 @@ probe_model_classify() {
 	local start_ms end_ms
 	start_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
 
-	local output ec
-	output=$("$worker_file" "$model" "VALIDATE" "$timeout_secs" "$prompt" 2>/dev/null)
+	local output ec probe_sid_file
+	probe_sid_file=$(mktemp "${OCPROBE_RUN_DIR:-/tmp}/validate-sid.XXXXXX")
+	output=$("$worker_file" "$model" "VALIDATE" "$timeout_secs" "$prompt" 2>"$probe_sid_file")
 	ec=$?
+	local probe_sid
+	probe_sid=$(sed -n 's/^SESSION_ID://p' "$probe_sid_file" | head -1)
+	rm -f "$probe_sid_file"
 
 	end_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
 	local latency=$((end_ms - start_ms))
@@ -779,6 +851,14 @@ probe_model_classify() {
 	fi
 
 	printf '%s\t%s\t%d\n' "$model" "$status" "$latency"
+
+	# Delete the probe session through the guarded path immediately so probes
+	# do not pile up (a validate run can create one session per model). A
+	# failure here is not fatal: the next cleanup pass finds it by title.
+	if [[ -n "$probe_sid" ]]; then
+		delete_session "$probe_sid" ||
+			log_debug "probe session $probe_sid not deletable yet (kept for the next cleanup pass)"
+	fi
 }
 
 # Probe models for one provider.
@@ -822,14 +902,20 @@ probe_models_batch() {
 	local worker_file="$OCPROBE_RUN_DIR/.validate_worker-$provider_id"
 	write_validate_worker "$worker_file"
 
+	# Workers print the session id of each probe on stderr; the batch deletes
+	# every one of them through delete_session as soon as xargs returns, so a
+	# 900-model run does not leave a session per model behind.
+	local probe_sid_file="$OCPROBE_RUN_DIR/.validate-sids-$provider_id"
+	: >"$probe_sid_file"
+
 	local start_time
 	start_time=$(date +%s)
 
 	# Each worker writes one TSV line; -P runs up to $parallel at a time.
 	# shellcheck disable=SC2016
 	xargs -P "$parallel" -I{} bash -c '
-		worker="$1"; m="$2"; secs="$3"; prompt="$4"; out="$5"; verbose="$6"
-		line=$("$worker" "$m" "VALIDATE" "$secs" "$prompt" 2>/dev/null)
+		worker="$1"; m="$2"; secs="$3"; prompt="$4"; out="$5"; verbose="$6"; sids="$7"
+		line=$("$worker" "$m" "VALIDATE" "$secs" "$prompt" 2>>"$sids")
 		if [[ -n "$line" ]]; then
 			status=$(printf "%s" "$line" | awk -F"\t" "{print \$3}")
 			printf "%s\t%s\t0\n" "$m" "$status" >>"$out"
@@ -838,7 +924,18 @@ probe_models_batch() {
 			printf "%s\t%s\t0\n" "$m" "$status" >>"$out"
 		fi
 		if [[ "$verbose" == "1" ]]; then printf "  → %s → %s\n" "$m" "$status" >&2; fi
-	' _ "$worker_file" {} "$OCPROBE_VALIDATE_PROBE_TIMEOUT" "$OCPROBE_VALIDATE_PROBE_PROMPT" "$results_file" "${OCPROBE_VALIDATE_VERBOSE:-${verbose_mode:-0}}" <"$candidates"
+	' _ "$worker_file" {} "$OCPROBE_VALIDATE_PROBE_TIMEOUT" "$OCPROBE_VALIDATE_PROBE_PROMPT" "$results_file" "${OCPROBE_VALIDATE_VERBOSE:-${verbose_mode:-0}}" "$probe_sid_file" <"$candidates"
+
+	# Delete this batch's probe sessions through the guarded path (single
+	# choke point for the id format, title, legacy-row, tree, tool-call and
+	# prompt gates). Failures are non-fatal: the next cleanup pass retries.
+	local probe_sid
+	while IFS= read -r probe_sid; do
+		[[ -n "$probe_sid" ]] || continue
+		delete_session "$probe_sid" ||
+			log_debug "probe session $probe_sid not deletable yet (kept for the next cleanup pass)"
+		done < <(sed -n 's/^SESSION_ID://p' "$probe_sid_file" 2>/dev/null | sort -u)
+	rm -f "$probe_sid_file"
 
 	local elapsed=$(($(date +%s) - start_time))
 	log_info "  Probed $cand_count models for $provider_id in ${elapsed}s"
@@ -893,36 +990,24 @@ show_blacklist_diff() {
 	echo
 }
 
-# Apply blacklist to opencode.json (merge by model-id, not wholesale replace)
-# Reads probed_models_file to know which models were in scope this run.
+# Apply blacklist to opencode.json (or .jsonc); merge by model-id, not wholesale replace.
 # new_blacklist = (previous - worked_this_run) ∪ confirmed_dead_this_run
 # Entries are sticky: dropped only when the model now probes WORKS. Preserves
 # entries for models not probed this run.
 apply_blacklist() {
 	local provider_id="$1"
 	local confirmed_file="$2"
-	local probed_models_file="$3"
-	local working_file="${4:-}"
+	local working_file="${3:-}"
 
 	# Read previous blacklist
 	local -a prev_blacklist=()
-	[[ -f "$OCPROBE_OPencode_CONFIG" ]] &&
-		mapfile -t prev_blacklist < <(
-			python3 - "$OCPROBE_OPencode_CONFIG" "$provider_id" <<'PY'
-import json, sys, os
-config_path = os.path.expanduser(sys.argv[1])
-provider_id = sys.argv[2]
-with open(config_path) as f:
-    cfg = json.load(f)
-bl = cfg.get("provider", {}).get(provider_id, {}).get("blacklist", [])
-for m in bl:
-    print(m)
-PY
-		)
-
-	# Read probed models this run
-	local -a probed=()
-	[[ -f "$probed_models_file" ]] && mapfile -t probed <"$probed_models_file"
+	if [[ -f "$OCPROBE_OPencode_CONFIG" ]]; then
+		local cur_bl
+		cur_bl=$(get_current_blacklist "$provider_id") || return 1
+		if [[ -n "$cur_bl" ]]; then
+			mapfile -t prev_blacklist <<<"$cur_bl"
+		fi
+	fi
 
 	# Read confirmed dead (new blacklist proposal)
 	local -a confirmed=()
@@ -932,40 +1017,73 @@ PY
 	local -a working=()
 	[[ -n "$working_file" && -f "$working_file" ]] && mapfile -t working <"$working_file"
 
-	# Merge: (previous - working) ∪ confirmed
-	python3 - "$OCPROBE_OPencode_CONFIG" "$provider_id" \
-		"$(printf '%s\n' "${probed[@]:+${probed[@]}}")" \
-		"$(printf '%s\n' "${confirmed[@]:+${confirmed[@]}}")" \
-		"$(printf '%s\n' "${prev_blacklist[@]:+${prev_blacklist[@]}}")" \
-		"$(printf '%s\n' "${working[@]:+${working[@]}}")" <<'PY'
-import json, sys, os
+	merge_blacklist "$OCPROBE_OPencode_CONFIG" "$provider_id" \
+		"$(printf '%s\n' "${confirmed[@]+${confirmed[@]}}")" \
+		"$(printf '%s\n' "${working[@]+${working[@]}}")" \
+		"$(printf '%s\n' "${prev_blacklist[@]+${prev_blacklist[@]}}")"
+}
+
+# Compute new_blacklist = (previous - working) ∪ confirmed and write it.
+# Plain .json: whole-file rewrite (ocm owns the formatting).
+# .jsonc: replace ONLY the provider.<pid>.blacklist span; when that array does
+# not exist yet, refuse and print the exact lines to add — ocm never creates
+# keys inside a commented config, because that needs a human.
+merge_blacklist() {
+	local config_path="$1" provider_id="$2" confirmed_list="$3" working_list="$4" previous_list="$5"
+	# OpenCode 2.x builds its model catalog without reading per-model provider
+	# keys (verified on 2.3.0: no whitelist/blacklist/disabled/policies key
+	# changes the server's model list). Writing one would report success while
+	# changing nothing, so refuse instead of writing an inert key.
+	if [[ "$(oc_generation)" != "1" ]]; then
+		log_error "this OpenCode version does not honour provider model lists; nothing was changed (per-model hiding is not supported on OpenCode 2.x)"
+		return 1
+	fi
+	local jpy
+	jpy="$(oc_jsonc_py)"
+	python3 -B - "$config_path" "$provider_id" "$confirmed_list" "$working_list" "$previous_list" "${jpy%/*}" <<'PY'
+import json, os, sys
+sys.path.insert(0, sys.argv[6])
+import jsonc
 
 config_path = os.path.expanduser(sys.argv[1])
 provider_id = sys.argv[2]
-probed = set(sys.argv[3].splitlines()) if sys.argv[3] else set()
-confirmed = set(sys.argv[4].splitlines()) if sys.argv[4] else set()
+confirmed = set(sys.argv[3].splitlines()) if sys.argv[3] else set()
+working = set(sys.argv[4].splitlines()) if sys.argv[4] else set()
 previous = set(sys.argv[5].splitlines()) if sys.argv[5] else set()
-working = set(sys.argv[6].splitlines()) if len(sys.argv) > 6 and sys.argv[6] else set()
-
-with open(config_path) as f:
-    cfg = json.load(f)
-
-providers = cfg.setdefault("provider", {})
-provider = providers.setdefault(provider_id, {})
 
 # Blacklist entries are STICKY: a previously blacklisted model is dropped only when
 # it now probes WORKS. Any other outcome (billing/credit limit, timeout, auth error,
 # unclear) leaves it blacklisted — un-blacklisting on a non-answer would resurface
 # models we have no evidence work, and would flip entries off on every scoped run.
 # Entries not probed this run are always preserved.
-new_blacklist = (previous - working) | confirmed
-provider["blacklist"] = sorted(new_blacklist)
+new_blacklist = sorted((previous - working) | confirmed)
 
-# Write atomically
-tmp = config_path + ".tmp"
-with open(tmp, "w") as f:
-    json.dump(cfg, f, indent=2)
-os.replace(tmp, config_path)
+cfg, masked = jsonc.parse_jsonc(jsonc.load_text(config_path))
+dotted = "provider.%s.blacklist" % provider_id
+
+if os.path.basename(config_path).endswith(".jsonc"):
+    try:
+        start, end = jsonc.find_array_span(masked, dotted)
+    except jsonc.JsoncError as e:
+        sys.stderr.write(
+            "refusing to edit %s: %s\nadd by hand inside the \"%s\" provider object, then re-run:\n"
+            '    "blacklist": %s\n' % (config_path, e, provider_id, json.dumps(new_blacklist))
+        )
+        sys.exit(3)
+    text = jsonc.load_text(config_path)
+    text = text[:start] + json.dumps(new_blacklist) + text[end:]
+    jsonc.parse_jsonc(text)  # refuses to install a config that no longer parses
+    tmp = config_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+        f.write(text)
+    os.replace(tmp, config_path)
+else:
+    providers = cfg.setdefault("provider", {})
+    providers.setdefault(provider_id, {})["blacklist"] = new_blacklist
+    tmp = config_path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f, indent=2)
+    os.replace(tmp, config_path)
 
 print("Applied blacklist for provider:", provider_id, "with", len(new_blacklist), "models")
 PY
@@ -980,7 +1098,7 @@ verify_blacklist_effect() {
 	local expected_blacklist_file="$2"
 
 	local visible_models
-	visible_models=$(opencode models "$provider_id" 2>/dev/null | sort -u)
+	visible_models=$(opencode models 2>/dev/null | awk -v p="$provider_id" 'index($0, p "/") == 1' | sort -u)
 
 	local -a expected_blacklist=()
 	while IFS= read -r model; do
@@ -1128,9 +1246,9 @@ import json,sys,os
 with open(os.path.expanduser(sys.argv[1])) as f: auth=json.load(f)
 pid=sys.argv[2]
 if pid in auth and auth[pid].get("type")=="api" and auth[pid].get("key"):
-    sys.exit(0)
+	sys.exit(0)
 else:
-    sys.exit(1)
+	sys.exit(1)
 '; then
 			providers=("$target_provider")
 		else
@@ -1366,6 +1484,12 @@ PY
 	local total_written=0 total_hidden=0 total_still_visible=0
 
 	if [[ $apply_mode -eq 1 && $overall_changes -eq 1 ]]; then
+		# OpenCode 2.x ignores per-model provider keys; refuse rather than write
+		# an inert blacklist (see opencodecfg.sh for the verified behaviour).
+		if [[ "$(oc_generation)" != "1" ]]; then
+			log_error "this OpenCode version does not honour provider model lists; nothing was changed (per-model hiding is not supported on OpenCode 2.x)"
+			return 1
+		fi
 		# Re-acquire the lock for the apply. The lock was released after Phase 1
 		# discovery (intentionally — probing runs unlocked), so without this the
 		# whole apply ran with no mutual exclusion and the staleness check below
@@ -1398,7 +1522,7 @@ PY
 			# and are dropped only for these, never merely because they were probed.
 			local working_file="$OCPROBE_RUN_DIR/${provider_id//\//_}.working.txt"
 			awk -F'\t' '$2 == "WORKS" {print $1}' "$results_file" >"$working_file"
-			apply_blacklist "$provider_id" "$proposed_blacklist_file" "$models_file" "$working_file"
+			apply_blacklist "$provider_id" "$proposed_blacklist_file" "$working_file"
 
 			log_info "Verifying blacklist effect..."
 			verify_blacklist_effect "$provider_id" "$proposed_blacklist_file"
