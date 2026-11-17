@@ -655,6 +655,32 @@ EOF
 
 # ---- F4: probe worker ---------------------------------------------------------
 
+@test "get_provider_models works when the CLI rejects a positional provider arg (2.x)" {
+  local mock="$BATS_TEST_TMPDIR/strict-mock"
+  mkdir -p "$mock"
+  cat >"$mock/opencode" <<'MOCK'
+#!/usr/bin/env bash
+case "$1" in
+  models)
+    if [[ $# -gt 1 ]]; then
+      echo "ERROR" >&2
+      echo "  Unexpected positional argument: \"$2\"" >&2
+      exit 1
+    fi
+    printf 'prov-a/m1\nprov-a/m2\nprov-b/m3\n'
+    ;;
+esac
+MOCK
+  chmod +x "$mock/opencode"
+  local out
+  out=$(PATH="$mock:$PATH" get_provider_models "prov-a")
+  local rc=$?
+  [[ $rc -eq 0 ]] || { echo "get_provider_models exited $rc" >&2; return 1; }
+  run printf '%s' "$out"
+  assert_output "prov-a/m1
+prov-a/m2"
+}
+
 @test "the generated probe workers never invoke the removed flag" {
   local w1="$OCPROBE_RUN_DIR/w1.sh" w2="$OCPROBE_RUN_DIR/w2.sh"
   write_worker "$w1"

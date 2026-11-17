@@ -614,10 +614,13 @@ for provider_id, creds in sorted(auth.items()):
 PY
 }
 
-# Get full model list for a provider from opencode models command
+# List the models of one provider that are visible to `opencode models`.
+# OpenCode 2.x rejects a positional provider argument ("Unexpected positional
+# argument: ..."), so the full catalog is fetched and filtered here; on 1.x the
+# result is identical to the old per-provider call.
 get_provider_models() {
 	local provider_id="$1"
-	opencode models "$provider_id" 2>/dev/null | sort -u
+	opencode models 2>/dev/null | awk -v p="$provider_id" 'index($0, p "/") == 1' | sort -u
 }
 
 # Get current blacklist for a provider from opencode.json (or .jsonc)
@@ -1095,7 +1098,7 @@ verify_blacklist_effect() {
 	local expected_blacklist_file="$2"
 
 	local visible_models
-	visible_models=$(opencode models "$provider_id" 2>/dev/null | sort -u)
+	visible_models=$(opencode models 2>/dev/null | awk -v p="$provider_id" 'index($0, p "/") == 1' | sort -u)
 
 	local -a expected_blacklist=()
 	while IFS= read -r model; do
