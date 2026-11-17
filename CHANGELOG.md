@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **OpenCode 2.x support (2.3.0 verified), 1.x unchanged.** Generation is
+  detected from `opencode --version`; session-layer code additionally checks
+  for the `session_v2` tables.
+- OpenCode config discovery: an explicit `opencode.config_path` wins, then
+  `opencode.jsonc`, then `opencode.json`. The `.jsonc` flavour is read with a
+  stdlib-only parser that handles `//` and `/* */` comments (including inside
+  strings), trailing commas, CRLF and a BOM.
+- Comment-preserving config writer for `.jsonc`: only the byte span of the
+  edited array changes; anything unlocatable is refused (exit 3) with the
+  exact lines to add by hand, instead of re-serialising the file.
+- `make setup`: creates a project-local `.venv` with PyYAML and jsonschema
+  (honours `OCPROBE_PYTHON`); `make test` puts an interpreter that has both
+  modules first on `PATH`. `ocprobe doctor` reports which interpreter it
+  resolved and how to install the modules when they are missing.
+
+### Changed
+
+- `apply` / `validate --apply` on OpenCode 2.x **refuse** to write
+  `provider.<id>.blacklist` and change nothing: 2.x does not honour
+  per-provider model lists in the model catalog, so the write would be
+  silently inert. `monitor`, `validate` and `apply --dry-run` remain
+  read-only and keep working.
+- Probes use `opencode run --format json` on every generation. The removed
+  1.x-only `--pure` flag is gone; the 2.x event stream (`step_start`, `text`,
+  `step_finish`, one-line `error` objects) and the 1.x status events are both
+  parsed, and unknown output falls back to the string rules.
+- `session cleanup` is a dry run by default and deletes only with `--apply`,
+  one `opencode session delete` per session, checking each exit code and
+  exiting non-zero if any delete fails. It never touches sessions older than
+  15 minutes, sessions with a legacy-table row, sessions with a parent or
+  child, sessions with tool calls, or sessions beyond the message ceiling.
+- On OpenCode 2.x, `session backup` writes a JSON document via
+  `opencode session export` and `session restore` uses
+  `opencode session import`; both require `OCPROBE_OPENCODE_SERVER` to name
+  the server that owns the database, and `.sql` dumps are refused for
+  restore. OpenCode 1.x keeps the `.sql` dump path.
+- Per-probe session deletion after each probe (probe and validate workers),
+  using the session id captured from the probe's own events.
+
+### Fixed
+
+- `apply` and `validate` on a machine whose OpenCode config is `opencode.jsonc`
+  no longer fail on comments or trailing commas, and no shadowing plain
+  `opencode.json` is created next to a `.jsonc`.
+- Session cleanup, listing, backup and restore read the correct tables on
+  OpenCode 2.x (`session_v2`/`session_message`), so v2-era probe sessions are
+  actually found and legacy ghosts are left alone.
+- The probe worker no longer sends the flag 2.x rejects, which made every
+  probe fail before reaching the model.
+- `make test` passes on a system Python without PyYAML/jsonschema.
+
 ## [3.1.3] - 2026-09-28
 
 A hardening release. Nothing here changes what `ocprobe` decides about your

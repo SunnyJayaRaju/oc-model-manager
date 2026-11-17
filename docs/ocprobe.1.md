@@ -105,20 +105,28 @@ Manage OpenCode sessions.
 
     ocprobe session list
     ocprobe session backup <session_id>
-    ocprobe session restore <file.sql>
+    ocprobe session restore <file>
     ocprobe session cleanup
 
 **list**
 : List sessions with message counts and timestamps.
 
 **backup**
-: Dump session to replayable SQL file.
+: Save a session backup: SQL dump on OpenCode 1.x, JSON via
+  `opencode session export` on 2.x (`OCPROBE_OPENCODE_SERVER` must name the
+  server that owns the database).
 
 **restore**
-: Restore session from SQL dump.
+: Restore a session backup. On OpenCode 1.x a `.sql` dump is restored
+  through a hardened per-statement SQLite path. On 2.x `.sql` dumps are
+  refused and the JSON backup is restored via `opencode session import`
+  (`OCPROBE_OPENCODE_SERVER`).
 
 **cleanup**
-: Remove probe sessions (ocprobe-probe*).
+: Remove ocm's own probe sessions. Dry run by default; `--apply` deletes,
+  one `opencode session delete` per session, exiting non-zero if any delete
+  fails. Sessions younger than 15 minutes, sessions with a legacy row, a
+  parent or child, tool calls, or too many messages are never touched.
 
 ## config
 
