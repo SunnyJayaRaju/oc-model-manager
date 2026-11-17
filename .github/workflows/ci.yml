@@ -443,7 +443,7 @@ jobs:
           name: ocprobe-release
           path: dist/
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/ocprobe-*.tar.gz
