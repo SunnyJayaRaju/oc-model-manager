@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a problem with ocprobe
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening an issue, please run `ocprobe doctor` and include the
+        output (scrub any identifiers you do not want to share).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Also tell us what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ocprobe ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `ocprobe version`, `opencode --version`, and your OS
+      placeholder: ocprobe 3.1.3 / opencode 2.3.0 / macOS 15
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: ocprobe doctor output
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Scrub session ids, provider ids and any other identifiers first.
