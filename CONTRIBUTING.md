@@ -5,6 +5,7 @@ Thank you for your interest in contributing to oc-model-manager! This document p
 ## Code of Conduct
 
 By participating in this project, you agree to abide by our Code of Conduct:
+
 - Be respectful and inclusive
 - Welcome newcomers and help them get started
 - Focus on constructive feedback
@@ -14,7 +15,8 @@ By participating in this project, you agree to abide by our Code of Conduct:
 
 ### Prerequisites
 
-- Bash 4.0+
+- Bash 4.3+ (the floor enforced by `lib/core.sh`; macOS ships 3.2, so install a
+  current bash via Homebrew and put it first on `PATH`)
 - Python 3.8+ with PyYAML and jsonschema
 - jq
 - sqlite3
@@ -32,15 +34,18 @@ make dev-install
 > **Note:** Legacy shims `oc-model-audit.sh`, `oc-model-manager`, and `oc-session-backup` are deprecated in favor of `ocprobe` subcommands. They will be removed in a future major release.
 
 This will:
+
 1. Build the package
 2. Install to `~/.local/bin/ocprobe`
 
 To verify the installation works correctly, run the test suite separately:
+
 ```bash
 make test
 ```
 
 For a complete release-equivalent local build including the man page:
+
 ```bash
 make man    # requires pandoc
 make build  # packages with man page if present
@@ -112,6 +117,7 @@ Fixes #issue-number
 ```
 
 Types:
+
 - `feat`: New feature
 - `fix`: Bug fix
 - `docs`: Documentation changes

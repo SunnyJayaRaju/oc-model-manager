@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Every OpenCode 2.x session query now binds its parameters.** The 2.x paths
+  in `lib/db.sh` (age lookup, legacy-row/tree/tool-call gates, prompt match,
+  message count, title lookup, the cleanup candidate query and the cleanup
+  freshness check) ran string-interpolated SQL through `sqlite3 -readonly`.
+  They now run through `lib/db_query.py`, a stdlib-only reader that opens the
+  database over a read-only URI (`file:…?mode=ro`) and takes every value as a
+  bound parameter, so a session id cannot change the shape of a query whatever
+  it contains. The legacy 1.x path keeps `sql_escape` and carries the same
+  adversarial tests: ids with quotes, semicolons, newlines, NUL bytes, very
+  long ids and unicode, plus malformed JSON in `session_message.data` and NULL
+  columns.
+- **Numeric SQL parameters bind as integers.** Values such as the message
+  ceiling arrive as strings and bound as text could flip SQLite's type
+  ordering (`INTEGER < TEXT`), so a session over the ceiling could compare
+  true against the text form and slip through a safety gate.
+
 ### Added
 
 - **OpenCode 2.x support (2.3.0 verified), 1.x unchanged.** Generation is
@@ -48,6 +66,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-probe session deletion after each probe (probe and validate workers),
   using the session id captured from the probe's own events.
 
+### Changed
+
+- The session backup/restore matrix (what each generation produces, accepts
+  and refuses, and why) is documented in the README and in `ocprobe --help`.
+- `delete_session` captures the delete CLI's exit code and stderr. On failure
+  it prints one short sanitised reason - ids other than the one being deleted
+  and filesystem paths are masked - and keeps the non-zero exit.
+- On a python without PyYAML/jsonschema, the config reader resolves the
+  interpreter through the same resolver that names the fix (`make setup`,
+  pip install, `OCPROBE_PYTHON`) instead of letting the read fail with an
+  import traceback; `ocprobe doctor` therefore always reaches its actionable
+  message.
+
 ### Fixed
 
 - `apply` and `validate` on a machine whose OpenCode config is `opencode.jsonc`
@@ -77,7 +108,7 @@ wrong, and what CI is now able to catch before you do.
   - `INSERT INTO <table> DEFAULT VALUES` is a real INSERT on a table the
     allowlist permits, so it was accepted and wrote an all-NULL row over real
     data. A genuine backup never emits it, and it is now refused. A value that
-    merely *reads* "DEFAULT VALUES" is still restored normally.
+    merely _reads_ "DEFAULT VALUES" is still restored normally.
   - Every statement is now checked for a first keyword of `INSERT`, `REPLACE` or
     `WITH` before sqlite sees it, after stripping a BOM, Unicode whitespace and
     `--` / `/* */` comments. `REINDEX`, `ANALYZE` and `VACUUM` were already
@@ -117,7 +148,7 @@ wrong, and what CI is now able to catch before you do.
   record with a counter that never moved — reopening exactly the hole the
   counter exists to close. Now it warns, drops the in-process cache, and reports
   failure to the caller. A directory sitting where the sidecar belongs was the
-  case `mv ||` structurally could not catch, because `mv` *succeeds* by moving
+  case `mv ||` structurally could not catch, because `mv` _succeeds_ by moving
   the file inside it.
 
 - **Config integers are validated and read in base 10.** A leading zero made
@@ -149,13 +180,13 @@ wrong, and what CI is now able to catch before you do.
 
 - **A release could be tagged with a version the source disagrees with.** The
   build job adopted whatever tag was pushed and overwrote `VERSION` with it. A
-  tag must now match `^v[0-9]+\.[0-9]+\.[0-9]+$` *and* the `VERSION` file, and
+  tag must now match `^v[0-9]+\.[0-9]+\.[0-9]+$` _and_ the `VERSION` file, and
   the check runs before anything is packaged.
 - **The tap updater no longer assumes the formula has a `version` line.** A
   Homebrew formula normally takes its version from the url, and `brew audit`
   calls a `version` line that merely restates it redundant -- so the tap's
   formula drops it, and the updater used to write the url and the sha256 and
-  *then* fail on the missing line. `url` and `sha256` are now the managed
+  _then_ fail on the missing line. `url` and `sha256` are now the managed
   fields; `version` is updated when present and not added when absent. Every
   other check is unchanged: the tag pattern, `curl --fail`, the self-computed
   sha256 cross-checked against the published `.sha256`, 64-hex validation, the
@@ -290,6 +321,7 @@ wrong, and what CI is now able to catch before you do.
   like they would wipe unrelated entries.
 
 ### Added (policy/CI work, previously unreleased)
+
 - Per-provider `auto_apply` enforcement in policy engine (audit/check only)
 - Drift detection: `make drift-check` target and `ocprobe doctor` version/PATH reporting
 - `lib/policy.sh`: `policy_effective_auto_apply()` and `policy_all_pending_auto_applyable()` helpers
