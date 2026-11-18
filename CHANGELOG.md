@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`session cleanup` and `delete_session` remove ocprobe's own validate
+  sessions.** A validate probe runs in the live harness, where a model can emit
+  tool calls and reasoning messages before it answers; the generic gates (any
+  tool call, more than 4 messages) refused those sessions, so one leaked per
+  model that behaved that way (measured 2026-11-18: a 5-message validate
+  session with 2 tool calls sat undeleted). The exact `ocprobe-validate` title
+  plus the exact configured probe prompt now identify our own probe, and only
+  then do the tool-call gate and the 4-message ceiling relax (bounded at 100);
+  `list_probe_sessions_since` selects the same two shapes, so a killed run's
+  leftovers are swept too. An id that is absent from the database is reported
+  as already clean instead of a false error after a successful probe.
 - **Release automation: every `actions/checkout` in a multi-checkout job now
   names its own `path:`.** The v3.2.0 tag run's "Update Homebrew Formula" job
   checked the release repo into `source/` and then checked out the tap with no

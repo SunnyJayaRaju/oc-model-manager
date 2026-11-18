@@ -134,3 +134,59 @@ EOF
 	assert_output --partial "still_visible=1"
 	assert_output --partial "written=1"
 }
+# R37: probe_model_classify must delete its OWN probe session even when the
+# model FAILS and the session contains tool calls. Before the fix, the guard
+# refused both (tool-call gate + 4-message ceiling), so every failed probe
+# leaked a session. Stub CLI only: no model call, no network.
+@test "R37 validate: a FAILED probe that emitted tool calls is still deleted" {
+  local db="$BATS_TEST_TMPDIR/v2.db"
+  rm -f "$db"
+  sqlite3 "$db" <"$OCPROBE_ROOT/test/fixtures/opencode2x-schema.sql"
+  export OCPROBE_OPencode_DB="$db"
+  export DELETE_TRACK="$BATS_TEST_TMPDIR/deleted.txt"
+  : >"$DELETE_TRACK"
+  export STUB_DB="$db"
+
+  local mock_dir
+  mock_dir=$(mktemp -d "$BATS_TEST_TMPDIR/r37-mock-XXXXXX")
+  cat >"$mock_dir/opencode" <<'STUB'
+#!/usr/bin/env bash
+ts=$(python3 -c 'import time; print(int(time.time()*1000))')
+case "$1" in
+  run)
+    sid=ses_failedProbe1111111
+    sqlite3 "$STUB_DB" "INSERT INTO session_v2 (id, project_id, slug, directory, version, title, time_created, time_updated) VALUES ('$sid','proj_test','fp','/tmp/proj','1','ocprobe-validate',$ts,$ts);
+      INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES ('m1','$sid','user',1,$ts,$ts,'{\"text\":\"Reply with exactly: OK\"}');
+      INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES ('m2','$sid','assistant',2,$ts,$ts,'{\"content\":[{\"type\":\"tool\",\"callID\":\"c1\"}]}');
+      INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES ('m3','$sid','assistant',3,$ts,$ts,'{\"content\":[{\"type\":\"text\",\"text\":\"partial\"}]}');"
+    printf '{"type":"error","error":{"type":"provider","message":"boom"}}\n'
+    printf '{"sessionID":"%s"}\n' "$sid"
+    exit 1
+    ;;
+  session)
+    case "$2" in
+      delete)
+        echo "$3" >>"$DELETE_TRACK"
+        sqlite3 "$STUB_DB" "DELETE FROM session_message WHERE session_id='$3'; DELETE FROM session_v2 WHERE id='$3';"
+        exit 0 ;;
+    esac
+    ;;
+  --version) echo "opencode 2.3.0" ;;
+esac
+STUB
+  chmod +x "$mock_dir/opencode"
+  cat >"$mock_dir/timeout" <<'T'
+#!/usr/bin/env bash
+shift
+exec "$@"
+T
+  chmod +x "$mock_dir/timeout"
+
+  PATH="$mock_dir:$PATH" run probe_model_classify "test-provider/failing-model" 10 "Reply with exactly: OK"
+  assert_success
+  assert_output --partial "ERROR"
+  run cat "$DELETE_TRACK"
+  assert_line "ses_failedProbe1111111"
+  run sqlite3 "$db" "SELECT count(*) FROM session_v2 WHERE id='ses_failedProbe1111111';"
+  assert_output "0"
+}
