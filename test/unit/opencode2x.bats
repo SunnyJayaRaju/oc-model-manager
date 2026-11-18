@@ -463,6 +463,123 @@ EOF
   assert_output --partial "tool calls"
 }
 
+# R37: ocprobe's own validate probe. On this harness the model can emit tool
+# calls and reasoning messages before answering "OK"; the generic gates used to
+# leak one session per model. The exact title + exact prompt identify our own
+# probe, and only then are the tool-call gate and the 4-message bound relaxed.
+make_validate_probe_fixture() {
+  local sid="$1" title="$2" first="$3" n_msgs="$4" tools="$5"
+  local db ts i
+  create_v2_db
+  db="$OCPROBE_OPencode_DB"
+  ts=$(now_ms)
+  sqlite3 "$db" "INSERT INTO session_v2 (id, project_id, slug, directory, version, title, time_created, time_updated) VALUES ('$sid', 'proj_test', 'pv', '/tmp/proj', '1', '$title', $ts, $ts);"
+  local first_json
+  first_json=$(printf '{"text":"%s"}' "$first")
+  sqlite3 "$db" "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES ('msg_v1', '$sid', 'user', 1, $ts, $ts, '$first_json');"
+  local part_json
+  for i in $(seq 2 "$n_msgs"); do
+    if [[ "$tools" == "yes" && "$i" == "2" ]]; then
+      part_json='{"content":[{"type":"tool","callID":"c1"}]}'
+    else
+      part_json='{"content":[{"type":"text","text":"OK"}]}'
+    fi
+    sqlite3 "$db" "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES ('msg_v$i', '$sid', 'assistant', $i, $ts, $ts, '$part_json');"
+  done
+}
+
+make_delete_mock() {
+  local mock="$BATS_TEST_TMPDIR/del-mock-r37"
+  mkdir -p "$mock"
+  cat >"$mock/opencode" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  --version) echo "opencode 2.3.0" ;;
+  session)
+    case "$2" in
+      delete) echo "$3" >>"$DELETE_TRACK"; exit 0 ;;
+    esac
+    ;;
+esac
+EOF
+  chmod +x "$mock/opencode"
+  export DELETE_TRACK="$OCPROBE_RUN_DIR/deleted-r37.txt"
+  : >"$DELETE_TRACK"
+}
+
+@test "R37 validate: a 5-message probe with a tool call is deleted (success path)" {
+  make_validate_probe_fixture "ses_valOK111111111111111" "ocprobe-validate" "Reply with exactly: OK" 5 yes
+  make_delete_mock
+  PATH="$BATS_TEST_TMPDIR/del-mock-r37:$PATH" run delete_session "ses_valOK111111111111111"
+  assert_success
+  run cat "$DELETE_TRACK"
+  assert_line "ses_valOK111111111111111"
+}
+
+@test "R37 validate: a validate TITLE with a lookalike prompt is still refused" {
+  make_validate_probe_fixture "ses_valBAD11111111111111" "ocprobe-validate" "write my thesis" 5 no
+  make_delete_mock
+  PATH="$BATS_TEST_TMPDIR/del-mock-r37:$PATH" run delete_session "ses_valBAD11111111111111"
+  assert_failure
+  assert_output --partial "not a configured probe prompt"
+  run cat "$DELETE_TRACK"
+  assert_output ""
+}
+
+@test "R37 validate: the relaxed ceiling is still bounded (101 messages refused)" {
+  make_validate_probe_fixture "ses_valLONG1111111111111" "ocprobe-validate" "Reply with exactly: OK" 101 yes
+  make_delete_mock
+  PATH="$BATS_TEST_TMPDIR/del-mock-r37:$PATH" run delete_session "ses_valLONG1111111111111"
+  assert_failure
+  assert_output --partial "message ceiling (100)"
+  run cat "$DELETE_TRACK"
+  assert_output ""
+}
+
+@test "R37 validate: the generic probe title keeps the tool-call refusal" {
+  make_validate_probe_fixture "ses_genTOOL1111111111111" "ocprobe-probe" "Reply with exactly: OK" 3 yes
+  make_delete_mock
+  PATH="$BATS_TEST_TMPDIR/del-mock-r37:$PATH" run delete_session "ses_genTOOL1111111111111"
+  assert_failure
+  assert_output --partial "tool calls"
+}
+
+# R37 kill path: if the whole ocprobe process is killed before its per-probe
+# delete runs, the leaked validate session must be removable by the next
+# `session cleanup` pass. The old gates refused it forever (tool calls and
+# >4 messages), which is exactly how the R35/R36 leaks survived.
+@test "R37 validate: killed run's leaked probe is swept by session cleanup --apply" {
+  make_validate_probe_fixture "ses_valKILL1111111111111" "ocprobe-validate" "Reply with exactly: OK" 5 yes
+  make_delete_mock
+  v2_load_config_fixtures
+  local db ts
+  db="$OCPROBE_OPencode_DB"
+  ts=$(now_ms)
+  sqlite3 "$db" "UPDATE session_v2 SET time_created = $ts - 20*60*1000, time_updated = $ts - 20*60*1000 WHERE id='ses_valKILL1111111111111';"
+  PATH="$BATS_TEST_TMPDIR/del-mock-r37:$PATH" run cmd_session_cleanup
+  assert_success
+  assert_output --partial "would delete"
+  run cat "$DELETE_TRACK"
+  assert_output ""
+  PATH="$BATS_TEST_TMPDIR/del-mock-r37:$PATH" run cmd_session_cleanup --apply
+  assert_success
+  run cat "$DELETE_TRACK"
+  assert_line "ses_valKILL1111111111111"
+}
+
+# R37: a probe whose session never persisted is not a failure. The id is
+# absent from this database, so no CLI call is made and there is nothing to
+# clean up; the old refusal printed a false ERROR after a successful probe.
+@test "R37 delete_session: an absent id is already clean, success and no CLI call" {
+  create_v2_db
+  make_delete_mock
+  run delete_session "ses_absentR371111111111111"
+  assert_success
+  assert_output --partial "already clean"
+  run cat "$DELETE_TRACK"
+  assert_output ""
+}
+
 @test "delete_session refuses v2 sessions whose first user message is not a probe prompt" {
   local db
   create_v2_db
