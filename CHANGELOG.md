@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - README restructure (upgrade/uninstall, security, troubleshooting/FAQ, support-matrix row), CODE_OF_CONDUCT, SECURITY/CONTRIBUTING accuracy, lint configs with justified exceptions (#36).
 
-## [Unreleased]
+## [3.2.2] - 2026-11-18
 
 ### Fixed
 
@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step order, and `scripts/ci/check-workflow-checkout-paths.sh` fails Lint if
   any job with two or more checkouts ever loses a `path:`. No user-visible
   change: no release, tag or formula is altered.
+
+## [Unreleased]
 
 ## [3.2.0] - 2026-11-17
 
