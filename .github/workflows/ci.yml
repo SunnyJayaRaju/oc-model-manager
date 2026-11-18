@@ -533,7 +533,7 @@ jobs:
           # release. With pipefail the pipeline's status is the script's.
           # test/unit/workflow_step_exit_status.bats pins both halves of that.
           set -o pipefail
-          bash source/scripts/update-tap-formula.sh | tee "$RUNNER_TEMP/formula.log"
+          bash ../source/scripts/update-tap-formula.sh | tee "$RUNNER_TEMP/formula.log"
           # changed=yes|no on its own line, so re-running for a tag the formula
           # already has is a no-op instead of an empty-commit failure.
           grep -q '^changed=yes$' "$RUNNER_TEMP/formula.log" && echo "changed=true" >> "$GITHUB_OUTPUT" || echo "changed=false" >> "$GITHUB_OUTPUT"
