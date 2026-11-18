@@ -82,8 +82,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-probe session deletion after each probe (probe and validate workers),
   using the session id captured from the probe's own events.
 
-### Changed
-
 - The session backup/restore matrix (what each generation produces, accepts
   and refuses, and why) is documented in the README and in `ocprobe --help`.
 - `delete_session` captures the delete CLI's exit code and stderr. On failure
@@ -372,7 +370,7 @@ wrong, and what CI is now able to catch before you do.
 - **lib/policy.sh**: missing/unreadable policy.schema.json now causes hard failure (die) instead of soft-ignoring as invalid-disabled; added explicit case 3 for SCHEMA_ERROR
 - **README.md**: Architecture tree now lists policy.sh under lib/; config/ expanded with policy.schema.json and validate-skip-patterns.txt; packaging/ corrected to Homebrew pointer only; legacy shim deprecation notes added
 - **CHANGELOG.md**: [Unreleased] documents gate regression tests, policy SCHEMA_ERROR die message, Architecture listing; [3.1.0] AUTH_ERROR bullet corrected (quota exceeded removed)
-- **.gitignore**: added secrets/credentials patterns (.env*, _.pem, *.key, id_rsa*, credentials_, auth.json, **/secrets.*, .ocprobe/, *.sqlite, *.db)
+- **.gitignore**: added secrets/credentials patterns (`.env*`, `_.pem`, `*.key`, `id_rsa*`, `credentials_`, `auth.json`, `**/secrets.*`, `.ocprobe/`, `*.sqlite`, `*.db`)
 - **SECURITY.md**: reporting section now prefers GitHub Security Advisories + maintainer profile for sensitive reports; public issues for non-sensitive only
 - **CI workflow**: removed non-existent 'develop' branch from push/PR triggers
 - Legacy shims `oc-model-audit.sh`, `oc-model-manager`, `oc-session-backup` deprecated with stderr warnings; prefer `ocprobe` subcommands
@@ -562,3 +560,6 @@ wrong, and what CI is now able to catch before you do.
 - All SQL queries use proper escaping
 - Umask 077 for state directories
 - Read-only DB connections for queries
+
+[Unreleased]: https://github.com/SunnyJayaRaju/oc-model-manager/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/SunnyJayaRaju/oc-model-manager/compare/v3.1.3...v3.2.0

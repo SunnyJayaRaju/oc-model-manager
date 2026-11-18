@@ -3,7 +3,7 @@
 The live, canonical Homebrew formula for `ocprobe` lives in a separate
 repository — NOT here:
 
-https://github.com/SunnyJayaRaju/homebrew-ocprobe/blob/main/Formula/ocprobe.rb
+<https://github.com/SunnyJayaRaju/homebrew-ocprobe/blob/main/Formula/ocprobe.rb>
 
 This directory intentionally does not contain a formula file. A stale
 copy here previously caused confusion about which formula was live; do
