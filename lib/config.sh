@@ -549,11 +549,20 @@ cmd_config() {
 	local subcmd="${1:-show}"
 	shift || true
 
+	# cmd_config runs without load_config: show/path must not create a default
+	# config as a side effect, so resolve the same path load_config would use.
+	: "${OCPROBE_CONFIG_FILE:=${OCPROBE_CONFIG_OVERRIDE:-$DEFAULT_CONFIG_FILE}}"
+	OCPROBE_CONFIG_FILE="${OCPROBE_CONFIG_FILE/#\~/$HOME}"
+
 	case "$subcmd" in
 	show)
 		[[ -f "$OCPROBE_CONFIG_FILE" ]] && cat "$OCPROBE_CONFIG_FILE" || echo "No config file found"
 		;;
 	validate)
+		if [[ ! -f "$OCPROBE_CONFIG_FILE" ]]; then
+			log_error "No config file found at $OCPROBE_CONFIG_FILE"
+			return 1
+		fi
 		validate_config "$OCPROBE_CONFIG_FILE" && echo "Config is valid"
 		;;
 	edit)

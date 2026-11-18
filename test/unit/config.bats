@@ -120,3 +120,51 @@ EOF
   result=$(get_env_or_config "TEST_ENV_VAR" "TEST_CONFIG_VAR" "default")
   assert_equal "$result" "default"
 }
+@test "cmd_config show prints the config file when it exists (regression: empty OCPROBE_CONFIG_FILE)" {
+  local tmpfile
+  tmpfile=$(mktemp /tmp/ocprobe-test-config-XXXXXX.yaml)
+  printf 'version: 1\n' > "$tmpfile"
+  OCPROBE_CONFIG_OVERRIDE="$tmpfile"
+  OCPROBE_CONFIG_FILE=""
+  run cmd_config show
+  assert_success
+  assert_output --partial "version: 1"
+}
+
+@test "cmd_config show reports a missing config file without creating one" {
+  OCPROBE_CONFIG_OVERRIDE="$HOME/.config/ocprobe/does-not-exist-$RANDOM.yaml"
+  OCPROBE_CONFIG_FILE=""
+  run cmd_config show
+  assert_success
+  assert_output "No config file found"
+  [[ ! -f "$OCPROBE_CONFIG_OVERRIDE" ]]
+}
+
+@test "cmd_config path prints a non-empty resolved path" {
+  OCPROBE_CONFIG_OVERRIDE=""
+  OCPROBE_CONFIG_FILE=""
+  run cmd_config path
+  assert_success
+  [[ -n "$output" ]]
+  assert_output --partial "config.yaml"
+}
+
+@test "cmd_config validate says a valid config is valid" {
+  local tmpfile
+  tmpfile=$(mktemp /tmp/ocprobe-test-config-XXXXXX.yaml)
+  create_default_config "$tmpfile"
+  OCPROBE_CONFIG_OVERRIDE="$tmpfile"
+  OCPROBE_CONFIG_FILE=""
+  run cmd_config validate
+  assert_success
+  assert_output --partial "Config is valid"
+}
+
+@test "config path resolves through the CLI without load_config (regression)" {
+  local tmpfile
+  tmpfile=$(mktemp /tmp/ocprobe-test-config-XXXXXX.yaml)
+  printf 'version: 1\n' > "$tmpfile"
+  run env -u OCPROBE_CONFIG_FILE "$OCPROBE_ROOT/bin/ocprobe" --config "$tmpfile" config path
+  assert_success
+  assert_output "$tmpfile"
+}
