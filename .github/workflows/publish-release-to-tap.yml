@@ -4,8 +4,13 @@ name: Publish an existing release to the tap
 # The catch-up path for a tag whose release is already published.
 #
 # ci.yml still owns the normal release: tag push -> Build -> Release -> Update
-# Homebrew Formula -> Verify Release. That path is correct as of 6077e43 and is
-# not changed by this file.
+# Homebrew Formula -> Verify Release. Its checkout order was fixed at 6077e43,
+# but the updater invocation still said `bash source/scripts/...` from
+# working-directory: tap, which resolves to tap/source/... and cannot exist --
+# the v3.2.1 tag run (44253864416) died with exit 127 exactly that way. Both
+# workflows now invoke ../source/scripts/..., and test/unit/formula_step_paths
+# .bats executes the real step body in a simulated workspace so the class
+# cannot come back by string-matching green again.
 #
 # This exists for exactly one situation: a release that is published, verified
 # and correct, but whose tap update did not land. v3.1.3 is that case. Its
@@ -158,7 +163,7 @@ jobs:
         working-directory: tap
         run: |
           set -euo pipefail
-          bash source/scripts/update-tap-formula.sh | tee "$RUNNER_TEMP/formula.log"
+          bash ../source/scripts/update-tap-formula.sh | tee "$RUNNER_TEMP/formula.log"
           # `bash ... | tee` reports tee's status unless pipefail is set. tee
           # succeeds on a missing script, so without this a failure here would
           # be reported as success and the tap left on the old version.
