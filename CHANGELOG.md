@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.1] - 2026-11-18
+
+### Fixed
+
+- **Probe workers delete their own session** after every probe outcome (WORKS, TIMEOUT, AUTH_ERROR, NOTFOUND, provider failure), through the same guarded `delete_session` the cleanup commands use. A parent killed mid-run (Ctrl-C, timeout, crash) no longer leaves `ocprobe-probe` sessions behind. A `SIGKILL` to the worker itself remains the residual gap; `session cleanup` and the scheduled sweep are the backstop (#38).
+- `config show`, `config path` and `config validate` resolve the config file again: the subcommands ran without `load_config`, saw an empty `OCPROBE_CONFIG_FILE`, and `show` false-negotiated, `path` printed nothing and `validate` crashed (#37).
+
+### Docs
+
+- README restructure (upgrade/uninstall, security, troubleshooting/FAQ, support-matrix row), CODE_OF_CONDUCT, SECURITY/CONTRIBUTING accuracy, lint configs with justified exceptions (#36).
+
 ## [Unreleased]
 
 ### Fixed
@@ -561,5 +572,6 @@ wrong, and what CI is now able to catch before you do.
 - Umask 077 for state directories
 - Read-only DB connections for queries
 
-[Unreleased]: https://github.com/SunnyJayaRaju/oc-model-manager/compare/v3.2.0...HEAD
+[Unreleased]: https://github.com/SunnyJayaRaju/oc-model-manager/compare/v3.2.1...HEAD
+[3.2.1]: https://github.com/SunnyJayaRaju/oc-model-manager/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/SunnyJayaRaju/oc-model-manager/compare/v3.1.3...v3.2.0
