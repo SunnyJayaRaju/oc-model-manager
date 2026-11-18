@@ -15,4 +15,4 @@
 
 ## Intentionally unsupported
 
-<!-- Anything this PR deliberately does not support or change, so a reviewer does not have to ask. -->
+<!-- Anything this PR deliberately does not support or change, so nobody has to ask. -->

@@ -8,7 +8,7 @@ ocprobe — OpenCode Model Probe
 
 # SYNOPSIS
 
-**ocprobe** [*global-options*] <command> [*command-options*]
+**ocprobe** [_global-options_] <command> [_command-options_]
 
 # DESCRIPTION
 
@@ -113,20 +113,20 @@ Manage OpenCode sessions.
 
 **backup**
 : Save a session backup: SQL dump on OpenCode 1.x, JSON via
-  `opencode session export` on 2.x (`OCPROBE_OPENCODE_SERVER` must name the
-  server that owns the database).
+`opencode session export` on 2.x (`OCPROBE_OPENCODE_SERVER` must name the
+server that owns the database).
 
 **restore**
 : Restore a session backup. On OpenCode 1.x a `.sql` dump is restored
-  through a hardened per-statement SQLite path. On 2.x `.sql` dumps are
-  refused and the JSON backup is restored via `opencode session import`
-  (`OCPROBE_OPENCODE_SERVER`).
+through a hardened per-statement SQLite path. On 2.x `.sql` dumps are
+refused and the JSON backup is restored via `opencode session import`
+(`OCPROBE_OPENCODE_SERVER`).
 
 **cleanup**
 : Remove ocm's own probe sessions. Dry run by default; `--apply` deletes,
-  one `opencode session delete` per session, exiting non-zero if any delete
-  fails. Sessions younger than 15 minutes, sessions with a legacy row, a
-  parent or child, tool calls, or too many messages are never touched.
+one `opencode session delete` per session, exiting non-zero if any delete
+fails. Sessions younger than 15 minutes, sessions with a legacy row, a
+parent or child, tool calls, or too many messages are never touched.
 
 ## config
 
@@ -219,6 +219,7 @@ Blacklist changes merge by model id; they never wipe unprobed/untouched entries.
 ### Three-Bucket Verify
 
 On --apply, after writing the blacklist, ocprobe re-queries the OpenCode picker and reports per-provider:
+
 - WRITTEN: models successfully added to blacklist
 - HIDDEN: blacklisted models no longer visible in picker
 - STILL_VISIBLE: blacklisted models still visible (likely upstream OpenCode issue #32528)
@@ -302,32 +303,32 @@ See `ocprobe config schema` for full schema. Key sections:
 # EXAMPLES
 
 Full audit with confirmation:
-    ocprobe audit
+ocprobe audit
 
 Fast dry-run:
-    ocprobe check --quick
+ocprobe check --quick
 
 Continuous monitoring:
-    ocprobe scheduler install
-    ocprobe watch
+ocprobe scheduler install
+ocprobe watch
 
 Test single model:
-    ocprobe probe anthropic/claude-3
+ocprobe probe anthropic/claude-3
 
 Backup session:
-    ocprobe session backup ses_abc123
+ocprobe session backup ses_abc123
 
 Health check:
-    ocprobe doctor
+ocprobe doctor
 
 Validate dry-run (show proposed blacklist changes):
-    ocprobe validate
+ocprobe validate
 
 Validate apply (write blacklist, create backup, verify effect):
-    ocprobe validate --apply
+ocprobe validate --apply
 
 Policy dry-run (show candidates & exclusions, experimental):
-    ocprobe policy dry-run
+ocprobe policy dry-run
 
 # EXIT STATUS
 
@@ -346,4 +347,4 @@ opencode(1), sqlite3(1), launchd.plist(5), systemd.timer(5)
 
 # BUGS
 
-Report bugs at: https://github.com/SunnyJayaRaju/oc-model-manager/issues
+Report bugs at: <https://github.com/SunnyJayaRaju/oc-model-manager/issues>

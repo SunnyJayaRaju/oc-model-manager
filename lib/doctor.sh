@@ -23,7 +23,7 @@ cmd_doctor() {
 		all_ok=0
 	fi
 
-	# 2. Python 3 (must be able to read ocm's own YAML config)
+	# 2. Python 3 (must be able to read ocprobe's own YAML config)
 	local py
 	py=$(oc_python) || true
 	if [[ -n "$py" ]]; then
@@ -32,7 +32,7 @@ cmd_doctor() {
 		if "$py" -c 'import yaml, jsonschema' >/dev/null 2>&1; then
 			log_info "python: OK ($py, PyYAML+jsonschema importable)"
 		else
-			log_error "python: $py is missing PyYAML/jsonschema (needed to read ocm's own config)"
+			log_error "python: $py is missing PyYAML/jsonschema (needed to read ocprobe's own config)"
 			log_error "  fix: 'make setup' in a checkout, or: $py -m pip install PyYAML jsonschema"
 			all_ok=0
 		fi

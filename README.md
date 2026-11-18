@@ -17,7 +17,7 @@ Managing model catalogs in OpenCode is manual, error prone, and unsafe. You diff
 
 ---
 
-## At a Glance
+## At a glance
 
 ```bash
 # One-time setup
@@ -67,15 +67,23 @@ $ ocprobe policy show             # Show current policy (or note if missing)
 
 ---
 
-## Table of Contents
+## Table of contents
 
+- [Why ocprobe?](#why-ocprobe)
+- [At a glance](#at-a-glance)
 - [Installation](#installation)
+- [Upgrade and uninstall](#upgrade-and-uninstall)
 - [OpenCode version support](#opencode-version-support)
-- [Quick Start](#quick-start)
+- [Quick start](#quick-start)
 - [Commands](#commands)
-- [Global Options](#global-options)
+- [Global options](#global-options)
 - [Configuration](#configuration)
-- [Safety Guarantees](#safety-guarantees)
+- [Features](#features)
+- [Validate command](#validate-command)
+- [Policy (experimental)](#policy-experimental)
+- [Safety guarantees](#safety-guarantees)
+- [Security](#security)
+- [Troubleshooting and FAQ](#troubleshooting-and-faq)
 - [Architecture](#architecture)
 - [Development](#development)
 - [License](#license)
@@ -120,17 +128,54 @@ cp "ocprobe-${VERSION}/VERSION" ~/.local/share/ocprobe/
 
 ---
 
+## Upgrade and uninstall
+
+### Homebrew
+
+```bash
+brew update
+brew upgrade ocprobe
+```
+
+Verify after upgrading:
+
+```bash
+brew test ocprobe
+ocprobe version
+```
+
+Uninstall:
+
+```bash
+brew uninstall ocprobe
+brew untap SunnyJayaRaju/ocprobe
+```
+
+### From source
+
+```bash
+cd oc-model-manager
+git pull
+make install      # re-install from the updated checkout
+make uninstall    # remove an installed copy
+```
+
+The tap formula is regenerated automatically when a release ships, so `brew upgrade` only sees a new version after `brew update` has refreshed the tap.
+
+---
+
 ## OpenCode version support
 
 ocprobe works with OpenCode 1.x and 2.x. The generation is detected at runtime
 from `opencode --version` (session work additionally checks for the
 `session_v2` tables in the OpenCode database), and behaviour is adjusted
-automatically. What differs, verified against OpenCode 2.3.0:
+automatically. What differs, verified against OpenCode 2.3.2 (2.3.x):
 
 | Behaviour                    | OpenCode 1.x                                                                                                                                   | OpenCode 2.x                                                                                                                                                                                                                                                                   |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Catalog (fetch + cache)      | Upstream catalog fetched once and cached in the state dir; refreshed after `catalog.cache_ttl_hours` or with `--force-refresh`                 | Same — the catalog is read from the same upstream and cache on both generations                                                                                                                                                                                                |
 | OpenCode config read         | `opencode.json`                                                                                                                                | `opencode.jsonc` is preferred when it exists, else `opencode.json`. Both flavours are read the same way; comments, trailing commas and a BOM are supported                                                                                                                     |
-| Editing the OpenCode config  | Plain JSON is rewritten as a whole; a `.jsonc` is patched in place so every byte outside the edited array, including comments, stays identical | Same. A key that does not exist yet inside a commented `.jsonc` is never synthesised: ocm refuses and prints the exact lines to add by hand                                                                                                                                    |
+| Editing the OpenCode config  | Plain JSON is rewritten as a whole; a `.jsonc` is patched in place so every byte outside the edited array, including comments, stays identical | Same. A key that does not exist yet inside a commented `.jsonc` is never synthesised: ocprobe refuses and prints the exact lines to add by hand                                                                                                                                |
 | `apply` / `validate --apply` | Writes `provider.<id>.blacklist` as before                                                                                                     | **Refuses with an explicit message**: OpenCode 2.x does not honour per-provider model lists in the model catalog, so per-model hiding cannot work and nothing is written. `validate` and `monitor` keep working read-only, and `apply --dry-run` still reports pending changes |
 | Probing                      | `opencode run --format json`                                                                                                                   | Same command (`--pure`, which older releases used, no longer exists in 2.x). The event stream differs (`step_start` / `text` / `step_finish`, plus one-line `error` objects); both shapes are parsed                                                                           |
 | Session storage              | legacy `session` / `message` / `part` tables                                                                                                   | `session_v2` / `session_message` / `session_part` tables; legacy tables are never written to                                                                                                                                                                                   |
@@ -150,7 +195,7 @@ The exact matrix, per generation:
 
 ---
 
-## Quick Start
+## Quick start
 
 ```bash
 # One-time setup
@@ -204,7 +249,7 @@ $ ocprobe session backup ses_abc  # Backup session (JSON on OpenCode 2.x, SQL du
 
 ---
 
-## Global Options
+## Global options
 
 | Option            | Description                              |
 | ----------------- | ---------------------------------------- |
@@ -302,7 +347,7 @@ environment variable), which is the knob that actually works.
 - **Safety First** — Session cleanup only removes _this run's_ probe sessions (verified via exact prompt match in DB); mass-removal guard prevents catastrophic whitelist wipes
 - **Alerting** — Desktop notifications, webhook support, alert history with severity levels
 - **Scheduler** — launchd (macOS) / systemd (Linux) integration for continuous monitoring
-- **Session Management** — Backup and restore probe sessions (SQL dumps on OpenCode 1.x, `opencode session export`/`import` on 2.x), guarded cleanup that only ever touches ocm's own probe sessions
+- **Session Management** — Backup and restore probe sessions (SQL dumps on OpenCode 1.x, `opencode session export`/`import` on 2.x), guarded cleanup that only ever touches ocprobe's own probe sessions
 - **Health Checks** — `doctor` command validates entire stack (config, DB, auth, disk)
 - **Observability** — Structured JSON logging (`--json`), structured output for observability
 - **Configuration** — YAML config with JSON Schema validation (`ocprobe config validate`)
@@ -311,15 +356,17 @@ environment variable), which is the knob that actually works.
 
 ---
 
-## Validate Command
+## Validate command
 
 `ocprobe validate` probes every model offered by each provider that has valid API credentials in `~/.local/share/opencode/auth.json`. Models that respond successfully (`WORKS`) stay visible in OpenCode's model picker; models that fail (timeout, auth error, not found, or other error) are added to the provider's `blacklist` in the OpenCode config. On OpenCode 2.x, `validate --apply` refuses to write that list, because 2.x does not honour per-provider model lists in the catalog — see [OpenCode version support](#opencode-version-support).
+
+In one line: **what it does** — probes all models of every credentialed provider and classifies each; **how to run it** — `ocprobe validate` (dry-run by default, see [Usage](#usage) below); **what it changes** — with `--apply` on OpenCode 1.x only, the provider `blacklist` keys in the OpenCode config, with a timestamped backup first; **how to undo** — `ocprobe validate restore` reverts the config from the last validate backup (on OpenCode 2.x nothing is written, so there is nothing to undo).
 
 **Billing errors are never blacklisted.** If a probe fails with `BILLING_ERROR`, the _account_ cannot currently afford that model's default output size — the model itself is fine and works as soon as credits exist. Blacklisting it would permanently hide a working model on a free or credit-limited key, so it is reported for review but never added to the blacklist, and it does not count toward the two-failure gate.
 
 ---
 
-### Two-Failure Gate
+### Two-failure gate
 
 Non-terminal failures (TIMEOUT, AUTH_ERROR, ERROR, UNCLEAR) require **two consecutive failures** before a model is added to the blacklist:
 
@@ -331,13 +378,13 @@ Non-terminal failures (TIMEOUT, AUTH_ERROR, ERROR, UNCLEAR) require **two consec
 
 ---
 
-### Modality Skip List
+### Modality skip list
 
 Models matching patterns in the default patterns file (installed at `share/ocprobe/validate-skip-patterns.txt` under the install prefix, resolved via `OCPROBE_CONFIG_DIR`) or the optional user override at `~/.local/state/ocprobe/validate-skip-patterns-user.txt` are **never probed** and receive `SKIPPED_MODALITY` status. Default patterns cover embeddings, reranking, image/audio/video generation, moderation, etc.
 
 ---
 
-### AUTH_ERROR Provider-Wide Abort
+### AUTH_ERROR provider-wide abort
 
 If a provider's `AUTH_ERROR` rate exceeds `OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD_PCT` (default 40%), the provider is **skipped entirely** — no models are probed, no blacklist changes are made. This prevents blacklisting models due to credential/quota issues.
 
@@ -404,6 +451,8 @@ Each model is classified as:
 `ocprobe policy` provides a declarative rule engine for the audit/check pipeline.
 **Disabled by default** — a missing file or `enabled: false` is a true no-op.
 
+In one line: **what it does** — filters audit/check candidates with declarative rules; **how to run it** — create a scaffold with `ocprobe policy init`, set `enabled: true`, then `ocprobe policy validate` and `ocprobe policy dry-run`; **what it changes** — nothing by itself: it only narrows or widens what audit/check would add or remove, and effective `auto_apply` skips the confirmation prompt without bypassing any guard; **how to undo** — set `enabled: false` or delete the policy file, which restores unfiltered audit/check behaviour.
+
 ### Schema fields
 
 | Field          | Type             | Default      | Description                                            |
@@ -433,7 +482,7 @@ Each model is classified as:
 - Matching is case-sensitive.
 - Empty or missing patterns file = no match, never an error.
 
-### Commands
+### Policy commands
 
 | Command                   | Description                                                  |
 | ------------------------- | ------------------------------------------------------------ |
@@ -456,7 +505,7 @@ At confirmation time, the prompt is skipped only if policy is enabled AND every 
 
 ---
 
-## Safety Guarantees
+## Safety guarantees
 
 1. **Session Isolation** — Only sessions created during _this run_ with the exact probe prompt (`Reply with exactly: OK`) in the first message are deleted. Real conversations are never touched.
 
@@ -467,6 +516,53 @@ At confirmation time, the prompt is skipped only if policy is enabled AND every 
 4. **Graveyard Cooldown** — Deliberately removed models won't be re-probed as "new" for 24h.
 
 5. **Two-Failure Rule** — Transient failures (BROKEN, TIMEOUT, PAYWALLED) require 2 consecutive failed probes before removal.
+
+---
+
+## Security
+
+Report vulnerabilities privately — see [SECURITY.md](SECURITY.md) for the supported versions, contact channel and what to include. Please do not open a public issue for a security report.
+
+ocprobe's security posture, in brief:
+
+- **Config edits are backed up first** — every apply writes a timestamped backup of the OpenCode config before touching it.
+- **Restores are sandboxed** — on OpenCode 1.x a `.sql` restore runs as one transaction behind SQLite's statement authorizer (only plain `INSERT`s into the four session tables); on OpenCode 2.x restores go through `opencode session import` against the configured server, and the local database file is never written directly.
+- **Session queries bind their parameters** — session ids are never interpolated into SQL.
+- **Session cleanup is name-closed** — it only ever deletes sessions that this run created and that carry the exact probe prompt.
+
+---
+
+## Troubleshooting and FAQ
+
+### `validate --apply` refuses on OpenCode 2.x
+
+The message is: `this OpenCode version does not honour provider model lists; nothing was changed (per-model hiding is not supported on OpenCode 2.x)`. This is expected: OpenCode 2.x ignores per-provider model lists in the catalog, so writing one would have no effect. `validate` keeps working read-only and `validate --dry-run` still reports pending changes. Use OpenCode 1.x for blacklist-based hiding, or manage model visibility through OpenCode 2.x's own UI.
+
+### `ocprobe doctor` says python is missing PyYAML/jsonschema
+
+The exact message is: `python: <interpreter> is missing PyYAML/jsonschema (needed to read ocm's own config)`. This applies to source/manual installs only — the Homebrew formula builds its own Python virtualenv, so `brew install` needs nothing. Fix for a source install: run `make setup` in a checkout, or `<interpreter> -m pip install PyYAML jsonschema`. `ocprobe doctor` prints the exact interpreter it resolved.
+
+### Backup or restore says the server URL is required
+
+The exact message is: `backing up on OpenCode 2.x requires the server that owns this database: set OCPROBE_OPENCODE_SERVER=<url> (e.g. http://127.0.0.1:4096) and re-run` (restore prints the same with `restoring` instead of `backing up`). On OpenCode 2.x, sessions are moved through `opencode session export`/`import`, and both need the background server's URL so the backup lands in the database the server actually owns. Set `OCPROBE_OPENCODE_SERVER` and re-run.
+
+### What does `UNCLEAR` mean?
+
+A probe finished but the reply could not be classified as a definite status (the model answered, but not with the expected confirmation). `UNCLEAR` is a non-terminal failure: it counts toward the [two-failure gate](#two-failure-gate), so a single `UNCLEAR` never blacklists or removes a model on its own.
+
+### Where do config, state, cache and logs live?
+
+| What                                                                      | Where                                                                                                                        |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| ocprobe config                                                            | `~/.config/ocprobe/config.yaml` (override with `OCPROBE_CONFIG`)                                                             |
+| State (probe history, alerts, graveyard, catalog cache, validate backups) | `~/.local/state/ocprobe` (override with `OCPROBE_STATE_DIR`)                                                                 |
+| Per-run audit logs                                                        | a fresh per-run directory under `$TMPDIR`, named `ocprobe.` plus random characters (`logging.file_enabled` controls writing) |
+| OpenCode database                                                         | `~/.local/share/opencode/opencode.db`                                                                                        |
+| OpenCode config                                                           | `~/.config/opencode/opencode.jsonc` or `.json`                                                                               |
+
+### `ocprobe doctor` warns about multiple ocprobe in PATH
+
+The warning `Multiple ocprobe in PATH (shadowing risk)` means more than one PATH entry resolves to an `ocprobe` binary — typically the Homebrew Cellar path and its `/opt/homebrew/bin` symlink, which point at the same install and are harmless. If the two paths are genuinely different installs, remove or reorder them so the intended one wins, then re-run `ocprobe doctor`.
 
 ---
 

@@ -108,7 +108,7 @@ make lint
 
 ### Commit Message Format
 
-```
+```text
 type(scope): short description
 
 Longer description if needed

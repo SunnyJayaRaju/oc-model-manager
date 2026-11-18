@@ -1,0 +1,9 @@
+config: .markdownlint.yaml
+globs:
+  - "**/*.md"
+ignores:
+  - "**/.venv/**"
+  - "**/.rehearsal/**"
+  - "**/dist/**"
+  - "**/test/helpers/**"
+  - "**/node_modules/**"
