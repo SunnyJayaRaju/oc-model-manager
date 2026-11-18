@@ -13,7 +13,8 @@ set -euo pipefail
 # ---- Worker Script Generation -----------------------------------------------
 write_worker() {
 	local worker_file="$1"
-	cat >"$worker_file" <<'WORKER'
+	{
+		cat <<'WORKER'
 #!/usr/bin/env bash
 set -u
 m="$1"; src="$2"; secs="$3"; prompt="$4"
@@ -132,8 +133,44 @@ if [[ "$st" == "UNCLEAR" ]]; then
   elif [[ $rc -ne 0 ]];                                     then st=TIMEOUT
   else st=UNCLEAR; fi
 fi
+WORKER
+		# Guarded self-delete inputs: resolved from the caller's already-loaded
+		# config and emitted as literals, so the worker's delete gates see
+		# exactly the values the parent used to create the session.
+		printf 'OCPROBE_LIB_DIR=%q\n' "${OCPROBE_LIB_DIR:-}"
+		printf 'OCPROBE_OPencode_DB=%q\n' "${OCPROBE_OPencode_DB:-}"
+		printf 'OCPROBE_PROBE_PROMPT=%q\n' "${OCPROBE_PROBE_PROMPT:-Reply with exactly: OK}"
+		printf 'OCPROBE_VALIDATE_PROBE_PROMPT=%q\n' "${OCPROBE_VALIDATE_PROBE_PROMPT:-Reply with exactly: OK}"
+		printf 'OCPROBE_PROBE_TITLE_PREFIX=%q\n' "${OCPROBE_PROBE_TITLE_PREFIX:-ocprobe-probe}"
+		printf 'OCPROBE_PROBE_TITLE_PREFIX_LEGACY=%q\n' "${OCPROBE_PROBE_TITLE_PREFIX_LEGACY:-ocmm-probe}"
+		printf 'OCPROBE_VALIDATE_TITLE_PREFIX=%q\n' "${OCPROBE_VALIDATE_TITLE_PREFIX:-ocprobe-validate}"
+		printf 'OCPROBE_MAX_MSG_COUNT=%q\n' "${OCPROBE_MAX_MSG_COUNT:-4}"
+		cat <<'WORKER'
+
+# Self-delete after EVERY outcome (WORKS, TIMEOUT, AUTH_ERROR, ERROR, ...):
+# this process created the session and captured its id from the event stream,
+# so cleanup happens even when the parent is killed mid-run and never reaches
+# its own delete. The delete goes through the same guarded delete_session the
+# session cleanup commands use (id shape, probe title, exact probe prompt, no
+# tool calls, no tree, no legacy row); no age-gate waiver is needed because
+# the deleted id is the just-created session itself.
+# ponytail: a SIGKILL to this worker can still leak the session - the daily
+# clean-tests sweep and the audit/check cleanup pass are the backstop for it.
+if [[ -n "$session_id" && -n "${OCPROBE_LIB_DIR:-}" && -f "$OCPROBE_LIB_DIR/db.sh" ]]; then
+    # core.sh exits the shell when bash is older than 4.3; the result line
+    # must survive even then, so only source the libraries on a modern bash.
+    if [[ "${BASH_VERSINFO[0]:-0}" -gt 4 || "${BASH_VERSINFO[0]:-0}" -eq 4 && "${BASH_VERSINFO[1]:-0}" -ge 3 ]]; then
+        source "$OCPROBE_LIB_DIR/core.sh" || true
+        source "$OCPROBE_LIB_DIR/logging.sh" || true
+        source "$OCPROBE_LIB_DIR/db.sh" || true
+        if declare -F delete_session >/dev/null; then
+            delete_session "$session_id" >&2 || true
+        fi
+    fi
+fi
 printf '%s\t%s\t%s\t%s\n' "$src" "$m" "$st" "$((t1-t0))"
 WORKER
+	} >"$worker_file"
 	chmod +x "$worker_file"
 }
 
@@ -736,8 +773,8 @@ apply_changes() {
 
 	if [[ $skip_confirm -eq 0 ]]; then
 		printf 'Apply changes to %s? [y/N] ' "$OCPROBE_OPencode_CONFIG" >&2
-		read -r ans || ans=""
-		[[ "${ans:-n}" =~ ^[Yy]$ ]] || {
+		read -r reply || reply=""
+		[[ "${reply:-n}" =~ ^[Yy]$ ]] || {
 			log_info "Aborted."
 			return 1
 		}
