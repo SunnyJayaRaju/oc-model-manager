@@ -39,6 +39,9 @@ auth.json
 .env.local
 *.p12
 *.pfx
+.npmrc
+*.tfstate
+*.tfstate.*
 opencode.json.ocprobe-backup-*
 
 # Python bytecode cache (lib/session_restore.py is imported by the unit tests,
