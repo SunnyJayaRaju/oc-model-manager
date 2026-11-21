@@ -1,0 +1,49 @@
+name: Check tap write access
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check tap write access
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      TAP_REPO: ${{ github.repository_owner }}/homebrew-ocprobe
+      BRANCH: access-check-${{ github.run_id }}
+    steps:
+      # Manual only. This creates one temporary branch at the tap's default
+      # branch SHA and deletes it again. No commit, tag or release is made.
+      # The token is passed through env and is never printed.
+      - name: Check tap write access
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::HOMEBREW_TAP_TOKEN is not set"
+            exit 1
+          fi
+          default_branch="$(gh api "repos/${TAP_REPO}" --jq .default_branch)"
+          sha="$(gh api "repos/${TAP_REPO}/branches/${default_branch}" --jq .commit.sha)"
+          create_response="$(gh api --include --method POST \
+            "repos/${TAP_REPO}/git/refs" \
+            -f "ref=refs/heads/${BRANCH}" -f "sha=${sha}")"
+          create_code="$(printf '%s\n' "$create_response" | sed -n '1s/^HTTP\/[^ ]* \([0-9][0-9][0-9]\).*/\1/p')"
+          if [ "${create_code}" != "201" ]; then
+            echo "::error::ref creation returned ${create_code}"
+            exit 1
+          fi
+          delete_response="$(gh api --include --method DELETE \
+            "repos/${TAP_REPO}/git/refs/heads/${BRANCH}")"
+          delete_code="$(printf '%s\n' "$delete_response" | sed -n '1s/^HTTP\/[^ ]* \([0-9][0-9][0-9]\).*/\1/p')"
+          echo "create: ${create_code}"
+          echo "delete: ${delete_code}"
+          if [ "${delete_code}" != "204" ]; then
+            echo "::error::ref deletion returned ${delete_code}"
+            exit 1
+          fi
+          echo "tap write access OK"
