@@ -94,8 +94,8 @@ UNFIXED_COMMIT="0180eefa1e1fc96c2a944d90bb6c91cebcc6f02d"
 @test "every workflow in the repo is covered, not just ci.yml" {
     run bash "$SCRIPT"
     assert_success
-    # Three as of this change: ci, publish-release-to-tap, release-rehearsal.
-    assert_output --partial "3 workflow file(s)"
+    # Four as of this change: ci, publish-release-to-tap, release-rehearsal, tap-access-check.
+    assert_output --partial "4 workflow file(s)"
 }
 
 # ---- (c) a different secret, missing differently, must FAIL ---------------
