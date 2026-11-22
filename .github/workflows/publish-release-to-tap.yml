@@ -136,7 +136,7 @@ jobs:
           echo "COMPUTED_SHA=$computed" >> "$GITHUB_ENV"
 
       - name: Check out the tap
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ env.TAP_REPO }}
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -154,7 +154,7 @@ jobs:
       # must precede "Update the formula", or that step runs a path that does not
       # exist -- the original defect, reproduced.
       - name: Check out this repo's updater
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: source
 
