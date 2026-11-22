@@ -437,8 +437,7 @@ process_alerts() {
 		unset OCPROBE_BATCH_MODE
 
 		if ((crit_n + warn_n > 0)) && [[ "$OCPROBE_DESKTOP_NOTIFICATIONS" -eq 1 ]]; then
-			osascript -e 'on run {t, m}' -e 'display notification m with title t' -e 'end run' \
-				"ocprobe" "$((crit_n + warn_n)) model(s) failing: $crit_n confirmed dead, $warn_n degraded — run: ocprobe alerts" >/dev/null 2>&1 || true
+			audit_log "NOTIFICATION suppressed (no Apple Events): $((crit_n + warn_n)) model(s) failing: $crit_n confirmed dead, $warn_n degraded — run: ocprobe alerts"
 		fi
 	fi
 
