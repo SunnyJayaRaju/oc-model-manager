@@ -445,7 +445,10 @@ record_alert() {
     # The old desktop notification called osascript, which sent Apple Events and
     # made macOS ask to control System Events/Finder. The alert log is the record.
     if [[ "$severity" == "CRITICAL" && "$OCPROBE_BATCH_MODE" -ne 1 && "$OCPROBE_DESKTOP_NOTIFICATIONS" -eq 1 ]]; then
-        audit_log "NOTIFICATION suppressed (no Apple Events): $model: $message"
+        audit_log "NOTIFICATION best-effort: $model: $message"
+        if command -v terminal-notifier >/dev/null 2>&1; then
+            terminal-notifier -title ocprobe -message "$model: $message" >/dev/null 2>&1 || true
+        fi
     fi
 
     # Webhook URL validation

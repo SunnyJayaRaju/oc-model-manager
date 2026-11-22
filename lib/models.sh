@@ -437,7 +437,10 @@ process_alerts() {
 		unset OCPROBE_BATCH_MODE
 
 		if ((crit_n + warn_n > 0)) && [[ "$OCPROBE_DESKTOP_NOTIFICATIONS" -eq 1 ]]; then
-			audit_log "NOTIFICATION suppressed (no Apple Events): $((crit_n + warn_n)) model(s) failing: $crit_n confirmed dead, $warn_n degraded — run: ocprobe alerts"
+			audit_log "NOTIFICATION best-effort: $((crit_n + warn_n)) model(s) failing: $crit_n confirmed dead, $warn_n degraded — run: ocprobe alerts"
+			if command -v terminal-notifier >/dev/null 2>&1; then
+				terminal-notifier -title ocprobe -message "$((crit_n + warn_n)) model(s) failing" >/dev/null 2>&1 || true
+			fi
 		fi
 	fi
 
