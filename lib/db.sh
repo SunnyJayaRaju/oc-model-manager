@@ -442,10 +442,10 @@ record_alert() {
         >>"$OCPROBE_STATE_DIR/alerts.jsonl"
     audit_log "ALERT[$severity] $type $model: $message"
 
-    # Desktop notification for critical (non-batch)
+    # The old desktop notification called osascript, which sent Apple Events and
+    # made macOS ask to control System Events/Finder. The alert log is the record.
     if [[ "$severity" == "CRITICAL" && "$OCPROBE_BATCH_MODE" -ne 1 && "$OCPROBE_DESKTOP_NOTIFICATIONS" -eq 1 ]]; then
-        osascript -e 'on run {t, m}' -e 'display notification m with title t' -e 'end run' \
-            "ocprobe" "$model: $message" >/dev/null 2>&1 || true
+        audit_log "NOTIFICATION suppressed (no Apple Events): $model: $message"
     fi
 
     # Webhook URL validation
