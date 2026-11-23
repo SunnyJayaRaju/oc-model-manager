@@ -53,6 +53,8 @@ make build  # packages with man page if present
 
 ### Running Tests
 
+Run `make setup` once before the tests: it creates `.venv` with PyYAML and jsonschema, which the test heredocs import.
+
 ```bash
 # Run all tests
 make test
