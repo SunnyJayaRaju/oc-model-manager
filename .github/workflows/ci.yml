@@ -10,6 +10,12 @@ on:
 permissions:
   contents: read
 
+# A new commit on a pull request supersedes the older in-progress run of that
+# same PR. Runs on main and on release tags are never cancelled.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   OCPROBE_ROOT: ${{ github.workspace }}
 
@@ -17,6 +23,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -73,6 +80,7 @@ jobs:
   secret-scan:
     name: Secret Scan (gitleaks)
     runs-on: ubuntu-latest
+    timeout-minutes: 1
     continue-on-error: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -85,6 +93,7 @@ jobs:
   test-unit:
     name: Unit Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 53
     strategy:
       # Keep going on the other platform's failure so a macOS-only break still
       # reports the Linux result (and vice versa) in the same run.
@@ -232,6 +241,7 @@ jobs:
   test-integration:
     name: Integration Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
@@ -301,6 +311,7 @@ jobs:
   package-check:
     name: Package Check
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 2
     strategy:
       fail-fast: false
       matrix:
