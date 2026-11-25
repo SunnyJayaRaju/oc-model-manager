@@ -18,8 +18,11 @@ and risk wiping your whitelist with a bad apply. **ocprobe automates the full li
 safety-gated apply → continuous monitoring — all with built-in guards so you never lose a working model or apply a broken one.
 
 ```mermaid
-flowchart LR
-  A[diff catalog] --> B[probe models] --> C[confirm] --> D[safety-gated apply] --> E[monitor]
+flowchart TD
+  A["🔍 diff catalog"] --> B["🧪 probe models"]
+  B --> C["✅ confirm"]
+  C --> D["🛡️ safety apply"]
+  D --> E["📈 monitor"]
 ```
 
 ---
