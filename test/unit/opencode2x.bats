@@ -547,7 +547,7 @@ EOF
 # Kill path: if the whole ocprobe process is killed before its per-probe
 # delete runs, the leaked validate session must be removable by the next
 # `session cleanup` pass. The old gates refused it forever (tool calls and
-# >4 messages), which is exactly how the R35/R36 leaks survived.
+# >4 messages), which is exactly how the earlier leaks survived.
 @test "validate: killed run's leaked probe is swept by session cleanup --apply" {
   make_validate_probe_fixture "ses_valKILL1111111111111" "ocprobe-validate" "Reply with exactly: OK" 5 yes
   make_delete_mock
