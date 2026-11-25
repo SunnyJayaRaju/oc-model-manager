@@ -168,7 +168,7 @@ delete_session() {
     local row title
     row=$(get_session_title "$sid")
 
-    # R37: an id that is absent from this database is ALREADY CLEAN — there is
+    # an id that is absent from this database is ALREADY CLEAN — there is
     # nothing to delete, and no CLI call is made, so returning success cannot
     # remove anything. The old refusal logged a false ERROR for every probe
     # whose session never persisted (measured 2026-11-18: a real
@@ -208,10 +208,10 @@ delete_session() {
         fi
         local first_text
         first_text=$(session_first_user_text "$sid")
-        # R37: this tool's own validate probe is identified by the EXACT title
+        # this tool's own validate probe is identified by the EXACT title
         # plus the EXACT configure prompt. On this harness the model can emit a
         # tool call or a few reasoning messages before answering "OK"; the
-        # generic gates then refused and leaked one session per model (R35: 3
+        # generic gates then refused and leaked one session per model (3
         # leaked; measured 2026-11-18: a 5-message validate session with 2 tool
         # calls sat undeleted for 3 hours). Own-probe identity is narrower than
         # the "ocprobe-probe" prefix, so the generic gates stay as they are.
@@ -352,7 +352,7 @@ WHERE s.time_created >= ?
   AND s.parent_id IS NULL
   AND NOT EXISTS (SELECT 1 FROM session_v2 c WHERE c.parent_id = s.id)
   AND NOT EXISTS (SELECT 1 FROM session l WHERE l.id = s.id)
-  -- R37: two candidate shapes. Generic probe: no tool calls, tiny. Our own
+  -- two candidate shapes. Generic probe: no tool calls, tiny. Our own
   -- validate probe (exact title + exact prompt): a live-harness model can
   -- emit tool calls and a few reasoning messages, and those sessions used to
   -- be filtered out here AND refused by delete_session, leaking forever.

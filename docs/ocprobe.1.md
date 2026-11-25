@@ -1,5 +1,5 @@
 % OCPROBE(1) General Commands Manual
-% Sunny Jayaraj
+% SunnyJayaRaju
 % September 2026
 
 # NAME

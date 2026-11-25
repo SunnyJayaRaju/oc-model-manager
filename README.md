@@ -13,7 +13,14 @@
 
 ## Why ocprobe?
 
-Managing model catalogs in OpenCode is manual, error prone, and unsafe. You diff catalogs by hand, probe models one by one, and risk wiping your whitelist with a bad apply. **ocprobe automates the full lifecycle**: catalog diffing → live probing → safety-gated apply → continuous monitoring — all with built-in guards so you never lose a working model or apply a broken one.
+Managing model catalogs in OpenCode is manual, error prone and unsafe. You diff catalogs by hand, probe models one by one
+and risk wiping your whitelist with a bad apply. **ocprobe automates the full lifecycle**: catalog diffing → live probing →
+safety-gated apply → continuous monitoring — all with built-in guards so you never lose a working model or apply a broken one.
+
+```mermaid
+flowchart LR
+  A[diff catalog] --> B[probe models] --> C[confirm] --> D[safety-gated apply] --> E[monitor]
+```
 
 ---
 
@@ -168,8 +175,11 @@ The tap formula is regenerated automatically when a release ships, so `brew upgr
 
 ocprobe works with OpenCode 1.x and 2.x. The generation is detected at runtime
 from `opencode --version` (session work additionally checks for the
-`session_v2` tables in the OpenCode database), and behaviour is adjusted
+`session_v2` tables in the OpenCode database), and behavior is adjusted
 automatically. What differs, verified against OpenCode 2.3.2 (2.3.x):
+
+<details>
+<summary>Version-by-version matrix</summary>
 
 | Behaviour                    | OpenCode 1.x                                                                                                                                   | OpenCode 2.x                                                                                                                                                                                                                                                                   |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -193,6 +203,7 @@ The exact matrix, per generation:
 | OpenCode 1.x | a `.sql` dump of the four session tables (`session`, `message`, `part`, and the task-list table), written as `INSERT OR REPLACE` so a restore is idempotent            | that `.sql` file. A copy of the whole database is taken first; the dump runs as one transaction, and SQLite's statement authorizer allows only plain `INSERT`s into those four tables (plus the `unistr()` string helper) — `ATTACH`, `DROP`, `DELETE`, `UPDATE`, `ALTER`, any `CREATE`, any `PRAGMA`, every other function and every read (`INSERT … SELECT`) are refused, and a rejected restore commits nothing | `.sql` files that contain any other statement type: the file can only ever add rows back into the four session tables                                                                                                                                                                                                                                                         |
 | OpenCode 2.x | a JSON document produced by `opencode session export` — requires `OCPROBE_OPENCODE_SERVER` to name the server that owns this database; without it, nothing is exported | the JSON backup from `session backup`, imported through `opencode session import --server $OCPROBE_OPENCODE_SERVER`. This machine's database file is never written directly                                                                                                                                                                                                                                        | a `.sql` dump (the 2.x UI reads only the `session_v2` tables, so rows inserted into the legacy tables would be invisible — restoring one would look successful and change nothing), and a run with `OCPROBE_OPENCODE_SERVER` unset (an import through the wrong background service would write the session into a different database than the one the operator is looking at) |
 
+</details>
 ---
 
 ## Quick start
@@ -222,6 +233,16 @@ $ ocprobe scheduler install    # Install as background service (launchd/systemd)
 $ ocprobe probe openai/gpt-4   # Test a single model now
 $ ocprobe alerts               # View alert history
 $ ocprobe session backup ses_abc  # Backup session (JSON on OpenCode 2.x, SQL dump on 1.x)
+```
+
+Verified locally:
+
+```bash
+ocprobe version
+```
+
+```text
+ocprobe 3.2.2
 ```
 
 ---
@@ -451,7 +472,7 @@ Each model is classified as:
 `ocprobe policy` provides a declarative rule engine for the audit/check pipeline.
 **Disabled by default** — a missing file or `enabled: false` is a true no-op.
 
-In one line: **what it does** — filters audit/check candidates with declarative rules; **how to run it** — create a scaffold with `ocprobe policy init`, set `enabled: true`, then `ocprobe policy validate` and `ocprobe policy dry-run`; **what it changes** — nothing by itself: it only narrows or widens what audit/check would add or remove, and effective `auto_apply` skips the confirmation prompt without bypassing any guard; **how to undo** — set `enabled: false` or delete the policy file, which restores unfiltered audit/check behaviour.
+In one line: **what it does** — filters audit/check candidates with declarative rules; **how to run it** — create a scaffold with `ocprobe policy init`, set `enabled: true`, then `ocprobe policy validate` and `ocprobe policy dry-run`; **what it changes** — nothing by itself: it only narrows or widens what audit/check would add or remove, and effective `auto_apply` skips the confirmation prompt without bypassing any guard; **how to undo** — set `enabled: false` or delete the policy file, which restores unfiltered audit/check behavior.
 
 ### Schema fields
 
@@ -534,6 +555,9 @@ ocprobe's security posture, in brief:
 
 ## Troubleshooting and FAQ
 
+<details>
+<summary>Common questions and exact messages</summary>
+
 ### `validate --apply` refuses on OpenCode 2.x
 
 The message is: `this OpenCode version does not honour provider model lists; nothing was changed (per-model hiding is not supported on OpenCode 2.x)`. This is expected: OpenCode 2.x ignores per-provider model lists in the catalog, so writing one would have no effect. `validate` keeps working read-only and `validate --dry-run` still reports pending changes. Use OpenCode 1.x for blacklist-based hiding, or manage model visibility through OpenCode 2.x's own UI.
@@ -564,6 +588,7 @@ A probe finished but the reply could not be classified as a definite status (the
 
 The warning `Multiple ocprobe in PATH (shadowing risk)` means more than one PATH entry resolves to an `ocprobe` binary — typically the Homebrew Cellar path and its `/opt/homebrew/bin` symlink, which point at the same install and are harmless. If the two paths are genuinely different installs, remove or reorder them so the intended one wins, then re-run `ocprobe doctor`.
 
+</details>
 ---
 
 ## Architecture
