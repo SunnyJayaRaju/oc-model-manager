@@ -585,6 +585,7 @@ wrong, and what CI is now able to catch before you do.
 - Umask 077 for state directories
 - Read-only DB connections for queries
 
-[Unreleased]: https://github.com/SunnyJayaRaju/oc-model-manager/compare/v3.2.1...HEAD
+[Unreleased]: https://github.com/SunnyJayaRaju/oc-model-manager/compare/v3.2.2...HEAD
+[3.2.2]: https://github.com/SunnyJayaRaju/oc-model-manager/compare/v3.2.1...v3.2.2
 [3.2.1]: https://github.com/SunnyJayaRaju/oc-model-manager/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/SunnyJayaRaju/oc-model-manager/compare/v3.1.3...v3.2.0
