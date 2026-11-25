@@ -7,13 +7,20 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    # One grouped PR for every action bump. The release path pins and verifies
-    # its actions end to end, so individual bump PRs only add noise; the group
-    # is still evaluated like any change (CI plus the rehearsal for majors).
+    # One grouped PR for every action bump; individual bump PRs only add noise.
+    # CI checks all pull-request jobs. The release path runs only on tags, so
+    # CI cannot check it; the rehearsal, not CI, is used for a release.
     groups:
       github-actions:
         patterns:
           - "*"
+    ignore:
+      # release-job only; neither CI nor the rehearsal runs it; lift this when a
+      # release is being prepared, run the rehearsal first
+      - dependency-name: "actions/download-artifact"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "softprops/action-gh-release"
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 3
     commit-message:
       prefix: "ci"
