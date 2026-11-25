@@ -463,7 +463,7 @@ EOF
   assert_output --partial "tool calls"
 }
 
-# R37: ocprobe's own validate probe. On this harness the model can emit tool
+# ocprobe's own validate probe. On this harness the model can emit tool
 # calls and reasoning messages before answering "OK"; the generic gates used to
 # leak one session per model. The exact title + exact prompt identify our own
 # probe, and only then are the tool-call gate and the 4-message bound relaxed.
@@ -507,7 +507,7 @@ EOF
   : >"$DELETE_TRACK"
 }
 
-@test "R37 validate: a 5-message probe with a tool call is deleted (success path)" {
+@test "validate: a 5-message probe with a tool call is deleted (success path)" {
   make_validate_probe_fixture "ses_valOK111111111111111" "ocprobe-validate" "Reply with exactly: OK" 5 yes
   make_delete_mock
   PATH="$BATS_TEST_TMPDIR/del-mock-r37:$PATH" run delete_session "ses_valOK111111111111111"
@@ -516,7 +516,7 @@ EOF
   assert_line "ses_valOK111111111111111"
 }
 
-@test "R37 validate: a validate TITLE with a lookalike prompt is still refused" {
+@test "validate: a validate TITLE with a lookalike prompt is still refused" {
   make_validate_probe_fixture "ses_valBAD11111111111111" "ocprobe-validate" "write my thesis" 5 no
   make_delete_mock
   PATH="$BATS_TEST_TMPDIR/del-mock-r37:$PATH" run delete_session "ses_valBAD11111111111111"
@@ -526,7 +526,7 @@ EOF
   assert_output ""
 }
 
-@test "R37 validate: the relaxed ceiling is still bounded (101 messages refused)" {
+@test "validate: the relaxed ceiling is still bounded (101 messages refused)" {
   make_validate_probe_fixture "ses_valLONG1111111111111" "ocprobe-validate" "Reply with exactly: OK" 101 yes
   make_delete_mock
   PATH="$BATS_TEST_TMPDIR/del-mock-r37:$PATH" run delete_session "ses_valLONG1111111111111"
@@ -536,7 +536,7 @@ EOF
   assert_output ""
 }
 
-@test "R37 validate: the generic probe title keeps the tool-call refusal" {
+@test "validate: the generic probe title keeps the tool-call refusal" {
   make_validate_probe_fixture "ses_genTOOL1111111111111" "ocprobe-probe" "Reply with exactly: OK" 3 yes
   make_delete_mock
   PATH="$BATS_TEST_TMPDIR/del-mock-r37:$PATH" run delete_session "ses_genTOOL1111111111111"
@@ -544,11 +544,11 @@ EOF
   assert_output --partial "tool calls"
 }
 
-# R37 kill path: if the whole ocprobe process is killed before its per-probe
+# Kill path: if the whole ocprobe process is killed before its per-probe
 # delete runs, the leaked validate session must be removable by the next
 # `session cleanup` pass. The old gates refused it forever (tool calls and
 # >4 messages), which is exactly how the R35/R36 leaks survived.
-@test "R37 validate: killed run's leaked probe is swept by session cleanup --apply" {
+@test "validate: killed run's leaked probe is swept by session cleanup --apply" {
   make_validate_probe_fixture "ses_valKILL1111111111111" "ocprobe-validate" "Reply with exactly: OK" 5 yes
   make_delete_mock
   v2_load_config_fixtures
@@ -567,10 +567,10 @@ EOF
   assert_line "ses_valKILL1111111111111"
 }
 
-# R37: a probe whose session never persisted is not a failure. The id is
+# a probe whose session never persisted is not a failure. The id is
 # absent from this database, so no CLI call is made and there is nothing to
 # clean up; the old refusal printed a false ERROR after a successful probe.
-@test "R37 delete_session: an absent id is already clean, success and no CLI call" {
+@test "delete_session: an absent id is already clean, success and no CLI call" {
   create_v2_db
   make_delete_mock
   run delete_session "ses_absentR371111111111111"

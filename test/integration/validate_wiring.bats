@@ -134,11 +134,11 @@ EOF
 	assert_output --partial "still_visible=1"
 	assert_output --partial "written=1"
 }
-# R37: probe_model_classify must delete its OWN probe session even when the
+# probe_model_classify must delete its OWN probe session even when the
 # model FAILS and the session contains tool calls. Before the fix, the guard
 # refused both (tool-call gate + 4-message ceiling), so every failed probe
 # leaked a session. Stub CLI only: no model call, no network.
-@test "R37 validate: a FAILED probe that emitted tool calls is still deleted" {
+@test "validate: a FAILED probe that emitted tool calls is still deleted" {
   local db="$BATS_TEST_TMPDIR/v2.db"
   rm -f "$db"
   sqlite3 "$db" <"$OCPROBE_ROOT/test/fixtures/opencode2x-schema.sql"
