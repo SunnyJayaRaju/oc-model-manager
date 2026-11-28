@@ -99,7 +99,7 @@ teardown() {
 setup_mock_opencode() {
     local mock_dir="$BATS_TEST_TMPDIR/mock-bin"
     mkdir -p "$mock_dir"
-    
+
     cat >"$mock_dir/opencode" <<'MOCK_EOF'
 #!/usr/bin/env bash
 cmd="$1"
@@ -130,7 +130,7 @@ case "$cmd" in
             fi
             i=$((i+1))
         done
-        
+
         if [[ "$format_json" == "true" ]]; then
             # Output JSON with sessionID and status
             case "$model" in
@@ -480,7 +480,7 @@ EOF
     # This test requires a single --apply run where config changes mid-run.
     # We simulate this by using a custom mock that modifies the config
     # during the probe phase (phase 2), between discovery (phase 1) and apply (phase 4).
-    
+
     # Override the mock to modify config when opencode run is called
     local mock_dir="$BATS_TEST_TMPDIR/mock-staleness"
     mkdir -p "$mock_dir"

@@ -219,15 +219,15 @@ EOF
   # Write a worker script and run it, capture stderr
   local worker="$OCPROBE_RUN_DIR/.worker-test"
   write_worker "$worker"
-  
+
   # Run worker and capture stderr
   local err
   err=$("$worker" "openai/gpt-4" "TEST" 5 "test prompt" 2>&1 >/dev/null)
-  
+
   # Extract session_id from stderr
   local session_id
   session_id=$(printf '%s' "$err" | grep '^SESSION_ID:' | head -1 | sed 's/^SESSION_ID://')
-  
+
   assert_equal "$session_id" "ses_test123"
   rm -f "$worker"
 }
@@ -235,16 +235,16 @@ EOF
 @test "cmd_probe logs warning and skips deletion when sessionID missing from JSON" {
   # Use mock without sessionID
   mock_opencode_json_no_sessionid
-  
+
   # Reset tracking file
   : > "/tmp/ocprobe-test-delete-track"
-  
+
   # Run cmd_probe and capture stderr
   run cmd_probe "openai/gpt-4" 2>&1
-  
+
   # Verify warning was logged (in stderr)
   assert_output --partial "could not capture session ID for this probe, skipping automatic cleanup"
-  
+
   # Verify delete_session was NOT called
   local delete_count
   delete_count=$(wc -l < "/tmp/ocprobe-test-delete-track" | tr -d ' ')
@@ -254,16 +254,16 @@ EOF
 @test "cmd_probe logs warning and skips deletion when sessionID malformed" {
   # Use mock with malformed JSON
   mock_opencode_json_malformed
-  
+
   # Reset tracking file
   : > "/tmp/ocprobe-test-delete-track"
-  
+
   # Run cmd_probe and capture stderr
   run cmd_probe "openai/gpt-4" 2>&1
-  
+
   # Verify warning was logged (in stderr)
   assert_output --partial "could not capture session ID for this probe, skipping automatic cleanup"
-  
+
   # Verify delete_session was NOT called
   local delete_count
   delete_count=$(wc -l < "/tmp/ocprobe-test-delete-track" | tr -d ' ')
@@ -273,10 +273,10 @@ EOF
 @test "cmd_probe deletes session when valid sessionID captured" {
   # Use mock with valid sessionID
   mock_opencode_json
-  
+
   # Reset tracking file
   : > "/tmp/ocprobe-test-delete-track"
-  
+
   # Debug: check what worker outputs
   local worker="$OCPROBE_RUN_DIR/.worker-test"
   write_worker "$worker"
@@ -287,18 +287,18 @@ EOF
   session_id=$(printf '%s' "$err" | grep '^SESSION_ID:' | head -1 | sed 's/^SESSION_ID://')
   echo "DEBUG: extracted session_id='$session_id'" >&2
   rm -f "$worker"
-  
+
   # Run cmd_probe and capture output
   run cmd_probe "openai/gpt-4" 2>&1
-  
+
   echo "DEBUG: cmd_probe output='$output'" >&2
   echo "DEBUG: tracking file content='$(cat "/tmp/ocprobe-test-delete-track" 2>/dev/null || echo "none")'" >&2
-  
+
   # Verify delete_session was called with correct session ID
   local delete_count
   delete_count=$(wc -l < "/tmp/ocprobe-test-delete-track" | tr -d ' ')
   assert_equal "$delete_count" "1"
-  
+
   local deleted_sid
   deleted_sid=$(cat "/tmp/ocprobe-test-delete-track")
   assert_equal "$deleted_sid" "ses_test123"

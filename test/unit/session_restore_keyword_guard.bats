@@ -290,7 +290,7 @@ REINDEX;"
 @test "an empty dump and a whitespace-only dump are no-ops, not failures" {
     run_restore ""
     assert_equal "0" "$RC"
-    run_restore "   
+    run_restore "
 -- just a comment
 "
     assert_equal "0" "$RC"

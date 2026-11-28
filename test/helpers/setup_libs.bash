@@ -131,7 +131,7 @@ fi
 if [[ $# -ge 3 ]]; then
   query="$3"
   echo "DEBUG SQLITE3 QUERY: $query" >&2
-  
+
   if [[ "$query" == *"PRAGMA integrity_check"* ]]; then
     echo "ok"
     exit 0
