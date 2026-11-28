@@ -4,104 +4,59 @@
   <img src=".github/assets/banner.svg" alt="ocprobe — OpenCode Model Probe" width="800"/>
 </p>
 
-[![CI](https://github.com/SunnyJayaRaju/oc-model-manager/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square)](https://github.com/SunnyJayaRaju/oc-model-manager/actions)
-[![Version](https://img.shields.io/badge/version-3.2.2-blue.svg?style=flat-square)](VERSION)
-[![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
-[![Homebrew](https://img.shields.io/badge/homebrew-SunnyJayaRaju%2Focprobe-orange.svg?style=flat-square)](https://github.com/SunnyJayaRaju/homebrew-ocprobe)
+<p align="center">
+  <a href="https://github.com/SunnyJayaRaju/oc-model-manager/actions"><img alt="CI: passing" src="https://github.com/SunnyJayaRaju/oc-model-manager/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square" /></a>
+  <a href="VERSION"><img alt="Version: 3.2.2" src="https://img.shields.io/badge/version-3.2.2-blue.svg?style=flat-square" /></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" /></a>
+  <a href="https://github.com/SunnyJayaRaju/homebrew-ocprobe"><img alt="Homebrew: SunnyJayaRaju/ocprobe" src="https://img.shields.io/badge/homebrew-SunnyJayaRaju%2Focprobe-orange.svg?style=flat-square" /></a>
+</p>
 
----
+## 📌 At A Glance
 
-## Why ocprobe?
+ocprobe automates the full model catalog lifecycle: diff, probe, safety-gated apply and continuous monitoring.
+
+Start with [Quick Start](#-quick-start).
+
+## ❓ Why ocprobe?
 
 Managing model catalogs in OpenCode is manual, error prone and unsafe. You diff catalogs by hand, probe models one by one
 and risk wiping your whitelist with a bad apply. **ocprobe automates the full lifecycle**: catalog diffing → live probing →
 safety-gated apply → continuous monitoring — all with built-in guards so you never lose a working model or apply a broken one.
 
+<details>
+<summary><b>Click to Open the Diagram</b></summary>
+
 ```mermaid
-flowchart TD
-  A["🔍 diff catalog"] --> B["🧪 probe models"]
-  B --> C["✅ confirm"]
-  C --> D["🛡️ safety apply"]
-  D --> E["📈 monitor"]
+%%{init: {'flowchart': {'nodeSpacing': 40, 'rankSpacing': 50, 'padding': 16}}}%%
+flowchart LR
+  A["🔍 diff catalog"] --> B["🧪 probe models"] --> C["✅ confirm"] --> D["🛡️ safety apply"] --> E["📈 monitor"]
 ```
 
----
+</details>
 
-## At a glance
+## 🗂️ Table of Contents
 
-```bash
-# One-time setup
-$ ocprobe doctor
-[19:12:26] INFO  opencode: OK (1.18.25)
-[19:12:26] INFO  python3: OK (Python 3.14.7)
-[19:12:26] INFO  jq: OK
-[19:12:26] INFO  sqlite3: OK
-[19:12:26] INFO  config: OK (~/.config/ocprobe/config.yaml)
-[19:12:26] INFO  config validation: OK
-[19:12:26] INFO  opencode config: OK (~/.config/opencode/opencode.jsonc)
-[19:12:26] INFO  DB: OK (~/.local/share/opencode/opencode.db)
-[19:12:26] INFO  disk: OK (42G free)
+- [At A Glance](#-at-a-glance)
+- [Why ocprobe?](#-why-ocprobe)
+- [Installation](#-installation)
+- [Upgrade and Uninstall](#-upgrade-and-uninstall)
+- [OpenCode Version Support](#-opencode-version-support)
+- [Quick Start](#-quick-start)
+- [Commands](#-commands)
+- [Global Options](#-global-options)
+- [Configuration](#-configuration)
+- [Features](#-features)
+- [Validate Command](#-validate-command)
+- [Policy (Experimental)](#-policy-experimental)
+- [Safety Guarantees](#-safety-guarantees)
+- [Security](#-security)
+- [Troubleshooting and FAQ](#-troubleshooting-and-faq)
+- [Architecture](#-architecture)
+- [Development](#-development)
+- [License](#-license)
+- [Contributing](#-contributing)
 
-# Daily workflow
-$ ocprobe audit
-[19:15:19] INFO  === ocprobe audit ===
-[19:15:19] INFO  [1/7] Using cached catalog (age: 17h)
-[19:15:19] INFO  [2/7] Whitelist: 12 models
-[19:15:19] INFO  [3/7] NEW: 3 | GONE: 0
-[19:15:19] INFO  [4/7] Probing 3 models (timeout 45s, parallel 4)...
-[19:15:21] INFO  ✓ kilo/~anthropic/claude-3  WORKS (1.2s)
-[19:15:21] INFO  ✓ openai/gpt-4o            WORKS (0.8s)
-[19:15:21] INFO  ⚠ openrouter/unknown-model  NOTFOUND
-[19:15:21] INFO  Apply changes? [y/N] y
-[19:15:21] INFO  Whitelist updated: +2, -1
-
-# Quick dry-run
-$ ocprobe check --quick
-[19:15:19] INFO  === ocprobe check ===
-[19:15:19] INFO  [1/7] Using cached catalog (age: 17h)
-[19:15:19] INFO  [2/7] Whitelist: 12 models
-[19:15:19] INFO  [3/7] NEW: 1 | GONE: 0
-[19:15:20] INFO  Exit code: 1 (changes pending)
-
-# Continuous monitoring
-$ ocprobe watch              # Runs check + alerts every 6h, never auto-applies
-$ ocprobe scheduler install  # Install as launchd (macOS) or systemd (Linux) service
-
-# Validate (provider/model blacklist management)
-$ ocprobe validate                # Dry-run: show proposed blacklist changes (exit 1 if pending)
-$ ocprobe validate --apply        # Apply: write blacklist, create backup, verify effect
-
-# Policy (experimental, disabled by default)
-$ ocprobe policy show             # Show current policy (or note if missing)
-```
-
----
-
-## Table of contents
-
-- [Why ocprobe?](#why-ocprobe)
-- [At a glance](#at-a-glance)
-- [Installation](#installation)
-- [Upgrade and uninstall](#upgrade-and-uninstall)
-- [OpenCode version support](#opencode-version-support)
-- [Quick start](#quick-start)
-- [Commands](#commands)
-- [Global options](#global-options)
-- [Configuration](#configuration)
-- [Features](#features)
-- [Validate command](#validate-command)
-- [Policy (experimental)](#policy-experimental)
-- [Safety guarantees](#safety-guarantees)
-- [Security](#security)
-- [Troubleshooting and FAQ](#troubleshooting-and-faq)
-- [Architecture](#architecture)
-- [Development](#development)
-- [License](#license)
-- [Contributing](#contributing)
-
----
-
-## Installation
+## 💾 Installation
 
 ### Homebrew (macOS / Linux)
 
@@ -136,9 +91,7 @@ cp "ocprobe-${VERSION}/VERSION" ~/.local/share/ocprobe/
 # Ensure ~/.local/bin is in PATH (add to ~/.bashrc, ~/.zshrc, or ~/.profile if not already)
 ```
 
----
-
-## Upgrade and uninstall
+## 🔄 Upgrade and Uninstall
 
 ### Homebrew
 
@@ -161,7 +114,7 @@ brew uninstall ocprobe
 brew untap SunnyJayaRaju/ocprobe
 ```
 
-### From source
+### From Source
 
 ```bash
 cd oc-model-manager
@@ -172,9 +125,7 @@ make uninstall    # remove an installed copy
 
 The tap formula is regenerated automatically when a release ships, so `brew upgrade` only sees a new version after `brew update` has refreshed the tap.
 
----
-
-## OpenCode version support
+## 🔎 OpenCode Version Support
 
 ocprobe works with OpenCode 1.x and 2.x. The generation is detected at runtime
 from `opencode --version` (session work additionally checks for the
@@ -182,7 +133,9 @@ from `opencode --version` (session work additionally checks for the
 automatically. What differs, verified against OpenCode 2.3.2 (2.3.x):
 
 <details>
-<summary>Version-by-version matrix</summary>
+<summary><b>Click to Open the Diagram</b></summary>
+
+**Version-by-version matrix**
 
 | Behaviour                    | OpenCode 1.x                                                                                                                                   | OpenCode 2.x                                                                                                                                                                                                                                                                   |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -197,7 +150,7 @@ automatically. What differs, verified against OpenCode 2.3.2 (2.3.x):
 | `session restore`            | SQL dump restore (per-statement hardened SQLite path)                                                                                          | Refuses `.sql` dumps and restores the JSON backup through `opencode session import` with `OCPROBE_OPENCODE_SERVER` set                                                                                                                                                         |
 | `scheduler`                  | launchd (macOS) / systemd (Linux) units for the 6-hour watch interval, installed and removed with `scheduler install` / `scheduler uninstall`  | Same; the units are generation-independent because they only run `ocprobe watch` (read-only: check + alerts, never auto-applies)                                                                                                                                               |
 
-### Session backup and restore
+### Session Backup and Restore
 
 The exact matrix, per generation:
 
@@ -207,9 +160,8 @@ The exact matrix, per generation:
 | OpenCode 2.x | a JSON document produced by `opencode session export` — requires `OCPROBE_OPENCODE_SERVER` to name the server that owns this database; without it, nothing is exported | the JSON backup from `session backup`, imported through `opencode session import --server $OCPROBE_OPENCODE_SERVER`. This machine's database file is never written directly                                                                                                                                                                                                                                        | a `.sql` dump (the 2.x UI reads only the `session_v2` tables, so rows inserted into the legacy tables would be invisible — restoring one would look successful and change nothing), and a run with `OCPROBE_OPENCODE_SERVER` unset (an import through the wrong background service would write the session into a different database than the one the operator is looking at) |
 
 </details>
----
 
-## Quick start
+## ⚡ Quick Start
 
 ```bash
 # One-time setup
@@ -219,6 +171,7 @@ $ ocprobe doctor               # Verify installation (config, DB, auth, disk)
 # Daily workflow
 $ ocprobe audit                # Full cycle: diff → probe → confirm → apply
 $ ocprobe check                # Dry-run only (exit 1 if changes pending)
+$ ocprobe check --quick        # Skip the whitelist probe
 $ ocprobe status               # Show whitelisted models + recent probe results
 
 # Validate (provider/model blacklist management)
@@ -248,9 +201,7 @@ ocprobe version
 ocprobe 3.2.2
 ```
 
----
-
-## Commands
+## 📜 Commands
 
 | Command                                                                    | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -271,9 +222,7 @@ ocprobe 3.2.2
 | `version`                                                                  | Show version                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `help`                                                                     | Show help                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
----
-
-## Global options
+## 🎯 Global Options
 
 | Option            | Description                              |
 | ----------------- | ---------------------------------------- |
@@ -287,9 +236,7 @@ ocprobe 3.2.2
 | `--verbose, -v`   | Verbose logging                          |
 | `--help, -h`      | Show help                                |
 
----
-
-## Configuration
+## 🔧 Configuration
 
 Config file: `~/.config/ocprobe/config.yaml`
 
@@ -346,7 +293,7 @@ logging:
 
 See `ocprobe config schema` for full schema.
 
-### Reserved keys
+### Reserved Keys
 
 Three keys are still accepted by the schema so that existing config files keep
 validating, but **nothing in ocprobe reads them**:
@@ -362,9 +309,7 @@ non-default value logs a single warning on startup. To force a catalog refresh,
 use the `ocprobe probe --force-refresh` flag (or the `OCPROBE_FORCE_REFRESH`
 environment variable), which is the knob that actually works.
 
----
-
-## Features
+## ✨ Features
 
 - **Catalog Management** — Diff upstream catalog against whitelist, discover new models, detect removed models
 - **Live Probing** — Test models with configurable timeouts, parallel execution, and intelligent status detection (WORKS, EOL, PAYWALLED, BROKEN, TIMEOUT, NOTFOUND)
@@ -378,9 +323,7 @@ environment variable), which is the knob that actually works.
 - **Validate / Blacklist Management** — Two-failure gate, modality skip list, AUTH_ERROR provider-wide abort, three-bucket verify (WRITTEN/HIDDEN/STILL_VISIBLE)
 - **Experimental Policy Engine** — Declarative rules for audit/check; off by default
 
----
-
-## Validate command
+## ✅ Validate Command
 
 `ocprobe validate` probes every model offered by each provider that has valid API credentials in `~/.local/share/opencode/auth.json`. Models that respond successfully (`WORKS`) stay visible in OpenCode's model picker; models that fail (timeout, auth error, not found, or other error) are added to the provider's `blacklist` in the OpenCode config. On OpenCode 2.x, `validate --apply` refuses to write that list, because 2.x does not honour per-provider model lists in the catalog — see [OpenCode version support](#opencode-version-support).
 
@@ -388,9 +331,7 @@ In one line: **what it does** — probes all models of every credentialed provid
 
 **Billing errors are never blacklisted.** If a probe fails with `BILLING_ERROR`, the _account_ cannot currently afford that model's default output size — the model itself is fine and works as soon as credits exist. Blacklisting it would permanently hide a working model on a free or credit-limited key, so it is reported for review but never added to the blacklist, and it does not count toward the two-failure gate.
 
----
-
-### Two-failure gate
+### Two-Failure Gate
 
 Non-terminal failures (TIMEOUT, AUTH_ERROR, ERROR, UNCLEAR) require **two consecutive failures** before a model is added to the blacklist:
 
@@ -400,19 +341,13 @@ Non-terminal failures (TIMEOUT, AUTH_ERROR, ERROR, UNCLEAR) require **two consec
 - `EOL` / `NOT_FOUND` → `CONFIRMED` immediately (terminal)
 - `BILLING_ERROR` → never blacklisted, and does not advance the counter (see above)
 
----
-
-### Modality skip list
+### Modality Skip List
 
 Models matching patterns in the default patterns file (installed at `share/ocprobe/validate-skip-patterns.txt` under the install prefix, resolved via `OCPROBE_CONFIG_DIR`) or the optional user override at `~/.local/state/ocprobe/validate-skip-patterns-user.txt` are **never probed** and receive `SKIPPED_MODALITY` status. Default patterns cover embeddings, reranking, image/audio/video generation, moderation, etc.
 
----
-
-### AUTH_ERROR provider-wide abort
+### AUTH_ERROR Provider-Wide Abort
 
 If a provider's `AUTH_ERROR` rate exceeds `OCPROBE_VALIDATE_AUTH_ERROR_THRESHOLD_PCT` (default 40%), the provider is **skipped entirely** — no models are probed, no blacklist changes are made. This prevents blacklisting models due to credential/quota issues.
-
----
 
 ### Usage
 
@@ -452,8 +387,6 @@ ocprobe validate restore
 - **Large-run warning** when catalog exceeds 200 models (configurable via `OCPROBE_VALIDATE_LARGE_RUN_THRESHOLD`)
 - **JSON output** (`--json`) includes `schema_version` for forward compatibility
 
----
-
 ### Classification
 
 Each model is classified as:
@@ -468,16 +401,14 @@ Each model is classified as:
 | `ERROR`            | Other error (rate limit, server error, etc.)         |
 | `SKIPPED_MODALITY` | Model matched a modality skip pattern (never probed) |
 
----
-
-## Policy (experimental)
+## 🧪 Policy (Experimental)
 
 `ocprobe policy` provides a declarative rule engine for the audit/check pipeline.
 **Disabled by default** — a missing file or `enabled: false` is a true no-op.
 
 In one line: **what it does** — filters audit/check candidates with declarative rules; **how to run it** — create a scaffold with `ocprobe policy init`, set `enabled: true`, then `ocprobe policy validate` and `ocprobe policy dry-run`; **what it changes** — nothing by itself: it only narrows or widens what audit/check would add or remove, and effective `auto_apply` skips the confirmation prompt without bypassing any guard; **how to undo** — set `enabled: false` or delete the policy file, which restores unfiltered audit/check behavior.
 
-### Schema fields
+### Schema Fields
 
 | Field          | Type             | Default      | Description                                            |
 | -------------- | ---------------- | ------------ | ------------------------------------------------------ |
@@ -495,7 +426,7 @@ In one line: **what it does** — filters audit/check candidates with declarativ
 - `exclude` (array of globs, default: `[]`) — models to skip
 - `auto_apply` (boolean, optional) — override global `auto_apply` for this provider
 
-### Glob semantics
+### Glob Semantics
 
 - Matching is against the FULL "provider/model" string, not path-segment-aware.
 - `*` matches any sequence of characters, **including `/`** (so `anthropic/*`
@@ -506,7 +437,7 @@ In one line: **what it does** — filters audit/check candidates with declarativ
 - Matching is case-sensitive.
 - Empty or missing patterns file = no match, never an error.
 
-### Policy commands
+### Policy Commands
 
 | Command                   | Description                                                  |
 | ------------------------- | ------------------------------------------------------------ |
@@ -516,7 +447,7 @@ In one line: **what it does** — filters audit/check candidates with declarativ
 | `ocprobe policy init`     | Create a scaffold policy file (disabled) at default location |
 | `ocprobe policy dry-run`  | Show candidates & exclusions without probing or applying     |
 
-### Current status
+### Current Status
 
 **Wired into audit/check** — new-model candidates are filtered by `never_add` and provider `include`/`exclude` rules before probing; whitelisted models matching `never_remove` are protected from removal regardless of probe failures. The effective `auto_apply` (per-provider override or global) skips the confirmation prompt but **never bypasses** the mass-removal guard, backups, or graveyard recording.
 
@@ -527,9 +458,7 @@ In one line: **what it does** — filters audit/check candidates with declarativ
 
 At confirmation time, the prompt is skipped only if policy is enabled AND every involved provider (from pending ADDS/DEAD) has effective `auto_apply = true`, OR global `auto_apply` covers all. If any provider has effective `auto_apply = false`, the prompt is kept (unless `--yes` / `OCPROBE_ASSUME_YES=1`).
 
----
-
-## Safety guarantees
+## 🔒 Safety Guarantees
 
 1. **Session Isolation** — Only sessions created during _this run_ with the exact probe prompt (`Reply with exactly: OK`) in the first message are deleted. Real conversations are never touched.
 
@@ -541,9 +470,7 @@ At confirmation time, the prompt is skipped only if policy is enabled AND every 
 
 5. **Two-Failure Rule** — Transient failures (BROKEN, TIMEOUT, PAYWALLED) require 2 consecutive failed probes before removal.
 
----
-
-## Security
+## 🔐 Security
 
 Report vulnerabilities privately — see [SECURITY.md](SECURITY.md) for the supported versions, contact channel and what to include. Please do not open a public issue for a security report.
 
@@ -554,30 +481,30 @@ ocprobe's security posture, in brief:
 - **Session queries bind their parameters** — session ids are never interpolated into SQL.
 - **Session cleanup is name-closed** — it only ever deletes sessions that this run created and that carry the exact probe prompt.
 
----
-
-## Troubleshooting and FAQ
+## 🧰 Troubleshooting and FAQ
 
 <details>
-<summary>Common questions and exact messages</summary>
+<summary><b>Click to Open the Diagram</b></summary>
 
-### `validate --apply` refuses on OpenCode 2.x
+**Common questions and exact messages**
+
+### `validate --apply` Refuses on OpenCode 2.x
 
 The message is: `this OpenCode version does not honour provider model lists; nothing was changed (per-model hiding is not supported on OpenCode 2.x)`. This is expected: OpenCode 2.x ignores per-provider model lists in the catalog, so writing one would have no effect. `validate` keeps working read-only and `validate --dry-run` still reports pending changes. Use OpenCode 1.x for blacklist-based hiding, or manage model visibility through OpenCode 2.x's own UI.
 
-### `ocprobe doctor` says python is missing PyYAML/jsonschema
+### `ocprobe doctor` Says Python Is Missing PyYAML/jsonschema
 
 The exact message is: `python: <interpreter> is missing PyYAML/jsonschema (needed to read ocm's own config)`. This applies to source/manual installs only — the Homebrew formula builds its own Python virtualenv, so `brew install` needs nothing. Fix for a source install: run `make setup` in a checkout, or `<interpreter> -m pip install PyYAML jsonschema`. `ocprobe doctor` prints the exact interpreter it resolved.
 
-### Backup or restore says the server URL is required
+### Backup or Restore Says the Server URL Is Required
 
 The exact message is: `backing up on OpenCode 2.x requires the server that owns this database: set OCPROBE_OPENCODE_SERVER=<url> (e.g. http://127.0.0.1:4096) and re-run` (restore prints the same with `restoring` instead of `backing up`). On OpenCode 2.x, sessions are moved through `opencode session export`/`import`, and both need the background server's URL so the backup lands in the database the server actually owns. Set `OCPROBE_OPENCODE_SERVER` and re-run.
 
-### What does `UNCLEAR` mean?
+### What Does `UNCLEAR` Mean?
 
 A probe finished but the reply could not be classified as a definite status (the model answered, but not with the expected confirmation). `UNCLEAR` is a non-terminal failure: it counts toward the [two-failure gate](#two-failure-gate), so a single `UNCLEAR` never blacklists or removes a model on its own.
 
-### Where do config, state, cache and logs live?
+### Where Do Config, State, Cache and Logs Live?
 
 | What                                                                      | Where                                                                                                                        |
 | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -587,14 +514,13 @@ A probe finished but the reply could not be classified as a definite status (the
 | OpenCode database                                                         | `~/.local/share/opencode/opencode.db`                                                                                        |
 | OpenCode config                                                           | `~/.config/opencode/opencode.jsonc` or `.json`                                                                               |
 
-### `ocprobe doctor` warns about multiple ocprobe in PATH
+### `ocprobe doctor` Warns About Multiple ocprobe in PATH
 
 The warning `Multiple ocprobe in PATH (shadowing risk)` means more than one PATH entry resolves to an `ocprobe` binary — typically the Homebrew Cellar path and its `/opt/homebrew/bin` symlink, which point at the same install and are harmless. If the two paths are genuinely different installs, remove or reorder them so the intended one wins, then re-run `ocprobe doctor`.
 
 </details>
----
 
-## Architecture
+## 📐 Architecture
 
 ```text
 ocprobe (entry point)
@@ -621,9 +547,7 @@ ocprobe (entry point)
 └── packaging/         # Homebrew pointer only (live formula: homebrew-ocprobe)
 ```
 
----
-
-## Development
+## 💻 Development
 
 ```bash
 # Run tests
@@ -645,15 +569,11 @@ make version-check
 make drift-check
 ```
 
----
-
-## License
+## 📄 License
 
 MIT License — see [LICENSE](LICENSE) for details.
 
----
-
-## Contributing
+## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch
