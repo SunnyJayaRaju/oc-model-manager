@@ -240,7 +240,7 @@ ocprobe 3.2.2
 
 Config file: `~/.config/ocprobe/config.yaml`
 
-OpenCode's own config file is discovered as follows: an explicit `opencode.config_path` is used as given; otherwise `opencode.jsonc` is used when it exists next to the default path, else `opencode.json`. See [OpenCode version support](#opencode-version-support).
+OpenCode's own config file is discovered as follows: an explicit `opencode.config_path` is used as given; otherwise `opencode.jsonc` is used when it exists next to the default path, else `opencode.json`. See [OpenCode version support](#-opencode-version-support).
 
 ```yaml
 version: 1
@@ -325,7 +325,7 @@ environment variable), which is the knob that actually works.
 
 ## ✅ Validate Command
 
-`ocprobe validate` probes every model offered by each provider that has valid API credentials in `~/.local/share/opencode/auth.json`. Models that respond successfully (`WORKS`) stay visible in OpenCode's model picker; models that fail (timeout, auth error, not found, or other error) are added to the provider's `blacklist` in the OpenCode config. On OpenCode 2.x, `validate --apply` refuses to write that list, because 2.x does not honour per-provider model lists in the catalog — see [OpenCode version support](#opencode-version-support).
+`ocprobe validate` probes every model offered by each provider that has valid API credentials in `~/.local/share/opencode/auth.json`. Models that respond successfully (`WORKS`) stay visible in OpenCode's model picker; models that fail (timeout, auth error, not found, or other error) are added to the provider's `blacklist` in the OpenCode config. On OpenCode 2.x, `validate --apply` refuses to write that list, because 2.x does not honour per-provider model lists in the catalog — see [OpenCode version support](#-opencode-version-support).
 
 In one line: **what it does** — probes all models of every credentialed provider and classifies each; **how to run it** — `ocprobe validate` (dry-run by default, see [Usage](#usage) below); **what it changes** — with `--apply` on OpenCode 1.x only, the provider `blacklist` keys in the OpenCode config, with a timestamped backup first; **how to undo** — `ocprobe validate restore` reverts the config from the last validate backup (on OpenCode 2.x nothing is written, so there is nothing to undo).
 
