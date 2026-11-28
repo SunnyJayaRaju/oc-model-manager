@@ -524,27 +524,45 @@ The warning `Multiple ocprobe in PATH (shadowing risk)` means more than one PATH
 
 ```text
 ocprobe (entry point)
-├── lib/
-│   ├── core.sh        # Shared utilities, validation
-│   ├── config.sh      # YAML config + JSON Schema validation
-│   ├── logging.sh     # Structured logging (text/JSON)
-│   ├── locking.sh     # Process locking (mkdir atomicity)
-│   ├── db.sh          # SQLite operations
-│   ├── models.sh      # Catalog diff, probe engine, apply
-│   ├── session.sh     # Session backup/restore/cleanup
-│   ├── scheduler.sh   # launchd/systemd management
-│   ├── doctor.sh      # Health checks
-│   ├── validate.sh    # Provider/model validation & blacklist management
-│   ├── policy.sh      # Experimental policy engine (audit/check only)
-│   └── shim_helpers.sh # Shared shim utilities
-├── config/
-│   ├── schema.json            # JSON Schema for config validation
-│   ├── policy.schema.json     # JSON Schema for policy validation
-│   └── validate-skip-patterns.txt # Modality skip defaults
-├── test/
-│   ├── unit/          # bats unit tests
-│   └── integration/   # End-to-end tests
-└── packaging/         # Homebrew pointer only (live formula: homebrew-ocprobe)
+├── .codespellrc            # Spell-check configuration
+├── .editorconfig           # Shared editor settings
+├── .github/                # Workflows, issue templates and CODEOWNERS
+├── .gitignore              # Files ignored by Git
+├── .markdownlint-cli2.yaml # Markdown lint configuration
+├── .markdownlint.yaml      # Markdown lint rules
+├── bin/                    # ocprobe entry point and legacy shims
+├── CHANGELOG.md            # Release history
+├── CODE_OF_CONDUCT.md      # Community conduct policy
+├── CODEOWNERS              # Default reviewers
+├── config/                 # Schema, defaults and skip patterns
+│   ├── schema.json
+│   ├── policy.schema.json
+│   └── validate-skip-patterns.txt
+├── CONTRIBUTING.md         # Contribution guide
+├── docs/                   # Manual, schema notes and runbooks
+├── lib/                    # Shared shell libraries
+│   ├── core.sh             # Utilities and validation
+│   ├── config.sh           # YAML config and schema validation
+│   ├── logging.sh          # Structured text/JSON logging
+│   ├── locking.sh          # Process locking
+│   ├── db.sh               # SQLite operations
+│   ├── models.sh           # Catalog diff, probing and apply
+│   ├── session.sh          # Session backup, restore and cleanup
+│   ├── scheduler.sh        # launchd/systemd management
+│   ├── doctor.sh           # Health checks
+│   ├── validate.sh         # Provider validation and blacklist
+│   ├── policy.sh           # Experimental policy engine
+│   └── shim_helpers.sh     # Shared shim utilities
+├── LICENSE
+├── Makefile                # Test, lint, build and install targets
+├── packaging/              # Homebrew pointer (live formula: homebrew-ocprobe)
+├── README.md
+├── scripts/                # Helper scripts
+├── SECURITY.md             # Security policy
+├── test/                   # bats unit and integration tests
+│   ├── unit/
+│   └── integration/
+└── VERSION
 ```
 
 ## 💻 Development
