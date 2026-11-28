@@ -244,7 +244,7 @@ with_tag_and_root() { # $1 = tag, $2 = a tree with a different VERSION
   # So the contract is now: on success, stdout is EXACTLY the version and
   # nothing else. The tests below capture stdout with stderr discarded, which
   # is the only way to state that precisely -- bats' `run` merges the two.
-  
+
   @test "STDOUT CONTRACT: stdout is exactly the version and nothing else" {
       # stderr is discarded, so any confirmation text written to stdout fails.
       local out rc=0
@@ -261,7 +261,7 @@ with_tag_and_root() { # $1 = tag, $2 = a tree with a different VERSION
           false
       }
   }
-  
+
   @test "STDOUT CONTRACT: stdout is a single line, with nothing after it" {
       # Guards the exact shape that broke the runner: a multi-line value.
       local out
@@ -274,7 +274,7 @@ with_tag_and_root() { # $1 = tag, $2 = a tree with a different VERSION
           false
       }
   }
-  
+
   @test "STDOUT CONTRACT: stdout survives being written to GITHUB_ENV" {
       # The end-to-end version of the contract, using the real file format. A
       # multi-line value is exactly what the runner rejected, so reproduce that
@@ -298,7 +298,7 @@ with_tag_and_root() { # $1 = tag, $2 = a tree with a different VERSION
           false
       }
   }
-  
+
   @test "the confirmation still reaches a human, on stderr" {
       # Redirecting stdout to stderr must not have silenced the check: a build
       # log that says nothing about what it validated is worse than a bad one.
@@ -315,7 +315,7 @@ with_tag_and_root() { # $1 = tag, $2 = a tree with a different VERSION
           false
       }
   }
-  
+
   @test "--quiet is accepted and changes nothing" {
       # Four call sites in this file still pass it. It is now redundant, not
       # removed, so a caller that still passes it keeps working; this asserts
@@ -330,7 +330,7 @@ with_tag_and_root() { # $1 = tag, $2 = a tree with a different VERSION
       }
       [ "$with_flag" = "$CURRENT" ]
   }
-  
+
   @test "a refusal still writes nothing to stdout" {
       # On failure stdout must be empty too, so a caller that ignores the exit
       # status gets an empty VERSION rather than a diagnostic sentence.
@@ -346,10 +346,10 @@ with_tag_and_root() { # $1 = tag, $2 = a tree with a different VERSION
           false
       }
   }
-  
+
   # ---- a dry run of the real command, both ways -----------------------------
   # The demonstration the task asks for, executed rather than asserted about.
-  
+
   @test "dry run: the real tag passes" {
       with_tag "v$CURRENT"
       assert_success

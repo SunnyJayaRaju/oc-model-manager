@@ -259,7 +259,7 @@ EOF
 @test "apply_changes aborts on mass removal even with policy auto_apply:true" {
 	local opencode_config
 	opencode_config=$(mktemp /tmp/ocprobe-test-opencode-XXXXXX.json)
-	
+
 	# Create opencode.json with 4 whitelisted models under one provider
 	cat >"$opencode_config" <<'EOF'
 {

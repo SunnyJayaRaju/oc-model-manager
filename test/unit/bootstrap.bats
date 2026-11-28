@@ -9,20 +9,20 @@ load '../helpers/bats-assert/load'
 
 setup() {
     source "$BATS_TEST_DIRNAME/../helpers/setup_libs.bash"
-    
+
     # Set up fake installed layout
     mkdir -p "$BATS_TEST_TMPDIR/fake-installed/bin"
     mkdir -p "$BATS_TEST_TMPDIR/fake-installed/lib/ocprobe"
     mkdir -p "$BATS_TEST_TMPDIR/fake-installed/share/ocprobe"
     echo "2.0.10" > "$BATS_TEST_TMPDIR/fake-installed/share/ocprobe/VERSION"
     cp -r "$OCPROBE_ROOT/lib/"* "$BATS_TEST_TMPDIR/fake-installed/lib/ocprobe/"
-    
+
     # Set up fake repo layout
     mkdir -p "$BATS_TEST_TMPDIR/fake-repo/bin"
     mkdir -p "$BATS_TEST_TMPDIR/fake-repo/lib"
     cp -r "$OCPROBE_ROOT/lib/"* "$BATS_TEST_TMPDIR/fake-repo/lib/"
     cp "$OCPROBE_ROOT/VERSION" "$BATS_TEST_TMPDIR/fake-repo/VERSION"
-    
+
     # Mock opencode for tests that need it
     mock_opencode
 
@@ -49,7 +49,7 @@ setup() {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
     chmod +x "$test_bin_dir/ocprobe"
-    
+
     run bash -c "
         source '$test_bin_dir/ocprobe'
         echo \"ROOT=\$OCPROBE_ROOT\"
@@ -66,7 +66,7 @@ setup() {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-installed/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
     chmod +x "$test_bin_dir/ocprobe"
-    
+
     run bash -c "
         source '$test_bin_dir/ocprobe'
         echo \"ROOT=\$OCPROBE_ROOT\"
@@ -83,7 +83,7 @@ setup() {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-installed/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
     chmod +x "$test_bin_dir/ocprobe"
-    
+
     run bash -c "
         source '$test_bin_dir/ocprobe' 2>&1
         type log_info >/dev/null && echo 'libs sourced OK'
@@ -96,7 +96,7 @@ setup() {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
     chmod +x "$test_bin_dir/ocprobe"
-    
+
     run bash -c "
         source '$test_bin_dir/ocprobe' 2>&1
         type log_info >/dev/null && echo 'libs sourced OK'
@@ -109,18 +109,18 @@ setup() {
     # Dev mode
     local dev_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$dev_bin_dir/ocprobe"
-    
+
     run bash -c "
         source '$dev_bin_dir/ocprobe'
         echo \"LIB_DIR=\$OCPROBE_LIB_DIR\"
     "
     assert_success
     assert_output --partial "fake-repo/lib"
-    
+
     # Installed mode
     local inst_bin_dir="$BATS_TEST_TMPDIR/fake-installed/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$inst_bin_dir/ocprobe"
-    
+
     run bash -c "
         source '$inst_bin_dir/ocprobe'
         echo \"LIB_DIR=\$OCPROBE_LIB_DIR\"
@@ -260,7 +260,7 @@ doctor_drift_from() { # $1 = cwd, $2 = layout root
 @test "installed mode doctor command scheduler check works (sources scheduler.sh)" {    local test_bin_dir="$BATS_TEST_TMPDIR/fake-installed/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
     chmod +x "$test_bin_dir/ocprobe"
-    
+
     # Create minimal config for doctor to run
     local config_dir="$BATS_TEST_TMPDIR/installed-config"
     mkdir -p "$config_dir"
@@ -305,7 +305,7 @@ logging:
   file_enabled: false
 EOF
     echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
-    
+
     # Run doctor in installed mode - should not error on scheduler check
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
@@ -326,7 +326,7 @@ EOF
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
     chmod +x "$test_bin_dir/ocprobe"
-    
+
     local config_dir="$BATS_TEST_TMPDIR/dev-config"
     mkdir -p "$config_dir"
     cat > "$config_dir/config.yaml" <<EOF
@@ -370,7 +370,7 @@ logging:
   file_enabled: false
 EOF
     echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
-    
+
     # Run doctor in dev mode - should not error on scheduler check
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
@@ -513,7 +513,7 @@ EOF
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
     cp -r "$OCPROBE_ROOT/lib" "$test_lib_dir"
     chmod +x "$test_bin_dir/ocprobe"
-    
+
     local config_dir="$BATS_TEST_TMPDIR/flag-test-config"
     mkdir -p "$config_dir"
     cat > "$config_dir/config.yaml" <<EOF
@@ -557,7 +557,7 @@ logging:
   file_enabled: false
 EOF
     echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
-    
+
     # Run with --quick before audit - should set OCPROBE_QUICK=1 and run audit
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
@@ -580,7 +580,7 @@ EOF
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
     cp -r "$OCPROBE_ROOT/lib" "$test_lib_dir"
     chmod +x "$test_bin_dir/ocprobe"
-    
+
     local config_dir="$BATS_TEST_TMPDIR/flag-test-config2"
     mkdir -p "$config_dir"
     cat > "$config_dir/config.yaml" <<EOF
@@ -624,7 +624,7 @@ logging:
   file_enabled: false
 EOF
     echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
-    
+
     # Run with --quick after audit - should set OCPROBE_QUICK=1
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"
@@ -643,7 +643,7 @@ EOF
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
     chmod +x "$test_bin_dir/ocprobe"
-    
+
     # Run with --json before version - should set OCPROBE_JSON_OUTPUT=1
     run bash -c "
         '$test_bin_dir/ocprobe' --json version 2>&1
@@ -653,12 +653,12 @@ EOF
     # Derive the expected version from VERSION so a release bump does not break this test.
     assert_output "ocprobe $(cat "$OCPROBE_ROOT/VERSION")"
 }
- 
+
 @test "global flag --json works after subcommand (version --json)" {
     local test_bin_dir="$BATS_TEST_TMPDIR/fake-repo/bin"
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
     chmod +x "$test_bin_dir/ocprobe"
-    
+
     # Run with --json after version - should set OCPROBE_JSON_OUTPUT=1
     run bash -c "
         '$test_bin_dir/ocprobe' version --json 2>&1
@@ -674,7 +674,7 @@ EOF
     cp "$OCPROBE_ROOT/bin/ocprobe" "$test_bin_dir/ocprobe"
     cp -r "$OCPROBE_ROOT/lib" "$test_lib_dir"
     chmod +x "$test_bin_dir/ocprobe"
-    
+
     local config_dir="$BATS_TEST_TMPDIR/flag-test-config3"
     mkdir -p "$config_dir"
     cat > "$config_dir/config.yaml" <<EOF
@@ -718,7 +718,7 @@ logging:
   file_enabled: false
 EOF
     echo "{}" > "$BATS_TEST_TMPDIR/opencode.json"
-    
+
     # Multiple flags before command
     run bash -c "
         export OCPROBE_CONFIG_OVERRIDE="$config_dir/config.yaml"

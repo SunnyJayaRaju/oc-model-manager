@@ -52,7 +52,7 @@ handle_special_cases() {
 run_shim() {
   local _old_program="$1"
   shift
-  
+
   # With no subcommand there is no $1 to map. This script runs under `set -u`,
   # so referencing it was a fatal "$1: unbound variable" instead of usage.
   if [[ $# -eq 0 ]]; then
@@ -67,22 +67,22 @@ run_shim() {
   local -a cmd_words=()
   mapfile -t cmd_words < <(map_old_command "$1")
   shift
-  
+
   # Map flags
   local mapped_args=()
   while [[ $# -gt 0 ]]; do
     mapped_args+=("$(map_old_flags "$1")")
     shift
   done
-  
+
   # Combine command and flags
   local -a final_args=("${cmd_words[@]}" "${mapped_args[@]}")
-  
+
   # Handle special cases
   local special_args
   special_args=$(handle_special_cases "${final_args[@]}")
   mapfile -t final_args <<< "$special_args"
-  
+
   # Execute ocprobe with mapped arguments
   exec ocprobe "${final_args[@]}"
 }

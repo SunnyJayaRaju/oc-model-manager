@@ -27,7 +27,7 @@ acquire_lock() {
   if _has_flock; then
     # Create lock directory if it doesn't exist
     mkdir -p "$lock_dir" 2>/dev/null || true
-    
+
     # Use flock on a lock file. The fd must be remembered (not re-opened)
     # so release_lock can unlock the SAME open file description — flock
     # locks are per-fd, so unlocking a freshly-opened fd to the same path
@@ -80,7 +80,7 @@ acquire_lock() {
 # ---- Release Lock -----------------------------------------------------------
 release_lock() {
   local lock_dir="${OCPROBE_LOCK_DIR:-$OCPROBE_STATE_DIR/.lock}"
-  
+
   # Try flock-based release first
   if _has_flock; then
     local lock_file="${lock_dir}/lock"
@@ -216,7 +216,7 @@ _release_scoped_lock() {
 # ---- Lock Status ------------------------------------------------------------
 lock_status() {
   local lock_dir="${OCPROBE_LOCK_DIR:-$OCPROBE_STATE_DIR/.lock}"
-  
+
   if _has_flock; then
     local lock_file="${lock_dir}/lock"
     if [[ -f "$lock_file" ]]; then
